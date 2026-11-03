@@ -84,14 +84,19 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 
 ## 拿来即用的场景模板
 
-先选想做的事。前三项提供 `rules.json`、任务 `SKILL.md` 和启用说明；PR 交付由内置 `delivery` 插件提供，配置在交付手册里。
+先选想做的事。六套场景提供 `rules.json`、任务 `SKILL.md` 和启用说明；PR 交付由内置 `delivery` 插件提供，配置在交付手册里。
 
 | 想做什么 | 已经封装好的流程 | 启用时要填什么 |
 |---|---|---|
 | [每日早报](examples/recipes/morning-brief/README.md) | 默认每天 8 点整理本地笔记和 Git 提交，写入 `briefs/YYYY-MM-DD.md` | Agent、接单电脑、笔记目录，可改时间；无需联网 |
 | [跟进 GitHub Issue](examples/recipes/github-issues/README.md) | 每 5 分钟查新 Issue，在本地改代码并通知你查看；不提交、不推送、不回复 Issue | 已登录的 `gh`、仓库、启用日期、Agent 和代码目录 |
 | [线上告警排查](examples/recipes/ops-alerts/README.md) | 接收报错、对照代码查原因，需要重启时发卡片询问，回答后继续 | 告警来源、Agent、代码目录；示例 `restart.sh` 只打印文字，要换成自己的重启和健康检查命令 |
+| [用户反馈处理](examples/recipes/feedback/README.md) | 重读反馈当前状态、修复、交付核实、准备回复；需要决定时飞书问本人，回答后继续 | 自己的反馈读取与回写入口、项目交付流程、Agent 和本人飞书通道 |
+| [网站巡检](examples/recipes/website-watch/README.md) | 每 5 分钟检查状态和关键内容，首次异常交 Agent，持续异常不重复通知，恢复更新原卡片 | 外部接单电脑、健康 URL、关键内容、代码目录和飞书 |
+| [飞书周报与业务摘要](examples/recipes/feishu-brief/README.md) | 周日 18 点按本人权限读汇报和指定表格，完整读取后生成本地摘要；飞书给本人简短摘要，完整稿留在本机 | 已登录的 `lark-cli`、汇报规则与人员、表格与必要字段 |
 | [PR 自动交付](skills/agent-autoloop/SKILL.md#交付流水线) | 打上 `deliver` 标签后，审查、等 CI、合并、等发布并核对线上版本 | 已登录的 `gh`、审查程序、中台规则，以及项目 main 上的检查、发布和健康配置 |
+
+新增的三套场景默认使用北京时间和飞书本人私聊。样例只含虚构数据与占位符；替换后的资料留在自己的私有工作目录。脚本和回执已用本地 HTTP 与假飞书 CLI 验证，不代表已替你的账号开通或完成线上业务验收。
 
 **启用场景模板：** 打开对应说明，把任务 Skill 放进所用 Agent 的 skills 目录，将示例规则中的条目合入已有 `~/.agent-autoloop/rules.json`，替换电脑名和路径，再运行 `agent-autoloop check`。各场景说明列出了额外配置，规则保存后几秒内生效。
 

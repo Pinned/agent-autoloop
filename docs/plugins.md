@@ -95,7 +95,7 @@ node --disable-warning=ExperimentalWarning --test --test-name-pattern='agent-aut
 
 Codex 的三个档位已用插件命令实跑；Claude Code 依据[官方权限说明](https://code.claude.com/docs/en/permission-modes)，本轮未调用模型。Codex 的命令网络限制与托管搜索、MCP 不是同一个边界，详见[官方沙箱说明](https://learn.chatgpt.com/docs/agent-approvals-security)。用户的 CLI 配置可能改变上述能力；`read` 也不代表读不到本机密钥。
 
-三个例子据此选权限：早报用 `edit` 写本地文件，issue 用 `edit` 改代码并让固定脚本联网取正文，告警用 `read` 看代码和事件附带的调用栈。`command` 和固定脚本以本机账号运行，不受 `access` 约束。
+场景模板据此选权限：早报用 `edit` 写本地文件，issue 用 `edit` 改代码并让固定脚本联网取正文，告警用 `read` 看代码和事件附带的调用栈。新增反馈处理和飞书摘要用 `edit`，网站排查用 `read`；固定巡检与飞书读取脚本负责联网，摘要 Agent 只读完整快照。`command` 和固定脚本以本机账号运行，不受 `access` 约束。
 
 ## 一致性测试
 

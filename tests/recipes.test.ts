@@ -15,7 +15,7 @@ import { readMessage, resultFrom } from "../worker/contract.ts";
 
 const ROOT = join(import.meta.dirname, "..");
 const RECIPES = join(ROOT, "examples", "recipes");
-const NAMES = ["morning-brief", "github-issues", "ops-alerts"];
+const NAMES = ["morning-brief", "github-issues", "ops-alerts", "feedback", "website-watch", "feishu-brief"];
 const scratch = mkdtempSync(join(tmpdir(), "agent-autoloop-recipes-"));
 after(() => rmSync(scratch, { recursive: true, force: true }));
 
