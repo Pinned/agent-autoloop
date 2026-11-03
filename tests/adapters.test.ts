@@ -117,7 +117,7 @@ test("Codex: new and resumed runs use only browser access configured for the bac
     assert.match(prompt, /桌面应用.*浏览器连接/);
     assert.match(prompt, /业务.*回执.*本轮/);
     assert.ok(prompt.endsWith(turn.prompt));
-    assert.doesNotMatch(prompt, /M4|khazix|~\/\.local\/bin\/codex-browser/);
+    assert.doesNotMatch(prompt, /~\/\.local\/bin\/|\/Users\//);
   }
 });
 

@@ -88,7 +88,7 @@ export async function bridge(turn: Turn) {
   const stop = () => child.kill("SIGTERM");
   process.on("SIGTERM", stop);
   try {
-    const clientInfo = { name: "agent-autoloop", version: "0.1.0" };
+    const clientInfo = { name: "agent-autoloop", version: "1.0.0" };
     const init = await rpc("initialize", { protocolVersion: 1, clientCapabilities: {}, clientInfo });
     if (init.protocolVersion !== 1) throw new Error(`不支持 ACP 版本 ${init.protocolVersion}`);
     if (turn.resume) {

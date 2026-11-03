@@ -1,6 +1,6 @@
 {
   "name": "agent-autoloop",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Let Agents follow up on work and ask when they need your judgment.",
   "license": "MIT",
   "repository": {

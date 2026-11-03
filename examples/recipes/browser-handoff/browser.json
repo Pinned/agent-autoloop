@@ -1,5 +1,5 @@
 {
-  "command": ["/path/to/codex-browser"],
+  "command": ["/path/to/browser-entry"],
   "url": "https://example.com/",
   "checks": [
     "读取并报告当前页面标题",
