@@ -3,7 +3,7 @@
 // one place.
 //   "channels": { "feishu": { "key": "…", "user": "ou_xxx" } } in config.json
 //   "channels": { "feishu": { "name": "飞书", "answerers": ["ou_xxx"] } } in rules.json: who may answer.
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import readline from "node:readline";
 import type { Card, ChannelContext } from "../../host/channels.ts";
 
@@ -48,12 +48,13 @@ export function render(card: Card) {
 
 export default async function feishu({ hub, options, log, signal }: ChannelContext) {
   const program = (options.lark as string | undefined) ?? "lark-cli";
-  const lark = (args: string[], input: string) => {
-    const printed = execFileSync(program, args, {
-      input,
-      encoding: "utf8",
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: 60_000,
+  const lark = async (args: string[], input: string) => {
+    const printed = await new Promise<string>((resolve, reject) => {
+      const child = execFile(program, args, { encoding: "utf8", timeout: 60_000, signal }, (error, stdout) =>
+        error ? reject(error) : resolve(stdout),
+      );
+      child.stdin!.on("error", reject);
+      child.stdin!.end(input);
     });
     const out = JSON.parse(printed);
     if (out.ok === false || out.error) {
@@ -61,17 +62,18 @@ export default async function feishu({ hub, options, log, signal }: ChannelConte
     }
     return out;
   };
-  const owner = (options.user as string | undefined) ?? lark(["auth", "status"], "").identities?.user?.openId;
+  const owner = (options.user as string | undefined) ?? (await lark(["auth", "status"], "")).identities?.user?.openId;
   if (!owner) throw new Error("飞书通道要在 config.json 写 user，或者先 lark-cli auth login");
 
   const updateMessage = (ref: string, content: string) =>
     lark(["im", "messages", "patch", "--message-id", ref, "--as", "bot", "--data", "-"], JSON.stringify({ content }));
 
-  function sendMessage(cardId: number, content: string) {
+  async function sendMessage(cardId: number, content: string) {
     const target = ["--user-id", owner, "--as", "bot", "--msg-type", "interactive"];
     // The key is the card alone, not its version: a report that got lost must not make a second message.
     const once = ["--idempotency-key", `agent-autoloop-card-${cardId}`];
-    return lark(["im", "+messages-send", ...target, ...once, "--content", "-"], content).data.message_id as string;
+    return (await lark(["im", "+messages-send", ...target, ...once, "--content", "-"], content)).data
+      .message_id as string;
   }
 
   async function deliver() {
@@ -88,8 +90,8 @@ export default async function feishu({ hub, options, log, signal }: ChannelConte
       try {
         const content = JSON.stringify(render(card));
         let ref = card.ref;
-        if (ref) updateMessage(ref, content);
-        else ref = sendMessage(card.id, content);
+        if (ref) await updateMessage(ref, content);
+        else ref = await sendMessage(card.id, content);
         await hub.delivered(card.id, card.version, ref);
       } catch (error) {
         log(`card ${card.id} not sent: ${error}`);

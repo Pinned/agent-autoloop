@@ -18,6 +18,8 @@ export function replay(log: Fact[]): Snapshot {
       if (row === null) delete tables[table][key];
       else {
         tables[table][key] = row;
+        // Configuration versions are derived from each rules fact, including logs written before the lookup existed.
+        if (table === "config" && key === "rules") tables.config[String(row.version)] = row;
         if (typeof row.id === "number") next[table] = Math.max(next[table] ?? 0, row.id);
       }
     }

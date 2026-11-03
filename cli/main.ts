@@ -10,7 +10,7 @@ import { CONFIG_FILE, readConfig, writeConfig, type Config } from "../host/confi
 import { HOME, RULES_FILE } from "../host/home.ts";
 import { installService, removeService, serviceRunning } from "../host/service.ts";
 import { versionLine } from "../host/version.ts";
-import { spendLine, WEEK, type SpendingRun } from "./spend.ts";
+import { spendLine } from "./spend.ts";
 
 const ROOT = path.join(import.meta.dirname, "..");
 const PROGRAM = path.join(ROOT, "bin", "agent-autoloop.ts");
@@ -287,22 +287,6 @@ const RUN_STATES: Record<string, string> = {
   cancelled: "停了",
 };
 
-/**
- * The runs of the past week, from what /v1/state gives 60 at a time. The first page also lists anything still in the queue,
- * however old, so it's the oldest of the page proper (`nextBefore`) that says whether to read back further.
- */
-async function runsOfTheWeek(owner: ReturnType<typeof ownerClient>, first: any, since: number) {
-  const runs = new Map<number, SpendingRun>(first.runs.map((run: any) => [run.id, run]));
-  let page = first;
-  while (page.nextBefore !== null) {
-    const oldest = page.runs.find((run: any) => run.id === page.nextBefore);
-    if (Date.parse(oldest.createdAt) < since) break;
-    page = await owner.state(page.nextBefore);
-    for (const run of page.runs) runs.set(run.id, run);
-  }
-  return [...runs.values()];
-}
-
 async function status() {
   const owner = ownerClient();
   const state = await owner.state();
@@ -312,8 +296,7 @@ async function status() {
   console.log(
     `在跑 ${totals.running} · 排队 ${totals.queued} · 今天做完 ${totals.doneToday} · 等你 ${state.cards.length}`,
   );
-  const now = Date.parse(state.now);
-  console.log(`${spendLine(await runsOfTheWeek(owner, state, now - WEEK), now, state.timezone)}\n`);
+  console.log(`${spendLine(state.spending)}\n`);
   for (const agent of state.agents) console.log(`${agent.online ? "●" : "○"} ${agent.name}（${agent.worker}）`);
   for (const channel of state.channels) console.log(`${channel.online ? "●" : "○"} ${channel.name}`);
   for (const card of state.cards) {

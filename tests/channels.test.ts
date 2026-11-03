@@ -3,6 +3,7 @@
 // isn't reported; a click that isn't a card's is taken; a card's options don't show while it's open or still show after;
 // the listener dying isn't started again. A GitHub webhook with a bad signature, or with none, is taken; what isn't an
 // identifier reaches the subject; a ping makes an event; replacement tokens in card text rewrite a webhook template.
+// A slow CLI call must not block the hub's HTTP loop while looking up a user, sending or updating a card.
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -48,6 +49,58 @@ test("a card shows its options while it's open, and what became of it after", ()
   assert.match(said({ ...base, state: "decided", answer: "归档" }), /你选了「归档」/);
   assert.match(said({ ...base, state: "closed", result: "问题自己好了" }), /不用决定了：问题自己好了/);
   assert.match(said({ ...base, kind: "notice", state: "closed", options: [], result: "已处理" }), /已处理/);
+});
+
+test("feishu CLI calls leave the HTTP loop available", async () => {
+  let requests = 0;
+  const server = createServer((_req, res) => {
+    requests++;
+    res.end("ok");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const lark = join(dir, "async-lark");
+  writeFileSync(
+    lark,
+    `#!${process.execPath}
+if (process.argv[2] === 'event') { setInterval(() => {}, 1000); }
+else {
+  (async () => {
+    if (process.argv[2] !== 'auth') for await (const chunk of process.stdin) {}
+    await fetch(${JSON.stringify(url)}, { signal: AbortSignal.timeout(2000) });
+    console.log(JSON.stringify({ ok: true, identities: { user: { openId: 'ou_me' } }, data: { message_id: 'om_5' } }));
+  })().catch(() => process.exit(1));
+}
+`,
+    { mode: 0o755 },
+  );
+  const stop = new AbortController();
+  const cards = [base, { ...base, version: 2, ref: "om_5" }];
+  let delivered = 0;
+  const failed: unknown[] = [];
+  const hub = {
+    async nextCard() {
+      const card = cards.shift() ?? null;
+      if (!card) stop.abort();
+      return { card };
+    },
+    async delivered() {
+      delivered++;
+    },
+    async failed(...args: unknown[]) {
+      failed.push(args);
+    },
+  };
+  try {
+    await feishu({ hub: hub as any, options: { lark }, log: () => {}, signal: stop.signal });
+    assert.deepEqual(failed, []);
+    assert.equal(delivered, 2);
+    assert.equal(requests, 3, "user lookup, send and patch each allowed HTTP to respond");
+  } finally {
+    stop.abort();
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });
 
 test("feishu: sends once per card, updates in place, reports failure, and only real clicks count", async () => {

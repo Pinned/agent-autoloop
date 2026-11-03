@@ -1,21 +1,42 @@
-// The cost line in `agent-autoloop status`, worked out from the runs /v1/state already lists. Failure cases: "today" is the
+// The cost line in `agent-autoloop status`, from the hub's completion-time totals. Failure cases: "today" is the
 // machine's or UTC's day and not the rules' time zone; a price nobody reported is counted as zero, or rounds that didn't report
 // are passed over in silence; a round that never started is counted, or one that's only waiting to try again; a week's worth
 // of rounds is cut off at the first page of 60, or a run stuck in the queue since long ago ends the paging early.
+// A run created before the reporting window can finish today behind many old completed runs.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { after, test } from "node:test";
 import { promisify } from "node:util";
 import { setup } from "./helpers.ts";
-import { spendLine } from "../cli/spend.ts";
+import { spendLine as formatSpending } from "../cli/spend.ts";
+import { spendingOf } from "../kernel/state.ts";
 import { dayStart } from "../kernel/cron.ts";
 
 const home = setup("status-cost");
 const now = Date.parse("2026-11-03T02:00:00Z"); // 10:00 in Asia/Shanghai
 const ended = (at: string, usage: object | null) => ({ claimedAt: at, finishedAt: at, usage });
+
+function spendLine(
+  runs: { claimedAt: string | null; finishedAt: string | null; usage: object | null }[],
+  now: number,
+  timezone: string,
+) {
+  const db = new DatabaseSync(":memory:");
+  try {
+    db.exec("CREATE TABLE runs (claimed_at TEXT, finished_at TEXT, usage TEXT)");
+    const insert = db.prepare("INSERT INTO runs VALUES (?, ?, ?)");
+    for (const run of runs) insert.run(run.claimedAt, run.finishedAt, run.usage && JSON.stringify(run.usage));
+    return formatSpending(
+      spendingOf(<T>(sql: string, args: SQLInputValue[] = []) => db.prepare(sql).all(...args) as T[], now, timezone),
+    );
+  } finally {
+    db.close();
+  }
+}
 
 test("today is the rules' day; each figure says how many rounds didn't report it", () => {
   const runs = [
@@ -60,7 +81,7 @@ test("only rounds that ended count: not one still going, one waiting to try agai
   );
 });
 
-test("status reads back past the first page, and a run stuck in the queue doesn't stop it early", async () => {
+test("status includes runs beyond the first page, including old runs that finish today", async () => {
   const hub = await import("../host/runtime.ts");
   const { serve } = await import("../host/http.ts");
   const server = serve(0);
@@ -98,4 +119,17 @@ test("status reads back past the first page, and a run stuck in the queue doesn'
   const lines = stdout.split("\n");
   assert.match(lines[0], /^在跑 /);
   assert.equal(lines[1], "今天 1 轮 · 100 Token · $1.00    最近 7 天 66 轮 · 750 Token · $1.65");
+
+  for (const table of ["run_events", "runs", "events", "seen", "cards", "deliveries", "timers"] as const)
+    hub.fixtureClear(table);
+  hub.ingest("app", { id: "long", type: "feedback.new", subject: "long" }, clock - 9 * DAY);
+  const long = hub.claimNext("w1", "long", clock - 9 * DAY)!;
+  for (let i = 0; i < 61; i++) round(`old-${i}`, clock - 8 * DAY, { cost: 1 });
+  hub.finish(long.run, long.token, { outcome: "done", usage: { input: 1000, cost: 9 } }, clock);
+  const recent = await promisify(execFile)(
+    process.execPath,
+    ["--disable-warning=ExperimentalWarning", join(import.meta.dirname, "../bin/agent-autoloop.ts"), "status"],
+    { env: process.env },
+  );
+  assert.equal(recent.stdout.split("\n")[1], "今天 1 轮 · 1000 Token · $9.00    最近 7 天 1 轮 · 1000 Token · $9.00");
 });

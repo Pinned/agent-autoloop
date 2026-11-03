@@ -99,6 +99,12 @@ export async function deliver(
   io: DeliveryIO,
   testLocalHealth = false,
 ): Promise<Delivered> {
+  const reviewOnly = async (pr: any): Promise<Delivered> => {
+    const summary = "审查通过，未合并或发布";
+    await status(io, pr.head.sha, "delivery", "success", summary);
+    await clearLabels(number, pr, io);
+    return { summary, reviewOnly: true };
+  };
   let pr = await io.api(`pulls/${number}`);
   if (!pr.merged_at && (pr.state !== "open" || !labels(pr).has("deliver"))) return { summary: "没有待交付的标记" };
   if (pr.head.repo?.full_name !== repo || pr.base.ref !== "main") throw new Error("只处理本仓库分支到 main 的合并请求");
@@ -122,9 +128,7 @@ export async function deliver(
       return { summary: "审查发现问题，尚未合并", findings };
     }
     if (labels(current).has("deliver-review")) {
-      await status(io, head, "delivery", "success", "审查通过，未合并或发布");
-      await clearLabels(number, current, io);
-      return { summary: "审查通过，未合并或发布", reviewOnly: true };
+      return reviewOnly(current);
     }
     if (current.draft) await io.api(`pulls/${number}/ready`, {}, "POST");
     for (;;) {
@@ -139,6 +143,7 @@ export async function deliver(
     if (!pr.merged_at) {
       if ((await io.api("git/ref/heads/main")).object.sha !== main) throw new Error("main 已前进，稍后重新同步和检查");
       if (!labels(pr).has("deliver")) return { summary: "交付标记已撤回" };
+      if (labels(pr).has("deliver-review")) return reviewOnly(pr);
       await status(io, head, config.review.status, "success", "此提交审查通过，完整检查通过");
       try {
         await io.merge(pr, config);

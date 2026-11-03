@@ -14,10 +14,11 @@ import {
   openInScope,
   sourceOf,
   waitingOn,
+  workerOf,
   workers,
 } from "./query.ts";
 import { cronOf, eventRule, SCHEDULE, typeMatches, type Rule, type Rules } from "./rules.ts";
-import { parseEvent, parseResult, type Later, type Rejected, type Result } from "../protocol/validate.ts";
+import { addUsage, parseEvent, parseResult, type Later, type Rejected, type Result } from "../protocol/validate.ts";
 
 export type Input = { type: string; args: any[] };
 
@@ -90,6 +91,13 @@ function add(draft: Draft, table: Table, fields: Row) {
 }
 
 const ruleNamed = (draft: Draft, name: string) => draft.rules.rules.find((rule) => rule.name === name);
+function assignQueued(draft: Draft, run: Row) {
+  const config = draft.view.get("config", "rules")!;
+  const rule = (config.value as Rules).rules.find((rule) => rule.name === run.rule);
+  if (!rule) return;
+  const session = rule.to === run.agent ? {} : nulls("session", "resume");
+  put(draft, "runs", run.id, { agent: rule.to, rules_version: config.version, ...session });
+}
 const threadOf = (run: Row) => ({ rule: run.rule, lane: run.lane, grp: run.grp });
 const hopsOf = (draft: Draft, run: Row) => Math.max(0, ...eventsOf(draft.view, run.id).map((event) => event.hops ?? 0));
 
@@ -195,21 +203,20 @@ function cardFromReceipt(draft: Draft, run: Row, kind: string, card: Row) {
 function sweep(draft: Draft) {
   const { now } = draft;
   for (const worker of workers(draft.view)) {
-    const agents = agentsOf(draft.view, worker);
     const seen = draft.view.get("seen", `worker:${worker}`);
     const lastSeen = seen ? Date.parse(seen.seen_at) : undefined;
     if (lastSeen !== undefined && now - lastSeen <= WORKER_FRESH) {
       closeOffline(draft, worker);
       const inDoubt = (run: Row) =>
-        run.state === "claimed" && agents.includes(run.agent) && Date.parse(run.seen_at) < now - RUN_LEASE;
+        run.state === "claimed" && workerOf(draft.view, run) === worker && Date.parse(run.seen_at) < now - RUN_LEASE;
       for (const run of rows(draft.view, "runs", { state: "claimed" }).filter(inDoubt)) {
         put(draft, "runs", run.id, { state: "unknown" });
-        const agent = draft.rules.agents[run.agent].name;
+        const agent = configuration(draft.view, run.rules_version).agents[run.agent].name;
         const words = `交给 ${agent} 后超过 5 分钟没有回音，不确定做没做完；后续新任务照常处理。`;
         notify(draft, `run:${run.id}:unknown`, run.rule, words, threadOf(run));
       }
     }
-    const waiting = waitingOn(draft.view, agents, now);
+    const waiting = waitingOn(draft.view, worker, now);
     if (!waiting.length) continue;
     const since = now - (lastSeen ?? Date.parse(waiting[0].created_at));
     if (since <= OFFLINE_AFTER) continue;
@@ -231,17 +238,18 @@ function claimNext(draft: Draft, worker: string, claim: string) {
   const groupLimit = (group: string) => draft.rules.rules.find((rule) => rule.group === group)?.parallel ?? 1;
   const claimable = (run: Row) =>
     run.state === "queued" &&
-    agents.includes(run.agent) &&
+    agents.includes(ruleNamed(draft, run.rule)?.to ?? "") &&
     Date.parse(run.not_before) <= draft.now &&
     ruleNamed(draft, run.rule) &&
     !claimed.some((other) => other.grp === run.grp && other.lane === run.lane) &&
     claimed.filter((other) => other.grp === run.grp).length < groupLimit(run.grp);
   // The same claim again means the answer got lost: it gets back the run it already has.
-  const held = claimed.find((run) => run.claim === claim && agents.includes(run.agent));
+  const held = claimed.find((run) => run.claim === claim && workerOf(draft.view, run) === worker);
   const run = held ?? runs.find(claimable);
   if (!run) return null;
+  if (!held) assignQueued(draft, run);
   const since = held ? { claimed_at: run.claimed_at, link: run.link } : { claimed_at: draft.at, link: null };
-  const rules_version = draft.view.get("config", "rules")!.version;
+  const rules_version = held ? run.rules_version : draft.view.get("config", "rules")!.version;
   const claiming = { state: "claimed", claim, issued: draft.seq, seen_at: draft.at, rules_version, ...since };
   put(draft, "runs", run.id, { ...claiming, ...nulls("last_issued", "last_result", "last_answer") });
   return jobOf(draft.view, draft.view.get("runs", run.id)!, draft.env);
@@ -277,6 +285,7 @@ function retryLater(draft: Draft, run: Row, result: Result) {
     const words = `连续 3 次自动处理没跑完（卡在：${error}），${time} 会自动再试。`;
     notify(draft, `run:${id}:failing`, run.rule, words, threadOf(run));
   }
+  assignQueued(draft, draft.view.get("runs", id)!);
   return rejected;
 }
 
@@ -341,7 +350,9 @@ function finish(draft: Draft, id: number, token: string, given: unknown) {
   const run = heldRun(draft, id, token, ["claimed", "unknown"]);
   const result = parseResult(given);
   const session = result.session ?? run.session;
-  const usage = result.usage ? JSON.stringify(result.usage) : run.usage;
+  const usage = result.usage
+    ? JSON.stringify(addUsage(run.usage ? JSON.parse(run.usage) : undefined, result.usage))
+    : run.usage;
   put(draft, "runs", id, { last_issued: run.issued, last_result: hash, issued: null, session, usage });
   let rejected: Rejected[] = [];
   if (result.outcome === "failed") rejected = retryLater(draft, run, result);
@@ -444,6 +455,7 @@ function tick(draft: Draft) {
 const HANDLERS: Record<string, (draft: Draft, ...args: any[]) => unknown> = {
   rules(draft, rules) {
     put(draft, "config", "rules", { value: rules, version: draft.seq });
+    for (const run of rows(draft.view, "runs", { state: "queued" })) assignQueued(draft, run);
     closeOpen(draft, (key) => key.startsWith("rules:"), "改好了");
   },
   rulesError: (draft, problem) => notify(draft, `rules:${digest(problem)}`, "rules.json 写错了，还在用旧规则", problem),
@@ -470,7 +482,7 @@ const HANDLERS: Record<string, (draft: Draft, ...args: any[]) => unknown> = {
     closeOffline(draft, worker);
     for (const id of running) {
       const run = draft.view.get("runs", id);
-      if (run?.state === "claimed" && agentsOf(draft.view, worker).includes(run.agent)) {
+      if (run?.state === "claimed" && workerOf(draft.view, run) === worker) {
         put(draft, "runs", id, { seen_at: draft.at });
       }
     }

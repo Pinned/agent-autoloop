@@ -23,7 +23,7 @@ import path from "node:path";
 import { HubError, type Hub } from "../protocol/client.ts";
 import { HOME } from "../host/home.ts";
 import type { Job } from "../protocol/job.ts";
-import type { Notice, Result } from "../protocol/validate.ts";
+import { addUsage, type Notice, type Result } from "../protocol/validate.ts";
 import { adapterFor, type Adapter, type Reading, type Turn, type Usage } from "./agents.ts";
 import { promptFor, readMessage, repairPrompt, resultFrom } from "./contract.ts";
 
@@ -61,7 +61,7 @@ type Entry = {
   finishedAt?: number;
   told?: string;
   stopping?: number;
-  why?: "cancel" | "timeout";
+  why?: "cancel" | "timeout" | "finished";
   result?: Result;
 };
 export type WorkerHub = Pick<Hub, "work" | "started" | "result">;
@@ -75,13 +75,6 @@ export type WorkerOptions = {
   wait?: number;
   now?: () => number;
 };
-
-function addUsage(total: Usage | undefined, more: Usage | undefined): Usage | undefined {
-  if (!more) return total;
-  if (!total) return more;
-  const sum = (field: keyof Usage) => (total[field] ?? 0) + (more[field] ?? 0);
-  return { input: sum("input"), output: sum("output"), cached: sum("cached"), cost: sum("cost") };
-}
 
 function save(entry: Entry) {
   const file = path.join(entry.dir, "entry.json");
@@ -125,6 +118,17 @@ function signal(entry: Entry, name: NodeJS.Signals) {
   try {
     if (entry.pid) process.kill(-entry.pid, name);
   } catch {}
+}
+
+function groupAlive(entry: Entry) {
+  // The wrapper can die before a child; zombies have already stopped and only their parent can reap them.
+  return execFileSync("ps", ["-ax", "-o", "pgid=", "-o", "stat="], { encoding: "utf8" })
+    .trim()
+    .split("\n")
+    .some((line) => {
+      const [group, state] = line.trim().split(/\s+/);
+      return Number(group) === entry.pid && !state.startsWith("Z");
+    });
 }
 
 function snapshot(file: string) {
@@ -173,6 +177,8 @@ export function createWorker({
     entry.launchedAt = now();
     delete entry.finishedAt;
     delete entry.pid;
+    delete entry.stopping;
+    delete entry.why;
     save(entry);
     const { rule, agent } = entry.job;
     const cwd = rule.cwd.replace(/^~(?=\/)/, homedir());
@@ -258,6 +264,20 @@ export function createWorker({
     return adapter.read(snapshot(out), code, code === null ? "" : snapshot(err));
   }
 
+  function discardReceipt(entry: Entry, adapter: Adapter, problem: string) {
+    const original = { ...entry, turn: entry.turn - entry.repairs };
+    const reading = read(original, adapter, 0);
+    const { result } = resultFrom(readMessage(reading.text!), {
+      session: reading.session ?? (adapter.link ? entry.session : undefined),
+      usage: entry.usage,
+    });
+    const notice: Notice = {
+      title: `「${entry.job.rule.name}」的回执读不懂`,
+      text: `这一轮按第一行算结束了，但它要中台做的事没有生效（${problem}）。原文在 ${files(original).out}。`,
+    };
+    endWith(entry, { ...result, notice: [...(result.notice ?? []), notice] });
+  }
+
   /** A turn has ended. What it said is a result, or a reason to ask it again without redoing anything. */
   function conclude(entry: Entry, adapter: Adapter, code: number | null) {
     // One ended because its turn was over but it wouldn't exit said what it had to say first.
@@ -270,10 +290,13 @@ export function createWorker({
     if (entry.why === "cancel") return endWith(entry, { outcome: "cancelled", summary: "已停止", ...known, ...usage });
     if (entry.why === "timeout") {
       const minutes = entry.job.agent.timeout ?? TIMEOUT_MINUTES;
-      return endWith(entry, { outcome: "failed", error: `超过 ${minutes} 分钟还没结束，已停止`, ...known });
+      const error = `超过 ${minutes} 分钟还没结束，已停止`;
+      if (entry.repairs) return discardReceipt(entry, adapter, error);
+      return endWith(entry, { outcome: "failed", error, ...known, ...usage });
     }
-    if (seen.error !== undefined || seen.text === undefined) {
+    if (seen.error !== undefined || !seen.text?.trim()) {
       const error = seen.error || "没留下结果";
+      if (entry.repairs) return discardReceipt(entry, adapter, error);
       // The conversation may not be there to go on in, or something else has it open: this go carries on in a new one.
       if (entry.resume && !entry.triedFresh && entry.repairs === 0) {
         log(`run ${entry.run}: couldn't go on in ${entry.resume} (${error}); starting a new session`);
@@ -290,6 +313,7 @@ export function createWorker({
       return endWith(entry, { outcome: "failed", error: error.slice(0, 500), ...known, ...usage });
     }
     const { result, problem } = resultFrom(readMessage(seen.text), { session, usage: entry.usage });
+    if (entry.repairs && !problem && result.outcome === "failed") return discardReceipt(entry, adapter, result.error!);
     if (!problem) return endWith(entry, result);
     // Its work is done and only the receipt is wrong: it writes the receipt again, and does nothing again.
     if (adapter.link && entry.repairs < REPAIRS && seen.session) {
@@ -299,13 +323,11 @@ export function createWorker({
       try {
         launch(entry, adapter, repairPrompt(problem));
         return;
-      } catch {}
+      } catch (error) {
+        return discardReceipt(entry, adapter, String(error));
+      }
     }
-    const notice: Notice = {
-      title: `「${entry.job.rule.name}」的回执读不懂`,
-      text: `这一轮按第一行算结束了，但它要中台做的事没有生效（${problem}）。原文在 ${files(entry).out}。`,
-    };
-    endWith(entry, { ...result, notice: [...(result.notice ?? []), notice] });
+    discardReceipt(entry, adapter, problem);
   }
 
   /** Looks at a run in hand: still going, to be stopped, or ended. */
@@ -330,6 +352,13 @@ export function createWorker({
       }
     }
     const { exit } = files(entry);
+    if (entry.stopping !== undefined) {
+      if (groupAlive(entry)) {
+        if (now() - entry.stopping > STOP_GRACE) signal(entry, "SIGKILL");
+        return;
+      }
+      return conclude(entry, adapter, existsSync(exit) ? Number(readFileSync(exit, "utf8").trim()) : null);
+    }
     if (existsSync(exit)) return conclude(entry, adapter, Number(readFileSync(exit, "utf8").trim()));
     // The shell can publish its exit between the first file check and ps returning.
     if (!alive(entry)) {
@@ -347,10 +376,6 @@ export function createWorker({
       }
     }
     const moment = now();
-    if (entry.stopping) {
-      if (moment - entry.stopping > STOP_GRACE) signal(entry, "SIGKILL");
-      return;
-    }
     const limit = (entry.job.agent.timeout ?? TIMEOUT_MINUTES) * 60_000;
     if (moment - (entry.launchedAt ?? moment) > limit) return stop(entry, "timeout");
     if (seen.finished) {
@@ -359,14 +384,13 @@ export function createWorker({
         entry.finishedAt = moment;
         save(entry);
       } else if (moment - entry.finishedAt > GRACE) {
-        signal(entry, "SIGTERM");
-        setTimeout(() => signal(entry, "SIGKILL"), STOP_GRACE).unref();
+        stop(entry, "finished");
       }
     }
   }
 
-  function stop(entry: Entry, why: "cancel" | "timeout") {
-    if (entry.stopping || entry.result) return;
+  function stop(entry: Entry, why: "cancel" | "timeout" | "finished") {
+    if (entry.stopping !== undefined || entry.result) return;
     entry.stopping = now();
     entry.why = why;
     save(entry);

@@ -8,6 +8,15 @@ import { cronOf, eventRule, SCHEDULE, type Rules } from "./rules.ts";
 /** Seen this recently counts as online. */
 const ONLINE = 120_000;
 const PAGE = 60;
+const WEEK = 7 * 86400_000;
+
+export type Spending = { rounds: number; tokens: number; cost: number; missingTokens: number; missingCost: number };
+const SPENDING = `SELECT COUNT(*) AS rounds,
+  COALESCE(SUM(COALESCE(json_extract(usage, '$.input'), 0) + COALESCE(json_extract(usage, '$.output'), 0)), 0) AS tokens,
+  COALESCE(SUM(json_extract(usage, '$.cost')), 0) AS cost,
+  COUNT(*) - COUNT(COALESCE(json_extract(usage, '$.input'), json_extract(usage, '$.output'))) AS missingTokens,
+  COUNT(*) - COUNT(json_extract(usage, '$.cost')) AS missingCost
+  FROM runs WHERE finished_at >= ? AND (claimed_at IS NOT NULL OR usage IS NOT NULL)`;
 
 const COUNTS = `
   SELECT rule, agent, state, COUNT(*) AS count,
@@ -30,6 +39,11 @@ type Reads = {
 };
 
 const sum = (counted: Row[], field: string): number => counted.reduce((total, row) => total + row[field], 0);
+
+export function spendingOf(all: Reads["all"], now: number, timezone: string) {
+  const since = (time: number) => all<Spending>(SPENDING, [iso(time)])[0];
+  return { today: since(dayStart(now, timezone)), week: since(now - WEEK) };
+}
 
 function tally(counted: Row[]) {
   const inState = (state: string) => counted.reduce((total, row) => total + (row.state === state ? row.count : 0), 0);
@@ -68,6 +82,7 @@ export function stateOf(now: number, before: number | undefined, rules: Rules, {
   return {
     now: iso(now),
     timezone: rules.timezone,
+    spending: spendingOf(all, now, rules.timezone),
     totals: { ...tally(counts), attention: openCards.length },
     cards: openCards.map((card) => view(card)),
     recentCards: recentCards.map((card) => view(card)),

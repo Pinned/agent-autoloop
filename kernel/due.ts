@@ -1,7 +1,7 @@
 // The next moment each thing needs the clock: schedules, reviews, retries, card resends, a worker gone quiet, a lease
 // run out. The shell keeps one timer, for the earliest of them, so nothing has to poll.
 import { rows, type Row, type View } from "./evolve.ts";
-import { agentsOf, configuration, waitingOn, workers } from "./query.ts";
+import { configuration, waitingOn, workers } from "./query.ts";
 
 export const MINUTE = 60_000;
 /** A worker seen this recently is really there, so a run it has stopped mentioning has really gone quiet. */
@@ -36,7 +36,7 @@ export function deadlines(view: View, now: number) {
   }
   for (const worker of workers(view)) {
     const seen = view.get("seen", `worker:${worker}`);
-    const waiting = waitingOn(view, agentsOf(view, worker), now);
+    const waiting = waitingOn(view, worker, now);
     if (!waiting.length) continue;
     const offlineKey = `worker:${worker}:offline:${seen ? seen.seen_at : "never"}`;
     // The sweep acts strictly after each limit, hence the extra millisecond.

@@ -4,6 +4,7 @@
 // agent-autoloop is overwritten; with nowhere to put it, or someone else's coming first, the next step printed doesn't work; the next
 // step says `try` when nothing has been started; it asks for sudo; the Node advice can't be followed as written, leaving out
 // that Homebrew's node@24 isn't on PATH; running it again redoes the setup, or installs a service after --no-service.
+// A normal umask or a pre-existing directory must not expose the database, event text or worker output to other users.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
@@ -17,6 +18,7 @@ import {
   readlinkSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -49,7 +51,7 @@ function computer({ node = "real" }: { node?: "real" | "old" | "none" } = {}) {
   const person = join(dir, `person-${++people}`);
   const tools = join(person, "tools");
   mkdirSync(tools, { recursive: true });
-  for (const name of ["mkdir", "ln", "cat", "cp"]) symlinkSync(system(name), join(tools, name));
+  for (const name of ["mkdir", "ln", "cat", "cp", "chmod"]) symlinkSync(system(name), join(tools, name));
   const called = join(person, "called");
   executable(
     join(tools, "git"),
@@ -82,6 +84,15 @@ const made = (place: string) => {
   return place;
 };
 const isLink = (file: string) => lstatSync(file, { throwIfNoEntry: false })?.isSymbolicLink() === true;
+
+test("installation keeps data private even when its root already exists with mode 0755", () => {
+  const it = computer();
+  mkdirSync(it.hub, { mode: 0o755 });
+  chmodSync(it.hub, 0o755);
+  const done = it.run([it.local]);
+  assert.equal(done.status, 0, done.stderr + done.stdout);
+  assert.equal(statSync(it.hub).mode & 0o777, 0o700);
+});
 
 test("the command goes in ~/.local/bin when that's on PATH, even behind another place it could go", () => {
   const it = computer();

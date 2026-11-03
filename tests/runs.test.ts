@@ -10,7 +10,8 @@
 // stale one is accepted after the run was handed out again; a replayed result isn't recognised, or a different one under an
 // old token is taken; a failed run's receipt takes effect (it will run again) beyond what it tells the owner; a worker
 // gone with work in hand frees its group while the work may still be going; cancelling frees the thread before the worker
-// has stopped; a retry doesn't get its own session back; what a run's usage was is lost.
+// has stopped; a retry doesn't get its own session back; retries overwrite usage or replayed results count it twice.
+// Reloading rules must not combine an old agent with a new folder, or change an already claimed job and its worker.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { at, setup } from "./helpers.ts";
@@ -40,6 +41,21 @@ const clean = () => {
 const claim = (worker: string, now: number) => claimNext(worker, `c${Math.random()}`, now);
 const state = (id: number) => one<{ state: string }>("SELECT state FROM runs WHERE id = ?", [id])!.state;
 
+test("usage accumulates across attempts once, without inventing unreported fields", () => {
+  clean();
+  ingest("app", note(1), at(0));
+  const first = claim("w1", at(0))!;
+  const failed = { outcome: "failed", usage: { input: 1000, output: 100, cost: 1 } };
+  finish(first.run, first.token, failed, at(1));
+  finish(first.run, first.token, failed, at(2));
+  const retry = claim("w1", at(6))!;
+  const done = { outcome: "done", usage: { input: 200, output: 20, cost: 0.2 } };
+  finish(retry.run, retry.token, done, at(7));
+  finish(retry.run, retry.token, done, at(8));
+  const usage = JSON.parse(one<{ usage: string }>("SELECT usage FROM runs WHERE id = ?", [first.run])!.usage);
+  assert.deepEqual(usage, { input: 1200, output: 120, cost: 1.2 });
+});
+
 test("work goes only to its agent's worker, once, with the rule and what to read", () => {
   clean();
   ingest("ops", alert("probe.public"), at(0));
@@ -58,6 +74,39 @@ test("work goes only to its agent's worker, once, with the rule and what to read
   assert.equal(w1.agent.access, "edit");
   assert.equal(claim("w1", at(1)), null);
   assert.equal(claim("nobody", at(1)), null);
+});
+
+test("queued work takes the current agent and folder together; a held claim keeps its configuration", async () => {
+  clean();
+  const hub = await import("../host/runtime.ts");
+  const before = hub.getView().get("config", "rules")!.value;
+  const next = structuredClone(before);
+  next.rules[0].to = "a2";
+  next.rules[0].cwd = "/new-project";
+  ingest("app", note(1), at(0));
+  try {
+    hub.execute("rules", [next], at(1));
+    assert.equal(claim("w1", at(2)), null, "the previous worker must not take the new configuration");
+    const first = claimNext("w2", "reloaded", at(2))!;
+    assert.ok(first);
+    assert.equal(first.agent.id, "a2");
+    assert.equal(first.rule.cwd, "/new-project");
+    const later = structuredClone(next);
+    later.rules[0].cwd = "/another-project";
+    later.agents.a2.worker = "w3";
+    later.agents.a2.access = "read";
+    hub.execute("rules", [later], at(3));
+    const again = claimNext("w2", "reloaded", at(4))!;
+    assert.ok(again, "a lost claim response still belongs to its original worker");
+    assert.deepEqual({ ...again, token: first.token }, first);
+    heartbeat("w2", [first.run], at(5));
+    assert.equal(hub.getView().get("runs", first.run)!.seen_at, new Date(at(5)).toISOString());
+    cancel(first.run, at(6));
+    assert.deepEqual(cancels("w2"), [first.run]);
+    assert.deepEqual(cancels("w3"), []);
+  } finally {
+    hub.execute("rules", [before], at(7));
+  }
 });
 
 test("a claim whose answer was lost gets the same work back, under a token that works", () => {

@@ -13,7 +13,7 @@ const edits: [string, string, string, string][] = [
   [
     "worker-boundary",
     "decide.ts",
-    'run.state === "queued" &&\n    agents.includes(run.agent)',
+    'run.state === "queued" &&\n    agents.includes(ruleNamed(draft, run.rule)?.to ?? "")',
     'run.state === "queued" &&\n    true',
   ],
   ["retry-delay", "decide.ts", "5 * MINUTE * 2 ** (attempts - 1)", "0 * MINUTE * 2 ** (attempts - 1)"],

@@ -6,12 +6,22 @@ export const EVENT_TYPE = /^[a-z][a-z0-9_.-]{0,63}$/;
 export type Later = { key: string; at?: string; about?: string; cancel?: boolean };
 export type Ask = { title: string; text: string; options: string[]; recommend?: number; about?: string; key?: string };
 export type Notice = { title: string; text: string; key?: string };
+export type Usage = { input?: number; output?: number; cached?: number; cost?: number };
+
+/** Missing figures stay missing: zero is a price or token count that was actually reported. */
+export function addUsage(total: Usage | undefined, more: Usage | undefined): Usage | undefined {
+  if (!more) return total;
+  const result = { ...total };
+  for (const field of Object.keys(more) as (keyof Usage)[])
+    if (more[field] !== undefined) result[field] = (result[field] ?? 0) + more[field];
+  return result;
+}
 export type Result = {
   outcome: "done" | "nothing" | "failed" | "cancelled";
   summary?: string;
   error?: string;
   session?: string;
-  usage?: { input?: number; output?: number; cached?: number; cost?: number };
+  usage?: Usage;
   ask?: Ask[];
   notice?: Notice[];
   resolve?: { card: number; reason: string }[];

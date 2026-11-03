@@ -6,8 +6,9 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { loadPlugin } from "../host/plugins.ts";
+import type { Usage } from "../protocol/validate.ts";
 
-export type Usage = { input?: number; output?: number; cached?: number; cost?: number };
+export type { Usage } from "../protocol/validate.ts";
 export type Access = "read" | "edit" | "full";
 /** One launch of an agent. `resume` is the session to go on in, if any; otherwise `session` is a new id it may use. */
 export type Turn = {

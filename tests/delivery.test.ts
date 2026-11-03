@@ -1,7 +1,8 @@
 // Failure modes: missing labels/forks dispatch; draft or skipped checks authorize merging; a push
 // during review or main advancing after checks gets an unreviewed attestation; a dropped merge is repeated; auto-merge
 // survives a refusal; health hides a failed/unfinished Ship; a later release changes an already completed handoff;
-// a successful label deletion with a lost response turns a completed deployment into a false failure.
+// a successful label deletion with a lost response turns a completed deployment into a false failure;
+// switching to review-only while checks run still merges the PR.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { deliver, fullCheck, waitLive, disableAuto, type DeliveryIO } from "../plugins/delivery/delivery.ts";
@@ -151,6 +152,18 @@ test("findings and review-only mode stop before merge", async () => {
   assert.equal((await deliver("example/app", 1, second.io)).reviewOnly, true);
   assert.equal(second.state.merges, 0);
 });
+test("review-only added during checks stops before the merge attestation", async () => {
+  const { io, state } = fixture();
+  const api = io.api;
+  io.api = async (...args) => {
+    if (args[0].startsWith("actions/workflows/check.yml")) state.pr.labels.push({ name: "deliver-review" });
+    return api(...args);
+  };
+  assert.equal((await deliver("example/app", 1, io)).reviewOnly, true);
+  assert.equal(state.merges, 0);
+  assert.ok(!state.statuses.some((s: any) => s.context === "my-review"));
+});
+
 test("a merge response lost after acceptance is read back, never repeated", async () => {
   const { io, state } = fixture();
   const merge = io.merge;

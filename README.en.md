@@ -80,6 +80,8 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 
 In an interactive terminal, just type the option number. In a non-interactive terminal, run `agent-autoloop answer 1 2` to pick green, then run `agent-autoloop status` — you'll see the agent resumed its previous conversation and completed the task.
 
+`status` also shows completed rounds, tokens and cost for today and the past seven days. Reported usage accumulates across retries of a round, and rounds created earlier but completed today are included. Rounds that did not report a price are identified separately.
+
 ---
 
 ## Ready-to-use recipes
@@ -152,7 +154,7 @@ Order checked. We have enough stock in the warehouse.
 ```
 ````
 
-Besides `ask`, receipts can send notifications (`notice`), resolve open cards (`resolve`), schedule future checks (`later`), or emit new events (`events`). If the agent outputs invalid JSON in the block, the worker resumes the same session and asks it to rewrite just the final message — without redoing the actual work.
+Besides `ask`, receipts can send notifications (`notice`), resolve open cards (`resolve`), schedule future checks (`later`), or emit new events (`events`). If the agent outputs invalid JSON in the block, the worker resumes the same session and asks it to rewrite just the final message. If rewriting fails or times out, it preserves the original business outcome and reports that the receipt was not applied, without repeating completed work.
 
 When browser access, sign-in, or verification needs the owner's intervention, the agent preserves completed work and pending checks and hands them off with `ask`. It does not schedule repeated attempts for that block or send another card for an already open question. After the answer, it continues only the remaining steps.
 

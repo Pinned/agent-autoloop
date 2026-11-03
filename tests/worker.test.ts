@@ -11,8 +11,11 @@
 // place for ever; an old turn's exit is taken for a new one's; the hub gone for ten minutes isn't told, told every minute,
 // taken as told when the telling failed, tried without end, or not told again after it came back and went away again.
 // A shell replacing itself with the final move must not lose its identity before the exit file is published.
+// A failed or timed-out receipt repair must preserve the original business outcome; cancellation must reap a child
+// ignoring SIGTERM even after restart; adding usage must not turn a missing price into a reported zero.
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { setup } from "./helpers.ts";
@@ -309,6 +312,45 @@ test("a run told to stop stops, with its children, and only then is it reported"
   assert.ok(!existsSync(marker));
 });
 
+test("cancellation waits for a child ignoring SIGTERM, including after worker restart", async () => {
+  const hub = fakeHub();
+  let clock = Date.now();
+  const ready = join(folder, "stubborn-ready");
+  const script = said(
+    "stubborn.cjs",
+    `process.on('SIGTERM', () => {}); require('node:fs').writeFileSync(${JSON.stringify(ready)}, String(process.pid)); setInterval(() => {}, 1000);`,
+  );
+  hub.jobs.push(job({ command: [process.execPath, script] }));
+  const w = worker(hub, { now: () => clock });
+  await until(w, () => existsSync(ready));
+  const entry = w.entries()[0];
+  const child = readFileSync(ready, "utf8");
+  try {
+    hub.cancel = [entry.run];
+    await w.tick();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const again = worker(hub, { now: () => clock });
+    await again.tick();
+    assert.equal(hub.results.length, 0, "the wrapper exited, but its child has not");
+    clock += 11_000;
+    await until(again, () => hub.results.length === 1);
+    const live = execFileSync("ps", ["-ax", "-o", "pid=", "-o", "stat="], { encoding: "utf8" })
+      .trim()
+      .split("\n")
+      .some((line) => {
+        const [pid, state] = line.trim().split(/\s+/);
+        return pid === child && !state.startsWith("Z");
+      });
+    assert.equal(live, false);
+    assert.equal(hub.results[0].outcome, "cancelled");
+  } finally {
+    try {
+      process.kill(-entry.pid!, "SIGKILL");
+    } catch {}
+    rmSync(entry.dir, { recursive: true, force: true });
+  }
+});
+
 test("a run over its time is stopped and comes back failed", async () => {
   const hub = fakeHub();
   let clock = Date.now();
@@ -367,8 +409,49 @@ test("a receipt that can't be read is asked for again in the same session, doing
   assert.match(readFileSync(join(folder, "asked-again.txt"), "utf8"), /不要重做/);
   assert.deepEqual(hub.results[0].notice, [{ title: "看一眼", text: "这个" }]);
   assert.equal(hub.results[0].session, "s-1");
-  assert.deepEqual(hub.results[0].usage, { input: 2, output: 2, cached: 0, cost: 0 }, "both turns count");
+  assert.deepEqual(hub.results[0].usage, { input: 2, output: 2 }, "both turns count; no turn reported a price");
 });
+
+for (const failure of ["exit", "timeout", "unreadable", "empty", "failed-message"] as const) {
+  test(`a ${failure} receipt repair keeps the original completed business result`, async () => {
+    const hub = fakeHub();
+    let clock = Date.now();
+    const wrong = said(
+      `repair-${failure}`,
+      `session=original\n业务已经完成\n${FENCE}agent-autoloop\n{ bad\n${FENCE}\n`,
+    );
+    const marker = join(folder, `business-${failure}`);
+    const repair =
+      failure === "exit"
+        ? "echo repair-failed >&2; exit 1"
+        : failure === "timeout"
+          ? "sleep 30"
+          : failure === "empty"
+            ? "true"
+            : failure === "failed-message"
+              ? "echo 没跑成：补回执失败"
+              : `printf 'session=original\\n没跑成：补回执失败\\n${FENCE}agent-autoloop\\n{ bad\\n${FENCE}\\n'`;
+    hub.jobs.push(
+      job({
+        use: "scripted",
+        timeout: 1,
+        command: [`if [ -n "$1" ]; then ${repair}; else echo once >> "${marker}"; cat "${wrong}"; fi`],
+      }),
+    );
+    const w = worker(hub, { now: () => clock });
+    await until(w, () => w.entries().some((e) => e.repairs > 0));
+    if (failure === "timeout") clock += 61_000;
+    await until(w, () => hub.results.length === 1);
+    assert.equal(readFileSync(marker, "utf8"), "once\n");
+    assert.equal(hub.results[0].outcome, "done");
+    assert.equal(hub.results[0].summary, "业务已经完成");
+    assert.match(hub.results[0].notice[0].text, /stdout-1\.log/);
+    assert.equal(
+      hub.results[0].usage.input,
+      failure === "unreadable" ? 3 : ["empty", "failed-message"].includes(failure) ? 2 : 1,
+    );
+  });
+}
 
 test("a receipt that stays unreadable is given up on: the run ends on its first line, and the owner hears", async () => {
   const hub = fakeHub();

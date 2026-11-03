@@ -5,6 +5,7 @@
 // Rebuilding a projection must hold the same transaction as its log snapshot, or it can overwrite a concurrent receipt.
 // Source event IDs must not collide with internally generated answer or timer IDs.
 // Quiet notices must not escape through a channel; a stale writer must receive Conflict rather than a database failure.
+// Existing logs can contain a queued run with an old agent after a rules change; replay must retain claimed configurations.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -46,6 +47,48 @@ test("rules, receipt replay and rebuild retain the exact acknowledgment", async 
   assert.deepEqual(snapshot(rebuilt), expected);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM projections WHERE key='junk'").get()!.n, 0);
   db.close();
+});
+
+test("old logs with stale queued routing claim the current configuration and replay held versions", () => {
+  let view = seeded();
+  const log: Fact[] = [...decide(empty(), { type: "rules", args: [rules] }, 1, environment).facts];
+  const act = (type: string, ...args: unknown[]) => {
+    const decided = decide(view, { type, args }, 1000 + log.length, environment);
+    log.push(...decided.facts);
+    view = evolve(view, decided.facts);
+    return decided.value;
+  };
+  try {
+    act("ingest", "app", { id: "old-log", type: "feedback.new" });
+    const changed = structuredClone(rules);
+    changed.rules[0].to = "a2";
+    changed.rules[0].cwd = "/new-project";
+    const version = view.seq + 1;
+    // Before this fix, a rules fact replaced only config and left queued assignments untouched.
+    const oldFact: Fact = {
+      version: 1,
+      seq: version,
+      at: 1002,
+      type: "rules",
+      changes: [{ table: "config", key: "rules", row: { value: changed, version } }],
+    };
+    log.push(oldFact);
+    view = evolve(view, [oldFact]);
+    assert.equal(act("claimNext", "w1", "old-worker"), null);
+    const first = act("claimNext", "w2", "held");
+    assert.equal(first.agent.id, "a2");
+    assert.equal(first.rule.cwd, "/new-project");
+    act("rules", rules);
+    const rebuilt = evolve(empty(), log);
+    try {
+      const again = decide(rebuilt, { type: "claimNext", args: ["w2", "held"] }, 2000, environment).value;
+      assert.deepEqual({ ...again, token: first.token }, first);
+    } finally {
+      rebuilt.close();
+    }
+  } finally {
+    view.close();
+  }
 });
 test("facts replay the whole receipt with no capability plaintext", () => {
   let view = empty();

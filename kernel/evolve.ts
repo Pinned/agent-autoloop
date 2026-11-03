@@ -21,7 +21,7 @@ export type Match = Record<string, SQLInputValue | SQLInputValue[] | { not: null
 const NUMBERED = new Set<Table>(["events", "runs", "cards", "timers"]);
 const indexes: Partial<Record<Table, string[][]>> = {
   events: [["source", "key"], ["routed", "id"], ["id"]],
-  runs: [["state", "id"], ["rule", "lane", "state", "id"], ["id"]],
+  runs: [["state", "id"], ["rule", "lane", "state", "id"], ["id"], ["finished_at"]],
   run_events: [["run_id"], ["event_id"]],
   cards: [
     ["key", "id"],
@@ -211,7 +211,12 @@ export function evolve(view: View, facts: Iterable<Fact>, db = view.db, reset = 
       if (["events", "runs", "cards"].includes(table))
         statement(db, "INSERT OR IGNORE INTO projection_refs VALUES (?,?,?)").run(table, key, fact.seq);
       if (row === null) remove.run(table, key);
-      else put.run(table, key, JSON.stringify(row));
+      else {
+        const data = JSON.stringify(row);
+        put.run(table, key, data);
+        // A held run keeps the configuration it claimed, including through projection rebuilds.
+        if (table === "config" && key === "rules") put.run(table, String(row.version), data);
+      }
     }
     const current = new View(db);
     const deliveries = new Set<string>();

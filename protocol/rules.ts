@@ -162,6 +162,7 @@ export function parseRules(json: string, now: number, timezone: string): Rules {
   }
   const names = new Set<string>();
   for (const rule of rules.rules) checkRule(issues, rules, rule, names, now);
+  if (issues.length) throw new RulesError(issues);
   const limits = new Map<string, number | undefined>();
   for (const { group, parallel } of rules.rules) {
     if (limits.has(group) && limits.get(group) !== parallel) issues.push(`组「${group}」里的规则 parallel 要一致`);

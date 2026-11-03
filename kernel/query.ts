@@ -4,19 +4,26 @@ import { rows, type Fact, type Row, type View } from "./evolve.ts";
 import type { Rules } from "./rules.ts";
 import type { Job } from "../protocol/job.ts";
 
-export const configuration = (view: View) => view.get("config", "rules")?.value as Rules;
+export function configuration(view: View, version?: number): Rules {
+  const current = view.get("config", "rules");
+  return (version === undefined || version === current?.version ? current : view.get("config", version))?.value;
+}
+export const workerOf = (view: View, run: Row) => configuration(view, run.rules_version).agents[run.agent]?.worker;
 export function agentsOf(view: View, worker: string) {
   const agents = Object.entries(configuration(view).agents);
   return agents.filter(([, agent]) => agent.worker === worker).map(([id]) => id);
 }
 export const workers = (view: View) =>
-  new Set(Object.values(configuration(view)?.agents ?? {}).map((agent) => agent.worker));
+  new Set([
+    ...Object.values(configuration(view)?.agents ?? {}).map((agent) => agent.worker),
+    ...rows(view, "runs", { state: "claimed" }).map((run) => workerOf(view, run)!),
+  ]);
 
 /** What a worker's agents have on: runs in hand and runs ready to be claimed. */
-export function waitingOn(view: View, agents: string[], now: number) {
+export function waitingOn(view: View, worker: string, now: number) {
   const ready = (run: Row) => run.state === "queued" && Date.parse(run.not_before) <= now;
-  return rows(view, "runs", { state: ["queued", "claimed"], agent: agents }).filter(
-    (run) => agents.includes(run.agent) && (run.state === "claimed" || ready(run)),
+  return rows(view, "runs", { state: ["queued", "claimed"] }).filter(
+    (run) => workerOf(view, run) === worker && (run.state === "claimed" || ready(run)),
   );
 }
 
@@ -64,7 +71,7 @@ export function cardView(card: Row, env: Environment, ref: string | null = null,
 }
 
 export function jobOf(view: View, run: Row, env: Environment): Job {
-  const rules = configuration(view);
+  const rules = configuration(view, run.rules_version);
   const { name, cwd, skill, prompt, emits } = rules.rules.find((rule) => rule.name === run.rule)!;
   const events = eventsOf(view, run.id);
   const eventIds = events.map((event) => event.id);
@@ -111,9 +118,8 @@ export function jobOf(view: View, run: Row, env: Environment): Job {
 }
 
 export function cancels(view: View, worker: string): number[] {
-  const agents = agentsOf(view, worker);
-  const stopping = (run: Row) => run.state === "claimed" && run.cancel_at !== null && agents.includes(run.agent);
-  return rows(view, "runs", { state: "claimed", agent: agents })
+  const stopping = (run: Row) => run.state === "claimed" && run.cancel_at !== null && workerOf(view, run) === worker;
+  return rows(view, "runs", { state: "claimed" })
     .filter(stopping)
     .map((run) => run.id);
 }

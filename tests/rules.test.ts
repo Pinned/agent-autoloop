@@ -5,7 +5,8 @@
 // a rule with neither a skill nor a prompt, or without a folder; a misspelt field taken silently; a rule running more
 // than one at a time without saying how many, or rules in one group disagreeing on it; an emit naming a source that isn't
 // there; a scheduled task shown on the page naming a source or agent that isn't there or a malformed schedule; a time zone
-// that doesn't exist; the reserved source redefined. A good file changing on disk takes effect; a bad one doesn't, and says why.
+// that doesn't exist; the reserved source redefined; a null rule crashes reload instead of keeping the old rules.
+// A good file changing on disk takes effect; a bad one doesn't, and says why.
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -136,6 +137,20 @@ test("types match exactly, by prefix or all", () => {
   assert.ok(typeMatches(["alert.raised"], "alert.raised"));
   assert.ok(!typeMatches(["alert.raised"], "alert.raised.more"));
   assert.ok(typeMatches(["*"], "anything"));
+});
+
+test("a null rule is a rules error and leaves the running configuration intact", () => {
+  problem((r) => {
+    r.rules = [null];
+  }, /对象/);
+  const file = join(home, "null-rules.json");
+  const broken = good();
+  broken.rules = [null];
+  writeFileSync(file, JSON.stringify(broken));
+  const answer = reloadRules(file);
+  assert.equal(answer.changed, false);
+  assert.match(answer.problem!, /对象/);
+  assert.equal(ruleNamed("意见")!.to, "a1");
 });
 
 test("the lookups the hub uses", () => {
