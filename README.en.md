@@ -47,12 +47,12 @@ At ~1,650 lines of code with zero runtime dependencies and purely deterministic 
 
 ## Try it in 30 seconds
 
-Works on macOS and Linux. You need Node 24, Git, GitHub CLI (`gh`) signed in with access to this repository, and at least one command-line agent already signed in. You can also hand the [installation guide](INSTALL.md) directly to your agent and let it install everything for you.
+Works on macOS and Linux. You need Node 24, Git, curl, and at least one command-line agent already signed in. Installation does not require a GitHub account or GitHub CLI (`gh`). You can also hand the [installation guide](INSTALL.md) directly to your agent and let it install everything for you.
 
 ### 1. Install in one command
 
 ```bash
-gh api repos/KKKKhazix/agent-autoloop/contents/install.sh -H 'Accept: application/vnd.github.raw+json' | sh
+curl -fsSL https://raw.githubusercontent.com/KKKKhazix/agent-autoloop/main/install.sh | sh
 ```
 
 ### 2. Run your first loop (ask → exit with 0 cost → make the call → resume)

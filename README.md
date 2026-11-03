@@ -45,12 +45,12 @@
 
 ## 30 秒上手体验
 
-支持 macOS 和 Linux。运行前需要装好 Node 24、Git、已登录的 GitHub CLI（`gh`），以及任意一个你已经登录好的命令行 Agent。你也可以直接把 [安装说明](INSTALL.md) 丢给你的 Agent，让它替你装好。
+支持 macOS 和 Linux。运行前需要装好 Node 24、Git、curl，以及任意一个你已经登录好的命令行 Agent。安装不需要 GitHub 账号或 GitHub CLI（`gh`）。你也可以直接把 [安装说明](INSTALL.md) 丢给你的 Agent，让它替你装好。
 
 ### 1. 一条命令安装
 
 ```bash
-gh api repos/KKKKhazix/agent-autoloop/contents/install.sh -H 'Accept: application/vnd.github.raw+json' | sh
+curl -fsSL https://raw.githubusercontent.com/KKKKhazix/agent-autoloop/main/install.sh | sh
 ```
 
 ### 2. 跑通第一次「提问 → 退出等回复 → 拍板 → 接着干完」
