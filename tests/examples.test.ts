@@ -1,11 +1,18 @@
 // Failure modes: shell examples cross credential boundaries, drop a receipt or forget the delivered version; answering a
-// card does not resume its matter; the example exits successfully after an HTTP error. Only curl, jq and shell builtins run.
+// card does not resume its matter; the example exits successfully after an HTTP error; unrelated scheduled work takes the
+// example's claim. Only curl, jq and shell builtins run.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { test, after } from "node:test";
 import { setup } from "./helpers.ts";
 import { conformance } from "../protocol/conformance.ts";
-setup("examples");
+const home = setup("examples");
+const rules = JSON.parse(readFileSync(process.env.AGENT_AUTOLOOP_RULES!, "utf8"));
+rules.rules = rules.rules.filter(({ when }: { when: object }) => "source" in when);
+process.env.AGENT_AUTOLOOP_RULES = join(home, "rules.json");
+writeFileSync(process.env.AGENT_AUTOLOOP_RULES, JSON.stringify(rules));
 const hub = await import("../host/runtime.ts");
 const { serve } = await import("../host/http.ts");
 const keys = {
@@ -35,6 +42,9 @@ const shell = (file: string, key: string, extra: Record<string, string> = {}) =>
     child.on("close", (code) => resolve({ code, out, err }));
   });
 test("curl and jq examples run against a conforming hub and complete the answer loop", async () => {
+  hub.fixtureClear("schedules");
+  hub.tick(Date.now() - 5 * 60_000);
+  hub.tick();
   const result = await conformance(url, { keys, eventType: "feedback.new", answerer: "me" });
   assert.ok(result.passed);
   for (const table of ["events", "runs", "run_events", "cards", "deliveries", "timers", "seen"] as const)

@@ -3,7 +3,7 @@
 // couldn't work, or that there was nothing to do, is taken as work done; a heading or a receipt ends up in the summary; a
 // receipt that doesn't parse, has unknown fields or breaks the protocol's limits is applied rather than sent back to be
 // rewritten; the receipt isn't found when the message says something after it, or a code block of another kind is taken for
-// one; a result longer than the hub takes is sent as it is.
+// one; a result longer than the hub takes is sent as it is; a browser/login block is reported as retryable failure.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { promptFor, readMessage, repairPrompt, resultFrom } from "../worker/contract.ts";
@@ -86,6 +86,33 @@ test("the prompt mentions what this run is carrying on, and what it may emit", (
   assert.match(text, /timers/);
   assert.match(text, /"events"/);
   assert.match(text, /feedback\.new/);
+});
+
+test("a block needing the owner is handed off without restarting completed work", () => {
+  const text = promptFor(job() as any, "/tmp/ctx.json");
+  assert.doesNotMatch(text, /工具或环境挡住了、没能处理：写“没跑成/);
+  assert.match(text, /待你处理：[\s\S]*ask/);
+  assert.match(text, /同一阻塞[\s\S]*open[\s\S]*不重复[\s\S]*later/);
+  const receipt = {
+    ask: [
+      {
+        title: "网页验收需要恢复连接",
+        text: "数据已更新，页面显示还没核实。请恢复浏览器连接后继续。",
+        options: ["已恢复，继续验收", "暂不继续"],
+        about: "数据更新已经完成，只验收页面，不重复更新。",
+        key: "browser-access",
+      },
+    ],
+  };
+  const result = resultFrom(
+    readMessage(`待你处理：网页验收连接不可用\n\`\`\`agent-autoloop\n${JSON.stringify(receipt)}\n\`\`\``),
+    { session: "browser-session" },
+  );
+  assert.equal(result.problem, undefined);
+  assert.equal(result.result.outcome, "done", "the round ends while its question remains open");
+  assert.deepEqual(result.result.ask, receipt.ask);
+  assert.equal(result.result.later, undefined);
+  assert.equal(result.result.session, "browser-session");
 });
 
 test("the first line says how it ended", () => {

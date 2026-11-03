@@ -1,11 +1,23 @@
 // What's different about each agent. Failure cases: a level of access maps to the wrong flag, full access is given unasked,
 // a retry starts a new conversation instead of going on, an error or a turn that never finished counts as an answer, a
-// program's warning is taken for its answer, the session isn't picked out, a command line's placeholder isn't filled in.
+// program's warning is taken for its answer, the session isn't picked out, a command line's placeholder isn't filled in,
+// or a background Codex run assumes it inherited an application's browser connection.
 import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { test } from "node:test";
+import { setup } from "./helpers.ts";
 
 process.env.PATH = `/nonexistent:${process.env.PATH}`;
 const { findProgram } = await import("../worker/agents.ts");
+// Command construction must also run on CI machines without Codex installed.
+const shell = process.env.SHELL;
+const lookup = join(setup("adapters"), "lookup.sh");
+writeFileSync(lookup, '#!/bin/sh\nprintf "%s\\n" /test/codex\n', { mode: 0o755 });
+process.env.SHELL = lookup;
+findProgram("codex");
+if (shell === undefined) delete process.env.SHELL;
+else process.env.SHELL = shell;
 type Adapter = import("../worker/agents.ts").Adapter;
 const claude: Adapter = (await import("../plugins/claude/agent.ts")).default;
 const codex: Adapter = (await import("../plugins/codex/agent.ts")).default;
@@ -83,16 +95,30 @@ test("Claude Code: reading its result", () => {
 test("Codex: access, new and going on", { skip: !stubbed(codex, {}) }, () => {
   const argv = stubbed(codex, {})!;
   assert.deepEqual(argv.slice(1, 4), ["exec", "--json", "--skip-git-repo-check"]);
-  assert.equal(argv.at(-1), "做这件事");
+  assert.ok(argv.at(-1)!.endsWith("做这件事"));
   assert.ok(argv.includes('sandbox_mode="workspace-write"'));
   assert.ok(argv.includes('approval_policy="never"'));
   assert.ok(stubbed(codex, { access: "read" })!.includes('sandbox_mode="read-only"'));
   assert.ok(stubbed(codex, { access: "full" })!.includes('sandbox_mode="danger-full-access"'));
   const again = stubbed(codex, { resume: "thread-1", model: "m", effort: "xhigh" })!;
   assert.deepEqual(again.slice(1, 3), ["exec", "resume"]);
-  assert.deepEqual(again.slice(-2), ["thread-1", "做这件事"]);
+  assert.equal(again.at(-2), "thread-1");
+  assert.equal(again.at(-1), argv.at(-1));
   assert.ok(has(again, "-m", "m"));
   assert.ok(again.includes('model_reasoning_effort="xhigh"'));
+});
+
+test("Codex: new and resumed runs use only browser access configured for the background task", () => {
+  for (const resume of [null, "thread-1"]) {
+    const prompt = codex.command({ ...turn, resume }).at(-1)!;
+    assert.match(prompt, /后台 codex exec/);
+    assert.match(prompt, /本轮实际可用的浏览器工具/);
+    assert.match(prompt, /规则或 Skill.*浏览器入口/);
+    assert.match(prompt, /桌面应用.*浏览器连接/);
+    assert.match(prompt, /业务.*回执.*本轮/);
+    assert.ok(prompt.endsWith(turn.prompt));
+    assert.doesNotMatch(prompt, /M4|khazix|~\/\.local\/bin\/codex-browser/);
+  }
 });
 
 test("Codex: only a finished turn's last message is its answer", () => {

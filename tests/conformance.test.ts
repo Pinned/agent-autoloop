@@ -1,10 +1,17 @@
 // Failure modes: a different hub accepts the wrong key, drops idempotent receipts, loses answers or emits an invalid wire
-// object; the address-based conformance runner succeeds against a server that grants every caller access.
+// object; the address-based conformance runner succeeds against a server that grants every caller access, or an unrelated
+// scheduled run takes the work claim intended to verify an answer.
 import assert from "node:assert/strict";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { after, beforeEach, test } from "node:test";
 import { setup } from "./helpers.ts";
 import { conformance } from "../protocol/conformance.ts";
-setup("conformance");
+const home = setup("conformance");
+const rules = JSON.parse(readFileSync(process.env.AGENT_AUTOLOOP_RULES!, "utf8"));
+rules.rules = rules.rules.filter(({ when }: { when: object }) => "source" in when);
+process.env.AGENT_AUTOLOOP_RULES = join(home, "rules.json");
+writeFileSync(process.env.AGENT_AUTOLOOP_RULES, JSON.stringify(rules));
 const hub = await import("../host/runtime.ts");
 const { serve } = await import("../host/http.ts");
 const keys = {
@@ -26,6 +33,9 @@ beforeEach(() => {
 const base = `http://127.0.0.1:${(server.address() as any).port}`;
 const config = { keys, eventType: "feedback.new", answerer: "me" };
 test("address-based conformance checks all protocol doors", async () => {
+  hub.fixtureClear("schedules");
+  hub.tick(Date.now() - 5 * 60_000);
+  hub.tick();
   const result = await conformance(`http://127.0.0.1:${(server.address() as any).port}`, {
     keys,
     eventType: "feedback.new",

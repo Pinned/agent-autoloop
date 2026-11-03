@@ -120,6 +120,8 @@ Order checked. We have enough stock in the warehouse.
 
 Besides `ask`, receipts can send notifications (`notice`), resolve open cards (`resolve`), schedule future checks (`later`), or emit new events (`events`). If the agent outputs invalid JSON in the block, the worker resumes the same session and asks it to rewrite just the final message — without redoing the actual work.
 
+When browser access, sign-in, or verification needs the owner's intervention, the agent preserves completed work and pending checks and hands them off with `ask`. It does not schedule repeated attempts for that block or send another card for an already open question. After the answer, it continues only the remaining steps.
+
 ---
 
 ## Plugin ecosystem: swap any of the four sides
@@ -140,6 +142,8 @@ Everything outside the kernel is a plugin:
 - **Claude Code**: `use: "claude"`
 - **Codex**: `use: "codex"`
 - **ACP-compatible agents**: `use: "acp"` (verified end-to-end with the official Codex ACP adapter)
+
+Web tasks use the agent's configured browser tools or a project-specified entry point. A working background CLI does not establish access to the desktop browser; [verify browser access separately](docs/plugins.md#浏览器接入).
 
 **Connect other CLI agents in one line (commands below are from each tool's official docs, ready for you to plug in):**
 
