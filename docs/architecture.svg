@@ -72,7 +72,7 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <!-- 中：Autoloop 内核 -->
 <rect class="core" x="250" y="68" width="460" height="316" rx="22"/>
 <text x="272" y="103" class="ct">Autoloop 内核</text>
-<text x="688" y="101" class="cs" text-anchor="end">约 1600 行 · 零依赖 · 确定性</text>
+<text x="688" y="101" class="cs" text-anchor="end">约 1650 行 · 零依赖 · 确定性</text>
 
 <!-- 内核核心职责 -->
 <rect class="duty" x="268" y="116" width="424" height="52" rx="10"/>
@@ -88,7 +88,7 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <rect class="chip" x="268" y="228" width="424" height="40" rx="9"/>
 <rect class="tag" x="276" y="235" width="92" height="26" rx="6"/>
 <text x="322" y="252.5" class="tn" text-anchor="middle">事件溯源</text>
-<text x="378" y="252.5" class="td">断电不丢，每步可追溯，升级从日志重建、不迁库</text>
+<text x="378" y="252.5" class="td">强杀不丢，每步可追溯，升级从日志重建、不迁库</text>
 
 <rect class="chip" x="268" y="276" width="424" height="40" rx="9"/>
 <rect class="tag" x="276" y="283" width="92" height="26" rx="6"/>

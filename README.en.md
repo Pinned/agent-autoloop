@@ -14,7 +14,7 @@
 
 Most of us use command-line agents like Claude Code or Codex by babysitting a terminal: you type a prompt, watch it run, and answer its questions. Close the window or walk away, and the workflow stops.
 
-**Agent Autoloop** turns your command-line agents into an always-on background loop. At the center is a deterministic **kernel** with zero runtime dependencies. Around it, **event sources, agents, notification channels, and even CI/CD delivery pipelines** are all hot-swappable **plugins**.
+**Agent Autoloop** turns your command-line agents into a background loop. At the center is a deterministic **kernel** with zero runtime dependencies. Around it, **event sources, agents, notification channels, and even CI/CD delivery pipelines** are all swappable **plugins**.
 
 Following the architecture diagram above, here is how a piece of work flows from start to finish:
 
@@ -22,26 +22,26 @@ Following the architecture diagram above, here is how a piece of work flows from
 2. **Dispatched by your rules (② Autoloop kernel)**: Your `rules.json` file decides which agent handles the event and in which folder. If multiple events arrive for the same subject while it's queued, the kernel merges them into a single round instead of running duplicate jobs.
 3. **Work one round and exit (③ Agent plugins)**: The agent runs one round, prints its conclusion and any follow-up actions in its final message, and exits immediately — branching into two loops:
    - **Auto-loop (top dashed line — quiet by default)**: If the agent can finish the job on its own, schedule a follow-up check (e.g., in 30 minutes), or trigger the next step, it loops automatically without bothering you.
-   - **Human-in-the-loop (bottom solid line — you just make the call)**: When the agent hits a sensitive action (deleting data, restarting a service, spending money, messaging users), the kernel sends a decision card (**④**) to your phone or desktop via a channel plugin. **While waiting hours for your reply, zero agent processes run and zero tokens are spent.** One tap on the card (**⑤**) wakes the original session right back up to finish the job.
+   - **Human-in-the-loop (bottom solid line — you just make the call)**: When the agent hits a sensitive action (deleting data, restarting a service, spending money, messaging users), the kernel sends a decision card (**④**) to your phone or desktop via a channel plugin. **While you take hours to reply, no agent process runs and no tokens are spent.** One tap on the card (**⑤**) resumes the original session to finish the job.
 
 ---
 
 ## Four kernel mechanisms
 
-At ~1,600 lines of code with zero runtime dependencies and purely deterministic execution, the kernel brings four battle-tested systems patterns to command-line agents:
+At ~1,650 lines of code with zero runtime dependencies and purely deterministic execution (identical inputs always give identical results), the kernel brings four proven systems patterns to command-line agents:
 
-- **Zero-cost wait**: Exits while waiting for your call — zero tokens spent, then resumes the original conversation. No hanging daemon processes or open connections; waiting state lives entirely in SQLite. Even if you reply three days later, zero processes run in the meantime, and one tap resumes the exact chat.
-- **Event sourcing**: Crash-safe and traceable at every step; upgrades rebuild from the log with zero migrations. All state is derived from an append-only fact log committed in the same SQLite transaction as its indexes. Confirmed facts survive power loss or `SIGKILL`, every run is inspectable with a single command, and schema format changes automatically rebuild projections from the log.
-- **Code / data split**: Untrusted text in an issue never enters the prompt string and can never alter the working directory or permission level. Like parameterized SQL, external event text is written only to a local data file while `rules.json` alone decides which agent runs, in which folder, and with what access (events carrying `cwd`, `agent`, or `access` fields are rejected outright).
-- **Hop circuit breaker**: Agent-to-agent chains automatically stop past 8 hops before burning through your quota. Like packet TTL in networking, hop counts carry across human questions and scheduled follow-ups and cannot be reset by an agent's receipt; past 8 hops, the kernel records the event, halts dispatch, and sends you a notice card.
+- **Zero-cost wait**: The process exits while waiting for your call, and the waiting state lives in SQLite — no daemon processes or open connections. If you reply three days later, nothing runs and no tokens are spent in the meantime; your answer resumes the original conversation.
+- **Event sourcing**: All state is derived from an append-only fact log, committed in the same SQLite transaction as its indexes before the hub replies. Confirmed facts survive `SIGKILL` (whole-machine power loss is not separately tested), every run can be traced with a single command, and format changes rebuild from the log without migration scripts.
+- **Code / data split**: Like parameterized SQL. Text from an issue or any other external event is written only to a local data file, never into the prompt; `rules.json` alone decides which agent runs, in which folder, and with what access. Events carrying `cwd`, `agent`, or `access` fields are rejected outright.
+- **Hop circuit breaker**: Like packet TTL in networking. Events returned by an agent can dispatch more agents, and the hop count keeps growing — across human questions and scheduled follow-ups too — and an agent cannot reset it. Past 8 hops, the kernel records the event, stops dispatching, and sends you a notice card.
 
 ---
 
 ## Key highlights
 
-- **One machine, one install command**: Runs right on your Mac or Linux machine. No cloud server or inbound ports required.
-- **Everything is a plugin — connect any CLI agent in one line**: No SDKs to integrate, no agent source code to fork. Any CLI tool that takes a prompt and prints a final reply (Claude Code, Codex, DeepSeek Harness, Pi, OpenClaw, Cursor, etc.) plugs in with a single config entry.
-- **No bloated web dashboard**: Stay focused. The system runs quietly in the background, pushes cards to Feishu, DingTalk, WeCom, Slack, Discord, or desktop notifications when it needs you, and lets you inspect everything from the CLI.
+- **One machine, one install command**: Runs right on your Mac or Linux machine. No cloud server or inbound ports required. The kernel makes no outbound requests; plugins connect in, and credentials stay with the plugins that use them.
+- **Plugins everywhere — connect a CLI agent in one line**: No SDKs to integrate, no agent source code to fork. Any CLI tool that takes a prompt and prints a final reply (Claude Code, Codex, DeepSeek Harness, Pi, OpenClaw, Cursor, etc.) plugs in with a single config entry.
+- **No web dashboard**: The system runs quietly in the background, pushes cards to Feishu, DingTalk, WeCom, Slack, Discord, or desktop notifications when it needs you, and lets you inspect everything from the CLI.
 
 ---
 
@@ -80,7 +80,7 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 
 In an interactive terminal, just type the option number. In a non-interactive terminal, run `agent-autoloop answer 1 2` to pick green, then run `agent-autoloop status` — you'll see the agent resumed its previous conversation and completed the task.
 
-`status` also shows completed rounds, tokens and cost for today and the past seven days. Reported usage accumulates across retries of a round, and rounds created earlier but completed today are included. Rounds that did not report a price are identified separately.
+`status` also shows completed rounds, tokens and cost for today and the past seven days; see the [manual](skills/agent-autoloop/SKILL.md#看情况回答) for how they are counted.
 
 ---
 
@@ -99,7 +99,7 @@ Start with the task you want to automate. The seven recipes include `rules.json`
 | [Claude-to-Codex browser handoff](examples/recipes/browser-handoff/README.md) | Delegate only web steps, return evidence to the main task, and resume the same Codex session after the owner clears a block | A verified browser entry point, Claude command permissions, target URL, and allowed actions |
 | [PR delivery](skills/agent-autoloop/SKILL.md#交付流水线) | Add `deliver` to a PR to review it, wait for CI, merge, wait for deployment, and verify the live version | Signed-in `gh`, a review tool, hub rules, and check, deployment, and health settings on the project's main branch |
 
-Feedback, website watch, and Feishu briefs default to Asia/Shanghai and a private Feishu conversation with the owner. Samples contain only fictional data and placeholders; configured business data stays in your private working directory. Scripts and receipts are verified with local HTTP and a fake Feishu CLI, not a live account or production business workflow.
+Feedback, website watch, and Feishu briefs default to Asia/Shanghai and send only to the owner's private Feishu chat. Sample data is fictional; scripts and receipts have been verified only with local HTTP and a fake Feishu CLI, not run end to end on a live account.
 
 **Enable a recipe:** Open its instructions, put the task Skill in your agent's skills directory, merge the sample rule entries into your existing `~/.agent-autoloop/rules.json`, replace worker names and paths, then run `agent-autoloop check`. Each recipe lists its additional setup. Saved rules take effect within seconds.
 
@@ -162,8 +162,6 @@ Order checked. We have enough stock in the warehouse.
 
 Besides `ask`, receipts can send notifications (`notice`), resolve open cards (`resolve`), schedule future checks (`later`), or emit new events (`events`). If the agent outputs invalid JSON in the block, the worker resumes the same session and asks it to rewrite just the final message. If rewriting fails or times out, it preserves the original business outcome and reports that the receipt was not applied, without repeating completed work.
 
-When browser access, sign-in, or verification needs the owner's intervention, the agent preserves completed work and pending checks and hands them off with `ask`. It does not schedule repeated attempts for that block or send another card for an already open question. After the answer, it continues only the remaining steps.
-
 ---
 
 ## Plugin ecosystem: swap any of the four sides
@@ -192,7 +190,7 @@ Choose `use` and a worker in the `agents` section of `rules.json`, then set the 
 
 Claude Code, Codex, and ACP have been tested with multi-turn Q&A and session resumption across processes. ACP was verified using the official Codex ACP adapter.
 
-Web tasks use the agent's configured browser tools or a project-specified entry point. A working background CLI does not establish access to the desktop browser; [verify browser access separately](docs/plugins.md#浏览器接入).
+For web tasks, read [browser access](docs/plugins.md#浏览器接入) first: a working background CLI does not mean it can use the desktop browser, and when sign-in or verification is blocked the agent sends you a card instead of retrying.
 
 **Connect other CLI agents in one line (commands below are from each tool's official docs, ready for you to plug in):**
 
@@ -239,11 +237,11 @@ To connect a new tool or system, start with one of these runnable templates and 
 | [Channel](examples/plugins/hello-channel/channel.ts) | Claim cards, write them to a file, and report delivery; answer through the CLI | Your platform's send, update, and answer callbacks |
 | [Event plugin](examples/plugins/hello-source/source.ts) | Verify HMAC-SHA256 signatures and convert mock orders into events | Your system's signature checks and field mappings |
 
-For Shell clients, see the [worker script](examples/worker.sh) and [channel script](examples/channel.sh). Set the hub URL and key, then run with `curl` and `jq` installed. These demonstrate short tasks; use the built-in worker for long tasks that need heartbeats, cancellation, and recovery. Plugin entry points remain `agent.ts`, `channel.ts`, and `source.ts`; `source.ts` is the event plugin shown in the diagram.
+Event plugins, workers, channels, and the CLI all use the same HTTP + JSON endpoints. For Shell clients, see the [worker script](examples/worker.sh) and [channel script](examples/channel.sh). Set the hub URL and key, then run with `curl` and `jq` installed. These demonstrate short tasks; use the built-in worker for long tasks that need heartbeats, cancellation, and recovery.
 
 ---
 
-## Why the kernel is rock-solid
+## Why the kernel holds up
 
 You can run the reproduction commands below directly from `~/.agent-autoloop/app`:
 
@@ -272,46 +270,35 @@ You can run the reproduction commands below directly from `~/.agent-autoloop/app
   node sim/crash.ts 1000 12648430
   ```
 
-- **Plain HTTP + JSON protocol**
-  Event plugins, workers, channels, and the CLI all speak the exact same HTTP endpoints. A working notification channel written in pure `curl` and `jq` takes just a few dozen lines: [examples/channel.sh](examples/channel.sh).
-
 ### Benchmarks (Apple M5 Pro, 24 GB, Node 24.21.0)
 
-HTTP hub process on Apple M5 Pro, 24 GB, Node 24.21.0; reproduce with `npm run benchmark`. Each write is a separate HTTP request acknowledged only after its SQLite transaction is durable on disk.
+Reproduce the HTTP hub process results with `npm run benchmark`. Each write is a separate HTTP request acknowledged only after its SQLite transaction is durable on disk.
 
 | Metric | Measured |
 |---|---:|
-| Cold start | 85.75 ms |
-| Idle memory | 60.17 MB RSS |
-| 1,000 concurrent waiting polls | 172.06 MB RSS |
-| Durable writes | 2,374 events/s |
-| Dispatch p99 | 1.51 ms |
-| Kernel lines | 1,613 |
+| Cold start | 88.78 ms |
+| Idle memory | 59.94 MB RSS |
+| 1,000 concurrent waiting polls | 170.49 MB RSS |
+| Durable writes | 2,394 events/s |
+| Dispatch p99 | 1.82 ms |
+| Kernel lines | 1,651 |
 | Runtime dependencies | 0 |
-| 200,000 simulation steps (observation) | 79.9 s, 2,503 steps/s |
+| 200,000 simulation steps (observation) | 93.8 s, 2,131 steps/s |
 
 Idle memory and memory under 1,000 concurrent long-poll connections are measured separately. See the [measurement scope](docs/protocol.md#结构与预算); kernel line counts include TypeScript comments and blank lines.
 
-Reproduce history growth with `node scripts/history.ts 1000 10000 100000`. Each scenario includes two runs, a question, delivery, an answer, and a deferred check, using individual WAL + FULL commits. Measurements use real HTTP requests: 30 samples per operation and one status summary, plus receipt retries after SIGKILL and a full rebuild comparison.
+To see how the hub behaves as history grows, run `node scripts/history.ts 1000 10000 100000` (method in the [protocol](docs/protocol.md#一致性和复现)):
 
 | Completed runs (approx.) | Facts (approx.) | Normal startup | Idle RSS | Median claim HTTP | Status summary |
 |---|---:|---:|---:|---:|---:|
-| 2,000 | 11,000 | 80.7 ms | 59.3 MB | 0.82 ms | 10.7 ms |
-| 20,000 | 110,000 | 81.2 ms | 59.2 MB | 0.82 ms | 73.9 ms |
-| 200,000 | 1,100,000 | 91.5 ms | 58.9 MB | 0.80 ms | 786.8 ms |
+| 2,000 | 11,000 | 84.7 ms | 59.1 MB | 0.89 ms | 11.2 ms |
+| 20,000 | 110,000 | 83.2 ms | 58.9 MB | 0.84 ms | 83.6 ms |
+| 200,000 | 1,100,000 | 99.8 ms | 59.1 MB | 0.82 ms | 927.1 ms |
 
-At a million facts, median HTTP latency for ingestion, deduplication, results, heartbeats, idle channel polling, and `why` was 0.35–0.64 ms; normal recovery after SIGKILL took about 98.5 ms. Sampled RSS during continuous history generation peaked at about 281 MB and stayed around 279–281 MB over the last roughly 500,000 facts. Business requests plus a slow log subscriber used about 74 MB. No forced GC was used. Status aggregation still scales with history, and logs and indexes continue growing on disk. Rebuilding 1.1 million facts took 39.2 seconds and ended at about 128 MB RSS; projections and derived indexes matched before and after. Initial upgrades or format changes need this rebuild; normal restarts do not replay history. Simulation time and throughput are observations; correctness checks remain mandatory.
-
----
-
-## Six design principles
-
-1. **Your attention comes first**: Stay quiet by default; interrupt only when a decision truly belongs to you.
-2. **Everything is an event**: External webhooks, schedules, follow-up timers, and your card answers all flow through one path.
-3. **Nothing connects out from the kernel**: All plugins connect inward; credentials stay with the plugins that need them.
-4. **An agent is just a process**: Pass it a prompt, read its final message — no vendor lock-in or SDKs.
-5. **A round never blocks waiting for a human**: Exit the process after asking; start a fresh round when the answer arrives.
-6. **Rules hold authority, events are just data**: Untrusted text inside an event can never choose which agent runs, in which directory, or with what permissions.
+- At 1.1 million facts, median HTTP latency for ingestion, deduplication, results, heartbeats, idle channel polling, and `why` was 0.39–0.69 ms; normal recovery after `SIGKILL` took about 101 ms.
+- Memory: about 282 MB at most while history was being written continuously; about 75 MB with business requests plus one slow log subscriber.
+- What grows with history: status summary time, and disk used by the log and indexes.
+- The first start after a format change rebuilds from the log: 1.1 million facts took 43.1 seconds, peaking at about 141 MB, with identical data before and after. Normal restarts do not replay history.
 
 ---
 

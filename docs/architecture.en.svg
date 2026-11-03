@@ -72,7 +72,7 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <!-- Center: Autoloop kernel -->
 <rect class="core" x="250" y="68" width="460" height="316" rx="22"/>
 <text x="272" y="102" class="cte">Autoloop kernel</text>
-<text x="688" y="101" class="cs" text-anchor="end">~1,600 lines · 0 deps · Deterministic</text>
+<text x="688" y="101" class="cs" text-anchor="end">~1,650 lines · 0 deps · Deterministic</text>
 
 <!-- Core responsibility -->
 <rect class="duty" x="268" y="116" width="424" height="52" rx="10"/>
@@ -104,7 +104,7 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <path class="conn" d="M712 190H760"/>
 <circle class="badge" cx="736" cy="167" r="12"/>
 <text x="736" y="171.5" class="n" text-anchor="middle">2</text>
-<text x="736" y="210" class="l" text-anchor="middle">dispatch</text>
+<text x="736" y="210" class="l" text-anchor="middle">assign</text>
 
 <path class="conn" d="M760 266H712"/>
 <circle class="badge" cx="736" cy="243" r="12"/>
@@ -137,12 +137,12 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <rect class="plug" x="390" y="452" width="548" height="92" rx="14"/>
 <text x="410" y="480" class="h2">Channel plugins</text>
 <text x="560" y="480" class="s">Deliver cards to your hand</text>
-<rect class="item" x="410" y="494" width="114" height="36" rx="8"/>
-<text x="467" y="517" class="r" text-anchor="middle">Desktop</text>
-<rect class="item" x="534" y="494" width="104" height="36" rx="8"/>
-<text x="586" y="517" class="r" text-anchor="middle">Feishu</text>
-<rect class="item" x="648" y="494" width="126" height="36" rx="8"/>
-<text x="711" y="517" class="r" text-anchor="middle">DingTalk · WeCom</text>
+<rect class="item" x="410" y="494" width="104" height="36" rx="8"/>
+<text x="462" y="517" class="r" text-anchor="middle">Desktop</text>
+<rect class="item" x="524" y="494" width="90" height="36" rx="8"/>
+<text x="569" y="517" class="r" text-anchor="middle">Feishu</text>
+<rect class="item" x="624" y="494" width="150" height="36" rx="8"/>
+<text x="699" y="517" class="r" text-anchor="middle">DingTalk · WeCom</text>
 <rect class="item" x="784" y="494" width="134" height="36" rx="8"/>
 <text x="851" y="517" class="r" text-anchor="middle">Slack · Discord</text>
 
