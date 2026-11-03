@@ -4,7 +4,7 @@ import { credential, digest, type Environment } from "./credentials.ts";
 import { latestBefore, nextRun, parseCron } from "./cron.ts";
 import { deadlines, MINUTE, OFFLINE_AFTER, RUN_LEASE, WORKER_FRESH } from "./due.ts";
 import { AuthError, Conflict, InputError, NotFound } from "./errors.ts";
-import { evolve, iso, rows, type Change, type Fact, type Row, type Table, type View } from "./evolve.ts";
+import { iso, rows, type Change, type Fact, type Row, type Table, type View } from "./evolve.ts";
 import {
   agentsOf,
   cardView,
@@ -57,13 +57,14 @@ export function decide(view: View, input: Input, now: number, env: Environment):
   const { type, args } = input;
   if (!Object.hasOwn(HANDLERS, type)) throw new InputError(`不认识的输入：${type}`);
   const rules = configuration(view);
-  const draft: Draft = { view, seq: view.seq + 1, type, now, at: iso(now), env, rules, changes: [] };
+  const draft: Draft = { view: view.fork(), seq: view.seq + 1, type, now, at: iso(now), env, rules, changes: [] };
   const value = HANDLERS[type](draft, ...args);
   const due = deadlines(draft.view, now);
   for (const [key, row] of Object.entries(due)) {
-    if (JSON.stringify(draft.view.tables.due[key]) !== JSON.stringify(row)) put(draft, "due", key, row);
+    if (JSON.stringify(draft.view.get("due", key)) !== JSON.stringify(row)) put(draft, "due", key, row);
   }
-  for (const key of Object.keys(draft.view.tables.due)) {
+  for (const { kind, key: name } of rows(draft.view, "due")) {
+    const key = `${kind}:${name}`;
     if (!due[key]) set(draft, "due", key, null);
   }
   return { facts: draft.changes.length ? [factOf(draft, draft.changes)] : [], value };
@@ -76,12 +77,12 @@ function factOf({ seq, now, type }: Draft, changes: Change[]): Fact {
 function set(draft: Draft, table: Table, key: string | number, row: Row | null) {
   const change = { table, key: String(key), row };
   draft.changes.push(change);
-  draft.view = evolve(draft.view, [factOf(draft, [change])]);
+  draft.view.set(table, String(key), row);
   return row!;
 }
 
 const put = (draft: Draft, table: Table, key: string | number, fields: Row) =>
-  set(draft, table, key, { ...DEFAULTS[table], ...draft.view.tables[table][key], ...fields });
+  set(draft, table, key, { ...DEFAULTS[table], ...draft.view.get(table, key), ...fields });
 
 function add(draft: Draft, table: Table, fields: Row) {
   const id = (draft.view.next[table] ?? 0) + 1;
@@ -98,7 +99,7 @@ function closeCard(draft: Draft, card: Row, result: string, by: string | null = 
 }
 
 function closeOpen(draft: Draft, matches: (key: string) => boolean, result: string) {
-  const open = rows(draft.view, "cards").filter((card) => matches(card.key) && card.state === "open");
+  const open = rows(draft.view, "cards", { state: "open" }).filter((card) => matches(card.key));
   for (const card of open) closeCard(draft, card, result);
 }
 
@@ -106,7 +107,7 @@ const closeOffline = (draft: Draft, worker: string) =>
   closeOpen(draft, (key) => key.startsWith(`worker:${worker}:offline:`), "连上了");
 
 function createCard(draft: Draft, spec: Row) {
-  const cards = rows(draft.view, "cards");
+  const cards = rows(draft.view, "cards", { key: spec.key, ...(!spec.once && { state: "open" }) }, 1, true);
   const existing = cards.findLast((card) => card.key === spec.key && (spec.once || card.state === "open"));
   if (existing) return { card: existing.id, duplicate: true };
   const { once, run, options, fyi, quiet, ...fields } = spec;
@@ -126,11 +127,11 @@ const notify = (draft: Draft, key: string, title: string, text: string, extra: R
 /** A queued run of this rule and subject takes the event, so what comes in while it waits is handled together. */
 function enqueue(draft: Draft, rule: Rule, event: number, subject: string, resume?: string | null) {
   const lane = rule.parallel ? subject : "";
-  const rulesVersion = draft.view.tables.config.rules.version;
+  const rulesVersion = draft.view.get("config", "rules")!.version;
   const stamps = { not_before: draft.at, created_at: draft.at, rules_version: rulesVersion };
   const isSameQueued = (run: Row) => run.rule === rule.name && run.lane === lane && run.state === "queued";
   const run =
-    rows(draft.view, "runs").find(isSameQueued) ??
+    rows(draft.view, "runs", { rule: rule.name, lane, state: "queued" }).find(isSameQueued) ??
     add(draft, "runs", { rule: rule.name, agent: rule.to, grp: rule.group, lane, state: "queued", ...stamps });
   put(draft, "run_events", `${run.id}:${event}`, { run_id: run.id, event_id: event });
   if (resume) put(draft, "runs", run.id, { resume });
@@ -139,7 +140,7 @@ function enqueue(draft: Draft, rule: Rule, event: number, subject: string, resum
 /** Keeps an event under a key of its own: one the hub makes up mustn't collide with one a source sent. */
 function recordEvent(draft: Draft, source: string, event: Row, routed: string[]): number {
   let key = event.id;
-  for (let suffix = 1; rows(draft.view, "events").some((old) => old.source === source && old.key === key); suffix++) {
+  for (let suffix = 1; rows(draft.view, "events", { source, key }).length; suffix++) {
     key = `${event.id}:${suffix}`;
   }
   return add(draft, "events", {
@@ -158,7 +159,7 @@ function recordEvent(draft: Draft, source: string, event: Row, routed: string[])
 
 function ingest(draft: Draft, source: string, given: unknown) {
   const event = parseEvent(given);
-  const existing = rows(draft.view, "events").find((row) => row.source === source && row.key === event.id);
+  const existing = rows(draft.view, "events", { source, key: event.id })[0];
   if (existing) return { event: existing.id, duplicate: true, routed: JSON.parse(existing.routed) };
   const tooDeep = event.hops > MAX_HOPS;
   const takes = (rule: Rule) =>
@@ -175,7 +176,7 @@ function ingest(draft: Draft, source: string, given: unknown) {
 }
 
 function heldRun(draft: Draft, id: number, token: string, states: string[]) {
-  const run = draft.view.tables.runs[id];
+  const run = draft.view.get("runs", id);
   const issued = run && states.includes(run.state) && run.issued !== null;
   if (!issued || credential(draft.env, "run", id, run.issued) !== token) throw new AuthError("这件活不归这个令牌");
   return run;
@@ -183,7 +184,7 @@ function heldRun(draft: Draft, id: number, token: string, states: string[]) {
 
 function cardFromReceipt(draft: Draft, run: Row, kind: string, card: Row) {
   const name = card.key ?? digest(`${card.title}\n${card.text}`).slice(0, 32);
-  const session = draft.view.tables.runs[run.id].session;
+  const session = draft.view.get("runs", run.id)!.session;
   const quiet = kind === "notice" && ruleNamed(draft, run.rule)?.tell === "never";
   const origin = { source: sourceOf(draft.view, run.id), agent: run.agent, session, run: run.id };
   const key = `thread:${run.rule}:${run.lane}:${name}`;
@@ -195,13 +196,13 @@ function sweep(draft: Draft) {
   const { now } = draft;
   for (const worker of workers(draft.view)) {
     const agents = agentsOf(draft.view, worker);
-    const seen = draft.view.tables.seen[`worker:${worker}`];
+    const seen = draft.view.get("seen", `worker:${worker}`);
     const lastSeen = seen ? Date.parse(seen.seen_at) : undefined;
     if (lastSeen !== undefined && now - lastSeen <= WORKER_FRESH) {
       closeOffline(draft, worker);
       const inDoubt = (run: Row) =>
         run.state === "claimed" && agents.includes(run.agent) && Date.parse(run.seen_at) < now - RUN_LEASE;
-      for (const run of rows(draft.view, "runs").filter(inDoubt)) {
+      for (const run of rows(draft.view, "runs", { state: "claimed" }).filter(inDoubt)) {
         put(draft, "runs", run.id, { state: "unknown" });
         const agent = draft.rules.agents[run.agent].name;
         const words = `交给 ${agent} 后超过 5 分钟没有回音，不确定做没做完；后续新任务照常处理。`;
@@ -225,7 +226,7 @@ function sweep(draft: Draft) {
 
 function claimNext(draft: Draft, worker: string, claim: string) {
   const agents = agentsOf(draft.view, worker);
-  const runs = rows(draft.view, "runs");
+  const runs = rows(draft.view, "runs", { state: ["queued", "claimed"] });
   const claimed = runs.filter((run) => run.state === "claimed");
   const groupLimit = (group: string) => draft.rules.rules.find((rule) => rule.group === group)?.parallel ?? 1;
   const claimable = (run: Row) =>
@@ -240,10 +241,10 @@ function claimNext(draft: Draft, worker: string, claim: string) {
   const run = held ?? runs.find(claimable);
   if (!run) return null;
   const since = held ? { claimed_at: run.claimed_at, link: run.link } : { claimed_at: draft.at, link: null };
-  const rules_version = draft.view.tables.config.rules.version;
+  const rules_version = draft.view.get("config", "rules")!.version;
   const claiming = { state: "claimed", claim, issued: draft.seq, seen_at: draft.at, rules_version, ...since };
   put(draft, "runs", run.id, { ...claiming, ...nulls("last_issued", "last_result", "last_answer") });
-  return jobOf(draft.view, draft.view.tables.runs[run.id], draft.env);
+  return jobOf(draft.view, draft.view.get("runs", run.id)!, draft.env);
 }
 
 /** A run that didn't get through waits to try again, and takes along whatever came in for the same thing meanwhile. */
@@ -255,8 +256,10 @@ function retryLater(draft: Draft, run: Row, result: Result) {
   const unclaimed = nulls("claim", "claimed_at", "seen_at", "cancel_at");
   put(draft, "runs", id, { state: "queued", attempts, not_before: iso(notBefore), error, ...unclaimed });
   const sameThread = (other: Row) => other.id !== id && other.rule === run.rule && other.lane === run.lane;
-  for (const other of rows(draft.view, "runs").filter((other) => sameThread(other) && other.state === "queued")) {
-    for (const link of rows(draft.view, "run_events").filter((link) => link.run_id === other.id)) {
+  for (const other of rows(draft.view, "runs", { rule: run.rule, lane: run.lane, state: "queued" }).filter(
+    sameThread,
+  )) {
+    for (const link of rows(draft.view, "run_events", { run_id: other.id })) {
       put(draft, "run_events", `${id}:${link.event_id}`, { run_id: id, event_id: link.event_id });
       set(draft, "run_events", `${other.id}:${link.event_id}`, null);
     }
@@ -279,14 +282,14 @@ function retryLater(draft: Draft, run: Row, result: Result) {
 
 function scheduleReview(draft: Draft, run: Row, later: Later) {
   const { rule, lane } = run;
-  const existing = rows(draft.view, "timers").find(
+  const existing = rows(draft.view, "timers", { rule, lane, key: later.key, event_id: null }).find(
     (timer) => timer.rule === rule && timer.lane === lane && timer.key === later.key && timer.event_id === null,
   );
   if (later.cancel) {
     if (existing) set(draft, "timers", existing.id, null);
     return;
   }
-  const session = draft.view.tables.runs[run.id].session;
+  const session = draft.view.get("runs", run.id)!.session;
   const fields = { at: iso(Date.parse(later.at!)), about: later.about, session, hops: hopsOf(draft, run) };
   if (existing) return void put(draft, "timers", existing.id, fields);
   const source = sourceOf(draft.view, run.id) ?? SCHEDULE;
@@ -304,7 +307,7 @@ function applyReceipt(draft: Draft, run: Row, result: Result) {
   closeOpen(draft, (key) => key === `run:${id}:unknown`, "结果回来了");
   const eventIds = eventsOf(draft.view, id).map((event) => event.id);
   const isAnswered = (card: Row) => card.state === "decided" && eventIds.includes(card.answer_event);
-  for (const card of rows(draft.view, "cards").filter(isAnswered)) {
+  for (const card of rows(draft.view, "cards", { answer_event: eventIds, state: "decided" }).filter(isAnswered)) {
     put(draft, "cards", card.id, { state: "done", result: summary, closed_at: draft.at, version: card.version + 1 });
   }
   for (const item of result.resolve ?? []) {
@@ -329,7 +332,7 @@ function applyReceipt(draft: Draft, run: Row, result: Result) {
 
 function finish(draft: Draft, id: number, token: string, given: unknown) {
   const hash = digest(JSON.stringify(given ?? null));
-  const prior = draft.view.tables.runs[id];
+  const prior = draft.view.get("runs", id);
   // The same execution handing in again means the answer got lost: it gets the same answer, and nothing happens twice.
   if (prior && prior.last_issued !== null && credential(draft.env, "run", id, prior.last_issued) === token) {
     if (prior.last_result !== hash) throw new Conflict("这一次执行已经交过不一样的结果");
@@ -355,12 +358,12 @@ function finish(draft: Draft, id: number, token: string, given: unknown) {
 }
 
 function answer(draft: Draft, id: number, given: Row) {
-  const card = draft.view.tables.cards[id];
+  const card = draft.view.get("cards", id);
   if (!card) throw new NotFound("没有这张卡片");
   if (given.channel !== undefined) {
     const allowed = draft.rules.channels[given.channel]?.answerers;
     if (allowed && !allowed.includes(given.by ?? "")) throw new AuthError("这个人不能回答这张卡片");
-    const delivery = draft.view.tables.deliveries[`${id}:${given.channel}`];
+    const delivery = draft.view.get("deliveries", `${id}:${given.channel}`);
     if (!delivery?.ref || delivery.ref !== given.ref) throw new AuthError("不是发出去的那条消息");
   }
   if (card.state !== "open") return { changed: false, state: card.state };
@@ -385,9 +388,9 @@ function answer(draft: Draft, id: number, given: Row) {
 
 function nextCard(draft: Draft, channel: string) {
   const { now } = draft;
-  for (const card of rows(draft.view, "cards")) {
+  for (const card of draft.view.deliveryCandidates(channel, now)) {
     const key = `${card.id}:${channel}`;
-    const delivery = draft.view.tables.deliveries[key] ?? NOT_DELIVERED;
+    const delivery = draft.view.get("deliveries", key) ?? NOT_DELIVERED;
     const recentNote = card.fyi && Date.parse(card.created_at) >= now - 24 * 60 * MINUTE;
     const worthSending = card.state === "open" || delivery.ref !== null || recentNote;
     const resting = delivery.not_before && Date.parse(delivery.not_before) > now;
@@ -412,7 +415,7 @@ function tick(draft: Draft) {
     if (eventRule(rule)) continue;
     const text = cronOf(rule);
     const cron = parseCron(text)!;
-    const schedule = draft.view.tables.schedules[rule.name];
+    const schedule = draft.view.get("schedules", rule.name);
     const nextAt = () => iso(nextRun(cron, now, timezone)!);
     if (!schedule || schedule.cron !== text) {
       put(draft, "schedules", rule.name, { rule: rule.name, cron: text, next_at: nextAt() });
@@ -420,13 +423,13 @@ function tick(draft: Draft) {
     }
     if (now < Date.parse(schedule.next_at)) continue;
     const key = `${rule.name}@${iso(latestBefore(cron, Date.parse(schedule.next_at), now, timezone))}`;
-    if (!rows(draft.view, "events").some((event) => event.source === SCHEDULE && event.key === key)) {
+    if (!rows(draft.view, "events", { source: SCHEDULE, key }).length) {
       enqueue(draft, rule, recordEvent(draft, SCHEDULE, { id: key, type: "schedule.tick" }, [rule.name]), "");
     }
     put(draft, "schedules", rule.name, { next_at: nextAt() });
   }
   const isDue = (timer: Row) => timer.event_id === null && Date.parse(timer.at) <= now;
-  const due = rows(draft.view, "timers").filter(isDue);
+  const due = rows(draft.view, "timers", { event_id: null }).filter(isDue);
   for (const timer of due.sort((a, b) => a.at.localeCompare(b.at))) {
     const rule = ruleNamed(draft, timer.rule);
     const event = { id: `timer:${timer.id}`, type: "timer.due", subject: timer.lane, hops: timer.hops ?? 0 };
@@ -454,7 +457,7 @@ const HANDLERS: Record<string, (draft: Draft, ...args: any[]) => unknown> = {
     if (!told.duplicate) return told;
     // Said again after every channel gave up on it: it gets another go.
     const isGivenUp = (delivery: Row) => delivery.card_id === told.card && delivery.given_up;
-    const givenUp = rows(draft.view, "deliveries").filter(isGivenUp);
+    const givenUp = rows(draft.view, "deliveries", { card_id: told.card }).filter(isGivenUp);
     for (const { card_id, channel } of givenUp) {
       put(draft, "deliveries", `${card_id}:${channel}`, { given_up: 0, ...NOT_TRYING });
     }
@@ -466,7 +469,7 @@ const HANDLERS: Record<string, (draft: Draft, ...args: any[]) => unknown> = {
     put(draft, "seen", `worker:${worker}`, { kind: "worker", name: worker, seen_at: draft.at });
     closeOffline(draft, worker);
     for (const id of running) {
-      const run = draft.view.tables.runs[id];
+      const run = draft.view.get("runs", id);
       if (run?.state === "claimed" && agentsOf(draft.view, worker).includes(run.agent)) {
         put(draft, "runs", id, { seen_at: draft.at });
       }
@@ -487,14 +490,14 @@ const HANDLERS: Record<string, (draft: Draft, ...args: any[]) => unknown> = {
   },
   finish,
   cancel(draft, id) {
-    const run = draft.view.tables.runs[id];
+    const run = draft.view.get("runs", id);
     if (!run) throw new NotFound("没有这一轮");
     if (run.state === "queued") put(draft, "runs", id, { state: "cancelled", finished_at: draft.at });
     else if (run.state === "claimed") put(draft, "runs", id, { cancel_at: draft.at });
     else throw new InputError("这一轮已经结束了");
   },
   resolve(draft, id, reason, by) {
-    const card = draft.view.tables.cards[id];
+    const card = draft.view.get("cards", id);
     if (!card) throw new NotFound("没有这张卡片");
     if (card.state !== "open") return false;
     closeCard(draft, card, reason, by);
@@ -503,14 +506,14 @@ const HANDLERS: Record<string, (draft: Draft, ...args: any[]) => unknown> = {
   answer,
   nextCard,
   delivered(draft, channel, id, version, ref) {
-    if (!draft.view.tables.cards[id]) throw new NotFound("没有这张卡片");
-    const delivery = draft.view.tables.deliveries[`${id}:${channel}`] ?? NOT_DELIVERED;
+    if (!draft.view.get("cards", id)) throw new NotFound("没有这张卡片");
+    const delivery = draft.view.get("deliveries", `${id}:${channel}`) ?? NOT_DELIVERED;
     const sent = { version: Math.max(delivery.version, version), ref: delivery.ref ?? ref };
     put(draft, "deliveries", `${id}:${channel}`, { card_id: id, channel, ...sent, ...NOT_TRYING, error: null });
   },
   failed(draft, channel, id, version, error) {
-    const card = draft.view.tables.cards[id];
-    const delivery = draft.view.tables.deliveries[`${id}:${channel}`];
+    const card = draft.view.get("cards", id);
+    const delivery = draft.view.get("deliveries", `${id}:${channel}`);
     if (!card || !delivery) throw new NotFound("这张卡片没有交给这个通道");
     const firstTry = delivery.first_try_at ? Date.parse(delivery.first_try_at) : draft.now;
     const next =

@@ -8,11 +8,11 @@ import { HOME, RULES_FILE } from "./home.ts";
 import { credential, digest, whose as keyHolder } from "../kernel/credentials.ts";
 import { decide } from "../kernel/decide.ts";
 import { AuthError, NotFound } from "../kernel/errors.ts";
-import { evolve, type Fact, type Row, type Table } from "../kernel/evolve.ts";
+import { evolve, rows, keyOf, statement, type Fact, type Row, type Table } from "../kernel/evolve.ts";
 import * as query from "../kernel/query.ts";
 import { eventRule, typeMatches } from "../kernel/rules.ts";
 import { stateOf as state } from "../kernel/state.ts";
-import { commit, readLog, rebuild } from "../kernel/store.ts";
+import { commit, openView } from "../kernel/store.ts";
 import type { Job } from "../protocol/job.ts";
 import { parseRules as checkRules, RulesError } from "../protocol/rules.ts";
 import type { Rejected } from "../protocol/validate.ts";
@@ -36,9 +36,11 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS facts(seq INTEGER PRIMARY KEY, fact TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS projections(collection TEXT, key TEXT, data TEXT NOT NULL, PRIMARY KEY(collection, key));
 `);
-db.function("card_token", (id, at) => credential(environment, "card", id, at));
+db.function("card_token", { deterministic: true }, (id, at) => credential(environment, "card", id, at));
+db.function("card_hash", { deterministic: true }, (id, at) => digest(credential(environment, "card", id, at)));
 
 const schema = readFileSync(new URL("../kernel/schema.sql", import.meta.url), "utf8");
+const views: string[] = [];
 for (const [, table, body] of schema.matchAll(/CREATE TABLE (\w+) \(([\s\S]*?)\n\);/g)) {
   const columns = [...body.matchAll(/^  (\w+) (?:INTEGER|TEXT)/gm)].map(([, column]) => column);
   const selected = columns.map((column) =>
@@ -46,13 +48,24 @@ for (const [, table, body] of schema.matchAll(/CREATE TABLE (\w+) \(([\s\S]*?)\n
       ? "card_token(json_extract(data,'$.id'),json_extract(data,'$.created_at')) AS token"
       : `json_extract(data,'$.${column}') AS ${column}`,
   );
-  db.exec(
-    `CREATE VIEW IF NOT EXISTS ${table} AS SELECT ${selected.join(",")} FROM projections WHERE collection='${table}'`,
+  views.push(
+    `DROP VIEW IF EXISTS ${table}; CREATE VIEW ${table} AS SELECT ${selected.join(",")} FROM projections WHERE collection='${table}'`,
   );
 }
 
+// Other processes must see either the old views or the new ones, never the gap between DROP and CREATE.
+db.exec(`BEGIN IMMEDIATE; ${views.join(";")}; COMMIT`);
+
 // The persisted projection is expendable; the log alone rebuilds it.
-let current = rebuild(db);
+const format = digest(
+  ["../kernel/evolve.ts", "../kernel/schema.sql", "../kernel/credentials.ts", "./runtime.ts"]
+    .map((file) => readFileSync(new URL(file, import.meta.url), "utf8"))
+    .join("\n") + digest(environment.secret),
+);
+let current = openView(db, format);
+db.exec(
+  "CREATE INDEX IF NOT EXISTS projection_card_hash ON projections(card_hash(json_extract(data,'$.id'),json_extract(data,'$.created_at'))) WHERE collection='cards'",
+);
 
 export const all = <T>(sql: string, params: SQLInputValue[] = []) =>
   db
@@ -66,7 +79,7 @@ export const one = <T>(sql: string, params: SQLInputValue[] = []) => {
 };
 
 export function getView() {
-  current = evolve(current, readLog(db, current.seq));
+  current = openView(db, format);
   return current;
 }
 
@@ -79,8 +92,13 @@ export const onChange = (listener: Listener) => {
 };
 
 export function execute(type: string, args: any[], now = Date.now()) {
-  const { facts, value } = decide(getView(), { type, args }, now, environment);
-  current = commit(db, current, facts);
+  let facts: Fact[] = [];
+  let value: any;
+  const latest = getView();
+  current = commit(db, latest, () => {
+    ({ facts, value } = decide(latest, { type, args }, now, environment));
+    return facts;
+  });
   if (facts.length) for (const listener of listeners) listener(type, facts);
   return value;
 }
@@ -99,7 +117,7 @@ export function reloadRules(file = RULES_FILE) {
     const next = parseRules(readFileSync(file, "utf8"));
     const differs = JSON.stringify(next) !== JSON.stringify(query.configuration(getView()));
     const reportedBroken = (card: Row) => card.key.startsWith("rules:") && card.state === "open";
-    if (differs || Object.values(current.tables.cards).some(reportedBroken)) execute("rules", [next]);
+    if (differs || rows(current, "cards", { state: "open" }).some(reportedBroken)) execute("rules", [next]);
     rules = next;
     return { changed: true };
   } catch (error) {
@@ -156,10 +174,13 @@ export const delivered = (channel: string, id: number, version: number, ref: str
 export const failed = (channel: string, id: number, version: number, error: string, now = Date.now()) =>
   execute("failed", [channel, id, version, error], now);
 
-export const cardByToken = (token: string) =>
-  Object.values(getView().tables.cards).find(
-    (card) => credential(environment, "card", card.id, card.created_at) === token,
-  );
+export function cardByToken(token: string) {
+  const row = statement(
+    db,
+    "SELECT data FROM projections WHERE collection='cards' AND card_hash(json_extract(data,'$.id'),json_extract(data,'$.created_at'))=?",
+  ).get(digest(token));
+  return row ? (JSON.parse(String(row.data)) as Row) : undefined;
+}
 
 export function cardAtLink(token: string) {
   const card = cardByToken(token);
@@ -195,33 +216,43 @@ export const removeKey = (kind: KeyKind, name: string) => execute("removeKey", [
 export const listKeys = () =>
   all<{ kind: string; name: string; created_at: string }>("SELECT kind,name,created_at FROM keys ORDER BY kind,name");
 export const whose = (kind: string, key: string) => keyHolder(getView(), kind, key);
-export const logAfter = (after = 0) => readLog(db, after).map(query.safeFact);
+export const logAfter = (after = 0, limit = -1) =>
+  db
+    .prepare("SELECT fact FROM facts WHERE seq > ? ORDER BY seq LIMIT ?")
+    .all(after, limit)
+    .map((row) => query.safeFact(JSON.parse(String(row.fact))));
 
 /** The part of the log that explains one run: its events, cards and receipts, and the rules it ran under. */
 export function why(id: number) {
   const latest = getView();
-  if (!latest.tables.runs[id]) throw new NotFound("没有这一轮");
-  const events = new Set(query.eventsOf(latest, id).map((event) => String(event.id)));
-  const belongs = (card: Row) => card.run_id === id || events.has(String(card.answer_event));
-  const cards = new Set(
-    Object.values(latest.tables.cards)
-      .filter(belongs)
-      .map((card) => String(card.id)),
-  );
-  const isThisRun = (change: Row) => change.table === "runs" && change.key === String(id);
-  const log = logAfter();
-  const runChanges = log.flatMap((fact) => fact.changes.filter((change) => isThisRun(change) && change.row));
-  const versions = new Set(runChanges.map((change) => change.row!.rules_version));
-  const explains = (change: Row) =>
-    isThisRun(change) ||
-    (change.table === "events" && events.has(change.key)) ||
-    (change.table === "cards" && cards.has(change.key));
-  return log.filter((fact) => versions.has(fact.seq) || fact.changes.some(explains));
+  if (!latest.get("runs", id)) throw new NotFound("没有这一轮");
+  const events = query.eventsOf(latest, id).map((event) => event.id);
+  const cards = [...rows(latest, "cards", { run_id: id }), ...rows(latest, "cards", { answer_event: events })];
+  const sequences = new Set<number>();
+  const include = (table: Table, key: string | number) => {
+    for (const row of statement(db, "SELECT seq FROM projection_refs WHERE collection=? AND key=?").all(
+      table,
+      String(key),
+    ))
+      sequences.add(Number(row.seq));
+  };
+  include("runs", id);
+  const read = (seq: number): Fact =>
+    JSON.parse(String(statement(db, "SELECT fact FROM facts WHERE seq=?").get(seq)!.fact));
+  for (const seq of [...sequences])
+    for (const change of read(seq).changes)
+      if (change.table === "runs" && change.key === String(id) && change.row?.rules_version)
+        sequences.add(change.row.rules_version);
+  for (const event of events) include("events", event);
+  for (const card of cards) include("cards", card.id);
+  return [...sequences].sort((a, b) => a - b).map((seq) => query.safeFact(read(seq)));
 }
 
 // Test fixtures use this to discard rows without changing the behavioral assertions inherited from the SQL kernel.
 export function fixtureClear(table: Table) {
   const latest = getView();
-  const changes = Object.keys(latest.tables[table]).map((key) => ({ table, key, row: null }));
+  const changes = rows(latest, table)
+    .map((row) => keyOf(table, row))
+    .map((key) => ({ table, key, row: null }));
   current = evolve(latest, [{ version: 1, seq: latest.seq, at: 0, type: "fixture", changes }], db);
 }

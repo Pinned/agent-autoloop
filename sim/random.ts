@@ -25,6 +25,7 @@ export function simulate(seed = 0x5eed, steps = 200000) {
     try {
       if (step && step % 128 === 0) {
         completed += world.recover();
+        world.view.close();
         world = new World();
         receipts.length = 0;
       }
@@ -72,7 +73,7 @@ export function simulate(seed = 0x5eed, steps = 200000) {
       } else if (op === 6 && receipts.length) {
         faults.lost++;
         const r = receipts[rng(receipts.length)];
-        const current = world.view.tables.runs[r.id];
+        const current = world.view.get("runs", r.id);
         const valid =
           current?.last_issued !== null &&
           current &&
@@ -111,6 +112,7 @@ export function simulate(seed = 0x5eed, steps = 200000) {
     }
   }
   completed += world.recover();
+  world.view.close();
   const ms = performance.now() - start;
   return { seed, steps, epoch: 128, faults, completed, ms, stepsPerSecond: Math.round((steps * 1000) / ms) };
 }

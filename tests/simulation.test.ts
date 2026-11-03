@@ -29,7 +29,7 @@ test("bounded exhaustive schedules use two workers, two events and one card", ()
 test("the simulator rejects a hub that refuses valid receipt replays", () => {
   const original = World.prototype.call;
   World.prototype.call = function (type: string, ...args: any[]) {
-    const run = this.view.tables.runs[args[0]];
+    const run = this.view.get("runs", args[0])!;
     if (type === "finish" && run?.last_issued && run.issued === null) throw new AuthError("故意拒绝有效重放");
     return original.call(this, type, ...args);
   };
@@ -63,6 +63,7 @@ test("the simulation catches omitted deadlines that strand deferred work", () =>
   World.prototype.act = function (input) {
     const value = original.call(this, input);
     this.log = this.log.map((f) => ({ ...f, changes: f.changes.filter((c) => c.table !== "due") }));
+    this.view.close();
     this.view = evolve(empty(), this.log);
     return value;
   };

@@ -69,7 +69,7 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <!-- 中：Autoloop 内核 -->
 <rect class="core" x="290" y="68" width="380" height="264" rx="22"/>
 <text x="316" y="106" class="ct">Autoloop 内核</text>
-<text x="510" y="104" class="cs">不到 1500 行 · 零依赖</text>
+<text x="510" y="104" class="cs">按需读状态 · 零依赖</text>
 
 <rect class="chip" x="312" y="124" width="336" height="54" rx="10"/>
 <text x="480" y="148" class="cn" text-anchor="middle">1. 按规则派活与合并</text>

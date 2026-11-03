@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { decide, type Input } from "../kernel/decide.ts";
-import { empty, evolve, rows, type Fact } from "../kernel/evolve.ts";
+import { empty, evolve, rows, snapshot, View, type Fact } from "../kernel/evolve.ts";
 import { parseRules } from "../protocol/rules.ts";
 import { credential } from "../kernel/credentials.ts";
 import { invariants } from "./invariants.ts";
@@ -43,26 +43,28 @@ export const rules = parseRules(
 export class World {
   view = empty();
   log: Fact[] = [];
+  checked = snapshot(this.view);
   now = 0;
   transitions = 0;
   constructor() {
     this.act({ type: "rules", args: [rules] });
   }
   act(input: Input) {
-    const before = this.view;
-    const d = decide(before, input, this.now, environment);
+    const before = this.checked;
+    const d = decide(this.view, input, this.now, environment);
     this.log.push(...d.facts);
-    this.view = evolve(before, d.facts);
+    this.view = evolve(this.view, d.facts);
     this.transitions++;
-    invariants(this.view, this.log, before);
+    this.checked = invariants(this.view, this.log, before);
     return d.value;
   }
   call(type: string, ...args: any[]) {
     return this.act({ type, args });
   }
   restart() {
+    this.view.close();
     this.view = evolve(empty(), this.log);
-    invariants(this.view, this.log);
+    this.checked = invariants(this.view, this.log);
     this.transitions++;
   }
   alarm() {
@@ -73,7 +75,7 @@ export class World {
     this.alarm();
   }
   finish(id: number, result: unknown = { outcome: "done" }) {
-    const r = this.view.tables.runs[id];
+    const r = this.view.get("runs", id)!;
     return this.call("finish", id, credential(environment, "run", id, r.issued), result);
   }
   recover() {

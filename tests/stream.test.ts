@@ -1,9 +1,11 @@
 // Failure modes: why omits the rule or answer; a stream drops facts at reconnect, exposes key hashes, or permits a source;
 // a receipt's rejected actions change on replay; a view write failing after append leaves a partial committed receipt.
 // Retrying after a rules edit must keep both versions visible in why.
+// Slow stream readers must not load or buffer the entire historical log.
 // An already open stream must stop on key revocation and detach its abort listener when cancelled.
 // Closing an offline card during heartbeat must wake a channel already polling for that update.
 import assert from "node:assert/strict";
+import { rows, snapshot } from "../kernel/evolve.ts";
 import { after, test } from "node:test";
 import { setup } from "./helpers.ts";
 setup("stream");
@@ -33,7 +35,7 @@ test("web-standard handler streams facts with cursors and traces an entire run",
   };
   const first = hub.finish(job.run, job.token, result);
   assert.deepEqual(hub.finish(job.run, job.token, result).rejected, first.rejected);
-  const card = Object.values(hub.getView().tables.cards).find((c) => c.run_id === job.run)!;
+  const card = rows(hub.getView(), "cards").find((c) => c.run_id === job.run)!;
   hub.answer(card.id, { choice: 0, by: "本人" });
   const facts = await (await call(`/v1/runs/${job.run}/why`)).json();
   for (const type of ["rules", "ingest", "claimNext", "finish", "answer"])
@@ -53,7 +55,7 @@ test("web-standard handler streams facts with cursors and traces an entire run",
 test("a projection failure rolls back both the receipt and the log", () => {
   hub.ingest("app", { id: "atomic", type: "feedback.new", subject: "atomic" });
   const job = hub.claimNext("w1", "atomic")!;
-  const before = hub.getView();
+  const before = snapshot(hub.getView());
   hub.db.exec(
     "CREATE TEMP TRIGGER reject_card BEFORE INSERT ON projections WHEN NEW.collection='cards' BEGIN SELECT RAISE(ABORT,'disk failure'); END;",
   );
@@ -62,8 +64,8 @@ test("a projection failure rolls back both the receipt and the log", () => {
     /disk failure/,
   );
   hub.db.exec("DROP TRIGGER reject_card");
-  assert.deepEqual(hub.getView(), before);
-  assert.equal(hub.getView().tables.runs[job.run].state, "claimed");
+  assert.deepEqual(snapshot(hub.getView()), before);
+  assert.equal(hub.getView().get("runs", job.run)!.state, "claimed");
 });
 
 test("why retains each rules version across failed and retried attempts", () => {
@@ -128,5 +130,47 @@ test("heartbeat card changes wake pending channel polls", async () => {
   } finally {
     clearTimeout(timeout);
     abort.abort();
+  }
+});
+
+test("a slow subscriber reads only the next fact, not the entire history", async () => {
+  const before = hub.getView().seq;
+  for (let n = 0; n < 100; n++) hub.ingest("app", { id: `stream-bounded-${n}`, type: "unmatched" });
+  const prepare = hub.db.prepare.bind(hub.db);
+  let read = 0;
+  hub.db.prepare = ((sql: string) => {
+    const stmt = prepare(sql);
+    if (!/SELECT fact FROM facts/.test(sql)) return stmt;
+    return new Proxy(stmt, {
+      get(target, key) {
+        if (key === "iterate")
+          return function* (...args: any[]) {
+            for (const row of target.iterate(...args)) {
+              read++;
+              yield row;
+            }
+          };
+        if (key === "all")
+          return (...args: any[]) => {
+            const result = target.all(...args);
+            read += result.length;
+            return result;
+          };
+        const value = Reflect.get(target, key);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  }) as typeof hub.db.prepare;
+  let response: Response | undefined;
+  try {
+    response = await call(`/v1/stream?after=${before}`);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(read <= 2, `buffered ${read} facts before the subscriber read any`);
+    const reader = response.body!.getReader();
+    assert.match(new TextDecoder().decode((await reader.read()).value), new RegExp(`id: ${before + 1}\\n`));
+    await reader.cancel();
+  } finally {
+    hub.db.prepare = prepare;
+    if (response?.body && !response.body.locked) await response.body.cancel();
   }
 });

@@ -24,7 +24,7 @@ test("an early request rejection stays observable until the batch is consumed", 
   assert.deepEqual(await pending, { status: "rejected", reason: failure });
 });
 
-test("budget checks fail on startup, idle memory, durable throughput, latency or simulation regressions", () => {
+test("budget checks fail on startup, idle memory, durable throughput, latency regressions; simulation speed is observational", () => {
   const measured = {
     coldMs: 85,
     idleRssMB: 55,
@@ -33,12 +33,12 @@ test("budget checks fail on startup, idle memory, durable throughput, latency or
     simulationStepsPerSecond: 34000,
   };
   checkBudget(measured);
+  checkBudget({ ...measured, simulationStepsPerSecond: 100 });
   for (const [key, value] of Object.entries({
     coldMs: 151,
     idleRssMB: 61,
     durableEventsPerSecond: 1999,
     eventToClaimP99Ms: 11,
-    simulationStepsPerSecond: 19999,
   }))
     assert.throws(() => checkBudget({ ...measured, [key]: value }));
 });

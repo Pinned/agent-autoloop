@@ -21,26 +21,26 @@ export function deadlines(view: View, now: number) {
   for (const schedule of rows(view, "schedules")) {
     if (scheduled(schedule.rule)) add("cron", schedule.rule, Date.parse(schedule.next_at));
   }
-  for (const timer of rows(view, "timers")) {
+  for (const timer of rows(view, "timers", { event_id: null })) {
     if (timer.event_id === null) add("later", String(timer.id), Date.parse(timer.at));
   }
-  for (const run of rows(view, "runs")) {
+  for (const run of rows(view, "runs", { state: "queued" })) {
     const notBefore = Date.parse(run.not_before);
     if (run.state === "queued" && notBefore > now) add("retry", String(run.id), notBefore);
   }
-  for (const delivery of rows(view, "deliveries")) {
+  for (const delivery of rows(view, "deliveries", { given_up: 0, not_before: { not: null } })) {
     const notBefore = Date.parse(delivery.not_before);
     if (!delivery.given_up && delivery.not_before && notBefore > now) {
       add("delivery", `${delivery.card_id}:${delivery.channel}`, notBefore);
     }
   }
   for (const worker of workers(view)) {
-    const seen = view.tables.seen[`worker:${worker}`];
+    const seen = view.get("seen", `worker:${worker}`);
     const waiting = waitingOn(view, agentsOf(view, worker), now);
     if (!waiting.length) continue;
     const offlineKey = `worker:${worker}:offline:${seen ? seen.seen_at : "never"}`;
     // The sweep acts strictly after each limit, hence the extra millisecond.
-    if (!rows(view, "cards").some((card) => card.key === offlineKey && card.state === "open")) {
+    if (!rows(view, "cards", { key: offlineKey, state: "open" }).length) {
       add("offline", worker, Math.max(now, Date.parse(seen?.seen_at ?? waiting[0].created_at) + OFFLINE_AFTER + 1));
     }
     if (!seen || now - Date.parse(seen.seen_at) > WORKER_FRESH) continue;

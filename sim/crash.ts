@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { decide } from "../kernel/decide.ts";
-import { empty, evolve, rows } from "../kernel/evolve.ts";
-import { commit, readLog, rebuild } from "../kernel/store.ts";
+import { empty, evolve, rows, snapshot } from "../kernel/evolve.ts";
+import { commit, readLog, rebuild, openView } from "../kernel/store.ts";
 import { rules, environment } from "./world.ts";
 import { random } from "./random.ts";
 import { invariants } from "./invariants.ts";
@@ -20,13 +20,16 @@ function database(file: string) {
 }
 async function child(file: string) {
   const db = database(file);
-  let view = rebuild(db);
+  let view = openView(db, "");
   let n = 0;
   const act = (type: string, ...args: any[]) => {
-    const d = decide(view, { type, args }, n, environment);
-    view = commit(db, view, d.facts);
+    let d: ReturnType<typeof decide>;
+    view = commit(db, view, () => {
+      d = decide(view, { type, args }, n, environment);
+      return d.facts;
+    });
     process.send!({ seq: view.seq });
-    return d.value;
+    return d!.value;
   };
   act("rules", rules);
   process.send!({ ready: true });
@@ -89,17 +92,19 @@ export async function crashCheck(count = 1000, seed = 0xc0ffee) {
         acknowledged += acks.size;
         unacknowledged += log.filter((f) => !acks.has(f.seq)).length;
         invariants(view, log);
+        const expected = snapshot(view);
         const persisted = db.prepare("SELECT collection,key,data FROM projections").all();
         assert.equal(
           persisted.length,
-          Object.values(view.tables).reduce((n, table) => n + Object.keys(table).length, 0),
+          Object.values(expected.tables).reduce((n, table) => n + Object.keys(table).length, 0),
         );
         for (const r of persisted)
           assert.deepEqual(
             JSON.parse(String(r.data)),
-            view.tables[r.collection as keyof typeof view.tables][String(r.key)],
+            expected.tables[r.collection as keyof typeof expected.tables][String(r.key)],
           );
-        assert.deepEqual(rebuild(db), view);
+        assert.deepEqual(snapshot(openView(db, "")), expected);
+        assert.deepEqual(snapshot(rebuild(db)), expected);
         for (const event of rows(view, "events")) {
           const d = decide(
             view,
@@ -111,6 +116,7 @@ export async function crashCheck(count = 1000, seed = 0xc0ffee) {
           assert.equal(d.value.event, event.id);
           assert.equal(d.facts.length, 0);
         }
+        view.close();
       } finally {
         db.close();
         for (const suffix of ["", "-wal", "-shm"]) rmSync(file + suffix, { force: true });

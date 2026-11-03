@@ -156,7 +156,7 @@ Run the reproduction commands below from the program directory, `~/.agent-autolo
   11-03 20:47:25  结束：演示完成
   ```
 
-- **One deterministic kernel**: The Autoloop kernel makes no outbound network requests, reads no clock, and uses no randomness. Identical inputs always produce identical results, so network drops, crashes, and duplicate requests can be simulated in memory and reproduced from a single seed:
+- **One deterministic kernel**: The Autoloop kernel makes no outbound network requests, reads no clock, and uses no randomness. Identical inputs always produce identical results, so the same kernel and in-memory SQLite can simulate network drops, crashes, and duplicate requests reproducibly from a single seed:
 
   ```bash
   node sim/random.ts 24301 200000
@@ -176,14 +176,26 @@ HTTP hub process on Apple M5 Pro, 24 GB, Node 24.21.0; reproduce with `npm run b
 
 | Metric | Measured |
 |---|---:|
-| Cold start | 78.12 ms |
-| Idle memory | 59.97 MB RSS |
-| Durable writes | 3,262 events/s |
-| Dispatch p99 | 1.10 ms |
-| Kernel lines | 1,405 |
+| Cold start | 85.75 ms |
+| Idle memory | 60.17 MB RSS |
+| 1,000 concurrent waiting polls | 172.06 MB RSS |
+| Durable writes | 2,374 events/s |
+| Dispatch p99 | 1.51 ms |
+| Kernel lines | 1,613 |
 | Runtime dependencies | 0 |
+| 200,000 simulation steps (observation) | 79.9 s, 2,503 steps/s |
 
 Idle memory and memory under 1,000 concurrent long-poll connections are measured separately. See the [measurement scope](docs/protocol.md#结构与预算); kernel line counts include TypeScript comments and blank lines.
+
+Reproduce history growth with `node scripts/history.ts 1000 10000 100000`. Each scenario includes two runs, a question, delivery, an answer, and a deferred check, using individual WAL + FULL commits. Measurements use real HTTP requests: 30 samples per operation and one status summary, plus receipt retries after SIGKILL and a full rebuild comparison.
+
+| Completed runs (approx.) | Facts (approx.) | Normal startup | Idle RSS | Median claim HTTP | Status summary |
+|---|---:|---:|---:|---:|---:|
+| 2,000 | 11,000 | 80.7 ms | 59.3 MB | 0.82 ms | 10.7 ms |
+| 20,000 | 110,000 | 81.2 ms | 59.2 MB | 0.82 ms | 73.9 ms |
+| 200,000 | 1,100,000 | 91.5 ms | 58.9 MB | 0.80 ms | 786.8 ms |
+
+At a million facts, median HTTP latency for ingestion, deduplication, results, heartbeats, idle channel polling, and `why` was 0.35–0.64 ms; normal recovery after SIGKILL took about 98.5 ms. Sampled RSS during continuous history generation peaked at about 281 MB and stayed around 279–281 MB over the last roughly 500,000 facts. Business requests plus a slow log subscriber used about 74 MB. No forced GC was used. Status aggregation still scales with history, and logs and indexes continue growing on disk. Rebuilding 1.1 million facts took 39.2 seconds and ended at about 128 MB RSS; projections and derived indexes matched before and after. Initial upgrades or format changes need this rebuild; normal restarts do not replay history. Simulation time and throughput are observations; correctness checks remain mandatory.
 
 ## Six principles
 

@@ -19,15 +19,21 @@ function logStream(after: number, signal: AbortSignal, key: string) {
     unsubscribe();
     signal.removeEventListener("abort", stop);
   };
+  let send = () => {};
+  let stopped = false;
   return new ReadableStream({
     start(controller) {
       stop = () => {
+        if (stopped) return;
+        stopped = true;
         detach();
         controller.close();
       };
-      const send = () => {
+      send = () => {
+        if (stopped) return;
         if (!hub.whose("owner", key)) return stop();
-        for (const fact of hub.logAfter(cursor)) {
+        if (controller.desiredSize! <= 0) return;
+        for (const fact of hub.logAfter(cursor, 1)) {
           cursor = fact.seq;
           const message = `id: ${fact.seq}\nevent: fact\ndata: ${JSON.stringify(fact)}\n\n`;
           controller.enqueue(new TextEncoder().encode(message));
@@ -36,9 +42,14 @@ function logStream(after: number, signal: AbortSignal, key: string) {
       unsubscribe = hub.onChange(send);
       signal.addEventListener("abort", stop, { once: true });
       if (signal.aborted) stop();
-      else send();
     },
-    cancel: detach,
+    pull() {
+      send();
+    },
+    cancel() {
+      stopped = true;
+      detach();
+    },
   });
 }
 
@@ -65,8 +76,10 @@ export function makeHandler(commit = "dev") {
   const arm = () => {
     clearTimeout(timer);
     if (closed) return;
-    const dates = Object.values(hub.getView().tables.due).map((deadline) => deadline.at as number);
-    const next = Math.min(...dates, ...[...waiting].map((waiter) => waiter.until));
+    const due = hub.one<{ at: number }>(
+      "SELECT MIN(json_extract(data, '$.at')) AS at FROM projections WHERE collection='due'",
+    );
+    const next = Math.min(due?.at ?? Infinity, ...[...waiting].map((waiter) => waiter.until));
     if (!Number.isFinite(next)) return;
     const delay = Math.max(0, Math.min(LONGEST_TIMER, next - Date.now()));
     timer = setTimeout(() => {
@@ -94,6 +107,7 @@ export function makeHandler(commit = "dev") {
     dispatch: hub.execute,
     state: hub.stateOf,
     why: hub.why,
+    card: hub.cardByToken,
     wait(until, signal) {
       return new Promise((resolve) => {
         const waiter = {

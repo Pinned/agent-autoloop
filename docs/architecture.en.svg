@@ -69,7 +69,7 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <!-- Center: Autoloop kernel -->
 <rect class="core" x="290" y="68" width="380" height="264" rx="22"/>
 <text x="316" y="106" class="cte">Autoloop kernel</text>
-<text x="516" y="104" class="cs">&lt;1,500 lines · 0 deps</text>
+<text x="516" y="104" class="cs">Indexed state · 0 deps</text>
 
 <rect class="chip" x="312" y="124" width="336" height="54" rx="10"/>
 <text x="480" y="148" class="cn" text-anchor="middle">1. Route &amp; batch by rules</text>

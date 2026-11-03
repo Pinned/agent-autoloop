@@ -1,6 +1,6 @@
 // The doors: every request the hub takes, which key it asks for, and which input it becomes. Nothing is decided here.
 import { cardPage, PAGE_HEADERS, wordsPage } from "./card-page.ts";
-import { credential, whose, type Environment } from "./credentials.ts";
+import { whose, type Environment } from "./credentials.ts";
 import { AuthError, Conflict, InputError, NotFound } from "./errors.ts";
 import type { Row, View } from "./evolve.ts";
 import { agentsOf, cancels, cardView, configuration } from "./query.ts";
@@ -13,6 +13,7 @@ export type Services = {
   dispatch(type: string, args: any[], now: number): any;
   state(now: number, before?: number): unknown;
   why(id: number): unknown;
+  card(token: string): Row | undefined;
   wait(until: number, signal: AbortSignal): Promise<void>;
   stream(after: number, signal: AbortSignal, key: string): ReadableStream;
   adapt(source: string, headers: Headers, body: string): Promise<unknown[]>;
@@ -96,8 +97,7 @@ function waitUntil(call: Call) {
 async function cardAtLink(call: Call, linkToken: string) {
   const { rules, request } = call;
   const { environment } = call.services;
-  const isThisCard = (card: Row) => credential(environment, "card", card.id, card.created_at) === linkToken;
-  const card = Object.values(call.view.tables.cards).find(isThisCard);
+  const card = call.services.card(linkToken);
   const linksInUse = Object.values(rules.channels).some((channel) => channel.links);
   if (!card || !linksInUse) throw new NotFound("没有这张卡片");
   if (request.method === "GET") return new Response(cardPage(cardView(card, environment)), { headers: PAGE_HEADERS });

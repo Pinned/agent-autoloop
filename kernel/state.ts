@@ -18,8 +18,9 @@ const COUNTS = `
     COALESCE(SUM(json_extract(usage, '$.cost')), 0) AS cost
   FROM runs GROUP BY rule, agent, state`;
 
+// Start from this run's links; scanning events in ID order would revisit the whole history for each run.
 const EVENTS_OF_RUN = `
-  SELECT source, type, subject, summary, link FROM run_events JOIN events ON events.id = run_events.event_id
+  SELECT source, type, subject, summary, link FROM run_events CROSS JOIN events ON events.id = run_events.event_id
   WHERE run_events.run_id = ? ORDER BY events.id DESC LIMIT 20`;
 
 type Reads = {

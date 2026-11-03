@@ -4,7 +4,7 @@ import { rows, type Fact, type Row, type View } from "./evolve.ts";
 import type { Rules } from "./rules.ts";
 import type { Job } from "../protocol/job.ts";
 
-export const configuration = (view: View) => view.tables.config.rules?.value as Rules;
+export const configuration = (view: View) => view.get("config", "rules")?.value as Rules;
 export function agentsOf(view: View, worker: string) {
   const agents = Object.entries(configuration(view).agents);
   return agents.filter(([, agent]) => agent.worker === worker).map(([id]) => id);
@@ -15,12 +15,14 @@ export const workers = (view: View) =>
 /** What a worker's agents have on: runs in hand and runs ready to be claimed. */
 export function waitingOn(view: View, agents: string[], now: number) {
   const ready = (run: Row) => run.state === "queued" && Date.parse(run.not_before) <= now;
-  return rows(view, "runs").filter((run) => agents.includes(run.agent) && (run.state === "claimed" || ready(run)));
+  return rows(view, "runs", { state: ["queued", "claimed"], agent: agents }).filter(
+    (run) => agents.includes(run.agent) && (run.state === "claimed" || ready(run)),
+  );
 }
 
 export function eventsOf(view: View, runId: number) {
-  const links = rows(view, "run_events").filter((link) => link.run_id === runId);
-  return links.map((link) => view.tables.events[link.event_id]).sort((a, b) => a.id - b.id);
+  const links = rows(view, "run_events", { run_id: runId });
+  return links.map((link) => view.get("events", link.event_id)!).sort((a, b) => a.id - b.id);
 }
 
 export function sourceOf(view: View, runId: number) {
@@ -33,7 +35,7 @@ export function openInScope(view: View, run: Row) {
   const source = sourceOf(view, run.id);
   if (!source || !run.claimed_at) return [];
   const inScope = (card: Row) => card.grp === run.grp && card.source === source && card.created_at <= run.claimed_at;
-  return rows(view, "cards").filter((card) => card.state === "open" && inScope(card));
+  return rows(view, "cards", { state: "open", grp: run.grp, source }).filter(inScope);
 }
 
 export function cardView(card: Row, env: Environment, ref: string | null = null, links = false) {
@@ -66,10 +68,14 @@ export function jobOf(view: View, run: Row, env: Environment): Job {
   const { name, cwd, skill, prompt, emits } = rules.rules.find((rule) => rule.name === run.rule)!;
   const events = eventsOf(view, run.id);
   const eventIds = events.map((event) => event.id);
-  const cards = rows(view, "cards");
-  const timers = rows(view, "timers");
-  const answers = cards.filter((card) => eventIds.includes(card.answer_event));
-  const sameThread = (row: Row) => row.rule === run.rule && row.lane === run.lane;
+  const thread = { rule: run.rule, lane: run.lane };
+  const answers = rows(view, "cards", { ...thread, answer_event: eventIds });
+  const timers = rows(view, "timers", { ...thread, event_id: eventIds });
+  const waiting = rows(view, "timers", { ...thread, event_id: null });
+  const decided = ["decided", "done"]
+    .flatMap((state) => rows(view, "cards", { ...thread, state }, 20, true))
+    .sort((a, b) => b.id - a.id)
+    .slice(0, 20);
   const timerView = (timer: Row) => ({ key: timer.key, about: timer.about, at: timer.at });
   return {
     run: run.id,
@@ -88,21 +94,15 @@ export function jobOf(view: View, run: Row, env: Environment): Job {
         return { card, title, options: JSON.parse(options), choice, text, about, by, at };
       }),
       timers: timers.filter((timer) => eventIds.includes(timer.event_id)).map(timerView),
-      waiting: timers
-        .filter((timer) => sameThread(timer) && timer.event_id === null)
-        .sort((a, b) => a.at.localeCompare(b.at))
-        .map(timerView),
+      waiting: waiting.sort((a, b) => a.at.localeCompare(b.at)).map(timerView),
       open: openInScope(view, run).map(({ id, title, text, created_at }) => ({
         card: id,
         title,
         text,
         at: created_at,
       })),
-      decided: cards
-        .filter((card) => sameThread(card) && ["decided", "done"].includes(card.state))
-        .reverse()
-        .slice(0, 20)
-        .filter((card) => !answers.includes(card))
+      decided: decided
+        .filter((card) => !answers.some((answer) => answer.id === card.id))
         .map(({ id, title, choice, answer, options, decided_at }) => {
           return { card: id, title, choice: choice === null ? answer : JSON.parse(options)[choice], at: decided_at };
         }),
@@ -113,14 +113,13 @@ export function jobOf(view: View, run: Row, env: Environment): Job {
 export function cancels(view: View, worker: string): number[] {
   const agents = agentsOf(view, worker);
   const stopping = (run: Row) => run.state === "claimed" && run.cancel_at !== null && agents.includes(run.agent);
-  return rows(view, "runs")
+  return rows(view, "runs", { state: "claimed", agent: agents })
     .filter(stopping)
     .map((run) => run.id);
 }
 
 export function unrouted(view: View, limit = 20) {
-  const events = rows(view, "events").filter((event) => event.routed === "[]");
-  return events.reverse().slice(0, limit);
+  return rows(view, "events", { routed: "[]" }, limit, true);
 }
 
 export const safeFact = (fact: Fact) => ({ ...fact, changes: fact.changes.filter(({ table }) => table !== "keys") });

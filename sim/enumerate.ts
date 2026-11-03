@@ -38,6 +38,7 @@ export function enumerate() {
     }
     world.recover();
     transitions += world.transitions;
+    world.view.close();
     paths++;
   };
   visit(

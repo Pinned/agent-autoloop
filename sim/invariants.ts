@@ -1,8 +1,32 @@
 import assert from "node:assert/strict";
-import { empty, evolve, rows, type Fact, type View } from "../kernel/evolve.ts";
-import { configuration } from "../kernel/query.ts";
+import { snapshot, type Fact, type View, type Row } from "../kernel/evolve.ts";
 
-export function invariants(view: View, log: Fact[], before?: View) {
+type Snapshot = ReturnType<typeof snapshot>;
+const rows = (view: Snapshot, table: keyof Snapshot["tables"]) => Object.values(view.tables[table]);
+// Independent replay oracle: it checks the indexed projection without using its write or query implementation.
+export function replay(log: Fact[]): Snapshot {
+  const tables = Object.fromEntries(
+    ["events", "runs", "run_events", "cards", "deliveries", "timers", "schedules", "seen", "keys", "config", "due"].map(
+      (t) => [t, {}],
+    ),
+  ) as Snapshot["tables"];
+  const next: Record<string, number> = {};
+  let seq = 0;
+  for (const fact of log) {
+    seq = fact.seq;
+    for (const { table, key, row } of fact.changes) {
+      if (row === null) delete tables[table][key];
+      else {
+        tables[table][key] = row;
+        if (typeof row.id === "number") next[table] = Math.max(next[table] ?? 0, row.id);
+      }
+    }
+  }
+  return { seq, tables, next };
+}
+export function invariants(current: View, log: Fact[], before?: Snapshot) {
+  const view = snapshot(current);
+  assert.deepEqual(view, replay(log), "日志重放记录不同");
   for (const [index, fact] of log.entries()) assert.equal(fact.seq, index + 1, "日志序号不连续");
   const events = rows(view, "events");
   const runs = rows(view, "runs");
@@ -14,7 +38,7 @@ export function invariants(view: View, log: Fact[], before?: View) {
   for (const group of new Set(held.map((r) => r.grp)))
     assert.ok(
       held.filter((r) => r.grp === group).length <=
-        (configuration(view).rules.find((r) => r.group === group)?.parallel ?? 1),
+        (view.tables.config.rules.value.rules.find((r: Row) => r.group === group)?.parallel ?? 1),
       "超出同组并发数",
     );
   for (const e of events)
@@ -27,7 +51,7 @@ export function invariants(view: View, log: Fact[], before?: View) {
     if (card.answer_event !== null) {
       const event = view.tables.events[card.answer_event];
       assert.equal(event?.type, "card.answered");
-      if (configuration(view).rules.some((r) => r.name === card.rule))
+      if (view.tables.config.rules.value.rules.some((r: Row) => r.name === card.rule))
         assert.ok(
           links.some(
             (l) =>
@@ -51,5 +75,5 @@ export function invariants(view: View, log: Fact[], before?: View) {
       if (["done", "nothing", "cancelled"].includes(r.state))
         assert.deepEqual(view.tables.runs[r.id], r, "完成的回执再次生效");
   }
-  assert.deepEqual(evolve(empty(), log), view, "日志重放不同");
+  return view;
 }

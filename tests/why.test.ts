@@ -2,6 +2,7 @@
 // answer or continuation; receipt actions disappear; retry uses the wrong rules version; --json changes the raw facts;
 // local time is replaced by UTC or a year, columns drift; a provisional session link is presented after the agent has supplied its real session.
 import assert from "node:assert/strict";
+import { rows } from "../kernel/evolve.ts";
 import { execFile } from "node:child_process";
 import { once } from "node:events";
 import { writeFileSync } from "node:fs";
@@ -71,7 +72,7 @@ test("why prints the real event, rules version, worker, session, receipt, answer
     },
     start + 4000,
   );
-  const card = Object.values(hub.getView().tables.cards).find((c) => c.run_id === job.run && c.kind === "ask")!;
+  const card = rows(hub.getView(), "cards").find((c) => c.run_id === job.run && c.kind === "ask")!;
   hub.answer(card.id, { choice: 1, by: "本人" }, start + 5000);
   const continued = hub.claimNext("mac-mini", "second", start + 6000)!;
   const output = await cli("why", String(job.run));
@@ -106,13 +107,13 @@ test("why retains failed attempts and uses each attempt's rules version without 
   hub.ingest("shop", { id: "retry", type: "order.created", subject: "retry" }, start + 10000);
   const first = hub.claimNext("mac-mini", "retry-1", start + 11000)!;
   hub.finish(first.run, first.token, { outcome: "failed", error: "连接断开" }, start + 12000);
-  const before = hub.getView().tables.config.rules.version;
+  const before = hub.getView().get("config", "rules")!.version;
   hub.execute(
     "rules",
     [{ ...config, rules: config.rules.map((r) => ({ ...r, prompt: "changed-private-instructions" })) }],
     start + 13000,
   );
-  const afterVersion = hub.getView().tables.config.rules.version;
+  const afterVersion = hub.getView().get("config", "rules")!.version;
   hub.claimNext("mac-mini", "retry-2", start + 312000);
   const output = await cli("why", String(first.run));
   assert.ok(output.includes("连接断开"));

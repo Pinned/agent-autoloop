@@ -148,7 +148,7 @@ MCP 客户端的启动程序填 `node`，参数为本机引擎绝对路径 `bin/
 
 接插件先在专用测试中台验证：`agent-autoloop conformance <地址> --config <测试凭据文件>`。文件里的 `keys` 分别放来源、接单程序、通道、本人密钥；`eventType` 匹配测试规则，`answerer` 在测试通道的允许名单内。检查会写事件和卡片，不指向正在用的中台。协议类型在 `protocol/schema.json`。
 
-`kernel/` 不读时钟、不取随机数。`evolve` 更新视图，`commit` 在 WAL + FULL 事务里追加事实，提交后才应答。`agent-autoloop why 42` 查一轮的事件、规则和回执；`GET /v1/stream?after=42` 供本人客户端按序号续读。备份要一起保留 `hub.db` 和权限为 0600 的 `master.key`；后者推导轮次和卡片链接的 token。普通访问密钥只保存哈希。
+`kernel/` 不读时钟、不取随机数。判断、事实追加和 `evolve` 更新投影在同一 WAL + FULL 事务里完成，提交后才应答。正常启动复用带游标和编号高水位的投影；格式指纹变化时从日志逐条重建，不改变旧事实。`agent-autoloop why 42` 查一轮的事件、规则和回执；`GET /v1/stream?after=42` 供本人客户端按序号续读。备份要一起保留 `hub.db` 和权限为 0600 的 `master.key`；后者推导轮次和卡片链接的 token。普通访问密钥只保存哈希。
 
 ## 版本与卸载
 

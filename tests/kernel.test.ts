@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { empty, evolve, type Fact } from "../kernel/evolve.ts";
+import { empty, evolve, rows, snapshot, type Fact } from "../kernel/evolve.ts";
 import { decide } from "../kernel/decide.ts";
 import { parseRules } from "../protocol/rules.ts";
 
@@ -17,16 +17,16 @@ const rules = parseRules(readFileSync(new URL("./rules.fixture.json", import.met
 const seeded = () => evolve(empty(), decide(empty(), { type: "rules", args: [rules] }, 1, environment).facts);
 test("decisions are deterministic and leave their input untouched", () => {
   const view = seeded();
-  const before = structuredClone(view);
+  const before = snapshot(view);
   const input = { type: "ingest", args: ["app", { id: "1", type: "feedback.new", subject: "#1" }] };
   const a = decide(view, input, 1000, environment);
   const b = decide(view, input, 1000, environment);
   assert.deepEqual(a, b);
-  assert.deepEqual(view, before);
-  assert.equal(Object.keys(view.tables.events).length, 0);
-  assert.equal(Object.keys(evolve(view, a.facts).tables.events).length, 1);
+  assert.deepEqual(snapshot(view), before);
+  assert.equal(rows(view, "events").length, 0);
+  assert.equal(rows(evolve(view, a.facts), "events").length, 1);
   assert.throws(() => {
-    view.tables.events.bad = {};
+    view.get("config", "rules")!.value.bad = {};
   }, TypeError);
 });
 
@@ -39,10 +39,11 @@ test("rules, receipt replay and rebuild retain the exact acknowledgment", async 
   );
   let v = empty();
   const d = decide(v, { type: "rules", args: [rules] }, 0, environment);
-  v = commit(db, v, d.facts);
+  v = commit(db, v, () => d.facts);
+  const expected = snapshot(v);
   db.prepare("INSERT INTO projections VALUES ('events','junk','{}')").run();
   const rebuilt = evolve(empty(), readLog(db), db, true);
-  assert.deepEqual(rebuilt, v);
+  assert.deepEqual(snapshot(rebuilt), expected);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM projections WHERE key='junk'").get()!.n, 0);
   db.close();
 });
@@ -62,10 +63,10 @@ test("facts replay the whole receipt with no capability plaintext", () => {
     outcome: "done",
     ask: [{ title: "选一个", text: "内容", options: ["甲", "乙"] }],
   });
-  assert.deepEqual(evolve(empty(), log), view);
+  assert.deepEqual(snapshot(evolve(empty(), log)), snapshot(view));
   assert.ok(!JSON.stringify(log).includes(job.token));
   assert.ok(!JSON.stringify(log).includes(environment.secret));
-  assert.equal(Object.values(view.tables.cards).length, 1);
+  assert.equal(rows(view, "cards").length, 1);
 });
 
 test("one due table retains cron, retry, timer and offline deadlines without periodic ticking", () => {
@@ -76,11 +77,11 @@ test("one due table retains cron, retry, timer and offline deadlines without per
     return d.value;
   };
   act("tick", [], 1000);
-  assert.ok(Object.values(v.tables.due).some((d) => d.kind === "cron"));
+  assert.ok(rows(v, "due").some((d) => d.kind === "cron"));
   act("ingest", ["app", { id: "1", type: "feedback.new" }], 1000);
   const job = act("claimNext", ["w1", "c"], 1000);
   act("finish", [job.run, job.token, { outcome: "failed" }], 2000);
-  assert.ok(Object.values(v.tables.due).some((d) => d.kind === "retry" && d.at === 302000));
+  assert.ok(rows(v, "due").some((d) => d.kind === "retry" && d.at === 302000));
   assert.deepEqual(decide(v, { type: "tick", args: [] }, 2000, environment).facts, []);
 });
 
@@ -114,12 +115,12 @@ test("a worker heartbeat closes its offline card with no later scheduled work", 
   };
   act("ingest", ["app", { id: "x", type: "feedback.new" }], 0);
   act("tick", [], 600001);
-  assert.equal(Object.values(v.tables.cards).filter((c) => c.state === "open").length, 1);
+  assert.equal(rows(v, "cards").filter((c) => c.state === "open").length, 1);
   act("heartbeat", ["w1", []], 610000);
-  assert.equal(Object.values(v.tables.cards).filter((c) => c.state === "open").length, 0);
+  assert.equal(rows(v, "cards").filter((c) => c.state === "open").length, 0);
   const job = act("claimNext", ["w1", "back"], 610000);
   act("finish", [job.run, job.token, { outcome: "done" }], 610001);
-  assert.deepEqual(v.tables.due, {});
+  assert.deepEqual(rows(v, "due"), []);
 });
 
 test("rebuilding locks the log snapshot and projection into one transaction", async () => {
@@ -134,7 +135,7 @@ test("rebuilding locks the log snapshot and projection into one transaction", as
     db.exec(
       "PRAGMA journal_mode=WAL; CREATE TABLE facts(seq INTEGER PRIMARY KEY,fact TEXT); CREATE TABLE projections(collection TEXT,key TEXT,data TEXT,PRIMARY KEY(collection,key));",
     );
-    let v = store.commit(db, empty(), decide(empty(), { type: "rules", args: [rules] }, 0, environment).facts);
+    let v = store.commit(db, empty(), () => decide(empty(), { type: "rules", args: [rules] }, 0, environment).facts);
     const concurrent = decide(
       v,
       { type: "ingest", args: ["app", { id: "during", type: "feedback.new" }] },
@@ -149,7 +150,7 @@ test("rebuilding locks the log snapshot and projection into one transaction", as
             target.exec(sql);
             if (sql === "DELETE FROM projections") {
               attempted = true;
-              assert.throws(() => store.commit(other, v, concurrent.facts), /locked/);
+              assert.throws(() => store.commit(other, v, () => concurrent.facts), /locked/);
             }
           };
         const value = Reflect.get(target, key);
@@ -157,10 +158,12 @@ test("rebuilding locks the log snapshot and projection into one transaction", as
       },
     });
     assert.equal(typeof store.rebuild, "function");
-    assert.deepEqual(store.rebuild(proxy), v);
+    const expected = snapshot(v);
+    assert.deepEqual(snapshot(store.rebuild(proxy)), expected);
     assert.ok(attempted);
-    v = store.commit(other, v, concurrent.facts);
-    assert.deepEqual(store.rebuild(db), v);
+    v = store.commit(other, v, () => concurrent.facts);
+    const updated = snapshot(v);
+    assert.deepEqual(snapshot(store.rebuild(db)), updated);
   } finally {
     db.close();
     other.close();
@@ -189,7 +192,7 @@ test("source IDs cannot collide with the events generated by answers or timers",
   for (const id of ["card:1", "card:1:1", "timer:1"]) act("ingest", ["app", { id, type: "unmatched" }]);
   act("answer", [1, { choice: 0 }]);
   act("tick", [], 2000);
-  const events = Object.values(v.tables.events);
+  const events = rows(v, "events");
   assert.equal(new Set(events.map((e) => `${e.source}:${e.key}`)).size, events.length);
   assert.equal(events.filter((e) => e.type === "card.answered").length, 1);
   assert.equal(events.filter((e) => e.type === "timer.due").length, 1);
@@ -218,12 +221,13 @@ test("a stale writer receives a conflict and cannot change the committed view", 
     db.exec(
       "CREATE TABLE facts(seq INTEGER PRIMARY KEY,fact TEXT); CREATE TABLE projections(collection TEXT,key TEXT,data TEXT,PRIMARY KEY(collection,key));",
     );
-    const initial = commit(db, empty(), decide(empty(), { type: "rules", args: [rules] }, 0, environment).facts);
+    const initial = commit(db, empty(), () => decide(empty(), { type: "rules", args: [rules] }, 0, environment).facts);
     const changed = commit(
       db,
       initial,
-      decide(initial, { type: "ingest", args: ["app", { id: "first", type: "feedback.new" }] }, 1000, environment)
-        .facts,
+      () =>
+        decide(initial, { type: "ingest", args: ["app", { id: "first", type: "feedback.new" }] }, 1000, environment)
+          .facts,
     );
     const stale = decide(
       initial,
@@ -231,8 +235,8 @@ test("a stale writer receives a conflict and cannot change the committed view", 
       1000,
       environment,
     );
-    assert.throws(() => commit(db, initial, stale.facts), Conflict);
-    assert.deepEqual(evolve(empty(), readLog(db)), changed);
+    assert.throws(() => commit(db, initial, () => stale.facts), Conflict);
+    assert.deepEqual(snapshot(evolve(empty(), readLog(db))), snapshot(changed));
   } finally {
     db.close();
   }

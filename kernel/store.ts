@@ -1,13 +1,15 @@
-// The log on disk. `commit` is the only way a fact gets in, and it goes in with its projection or not at all.
+// The log and its expendable projection commit together. Only this module appends facts.
 import type { DatabaseSync } from "node:sqlite";
 import { Conflict } from "./errors.ts";
-import { empty, evolve, type Fact, type View } from "./evolve.ts";
+import { evolve, initialize, statement, View, type Fact } from "./evolve.ts";
 
 export function readLog(db: DatabaseSync, after = 0): Fact[] {
-  const rows = db.prepare("SELECT fact FROM facts WHERE seq > ? ORDER BY seq").all(after);
-  return rows.map((row) => JSON.parse(String(row.fact)));
+  return [...iterateLog(db, after)];
 }
-
+export function* iterateLog(db: DatabaseSync, after = 0): Generator<Fact> {
+  for (const row of db.prepare("SELECT fact FROM facts WHERE seq > ? ORDER BY seq").iterate(after))
+    yield JSON.parse(String(row.fact));
+}
 function transaction(db: DatabaseSync, work: () => View): View {
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -19,15 +21,23 @@ function transaction(db: DatabaseSync, work: () => View): View {
     throw error;
   }
 }
-
-export const rebuild = (db: DatabaseSync) => transaction(db, () => evolve(empty(), readLog(db), db, true));
-
-export function commit(db: DatabaseSync, view: View, facts: Fact[]): View {
-  if (!facts.length) return view;
+export const rebuild = (db: DatabaseSync, format = "") => {
+  initialize(db);
+  return transaction(db, () => evolve(new View(db, 0, {}, format), iterateLog(db), db, true));
+};
+export function openView(db: DatabaseSync, format: string) {
+  initialize(db);
+  const saved = statement(db, "SELECT seq,next,format FROM projection_meta WHERE id=1").get();
+  if (!saved || saved.format !== format) return rebuild(db, format);
+  return new View(db, Number(saved.seq), JSON.parse(String(saved.next)), format);
+}
+export function commit(db: DatabaseSync, view: View, produce: () => Fact[]): View {
   return transaction(db, () => {
-    const latest = Number(db.prepare("SELECT COALESCE(MAX(seq),0) AS seq FROM facts").get()!.seq);
+    const latest = Number(statement(db, "SELECT COALESCE(MAX(seq),0) AS seq FROM facts").get()!.seq);
     if (latest !== view.seq) throw new Conflict("日志已变化，请重读后再提交");
-    const insert = db.prepare("INSERT INTO facts(seq,fact) VALUES (?,?)");
+    const facts = produce();
+    if (!facts.length) return view;
+    const insert = statement(db, "INSERT INTO facts(seq,fact) VALUES (?,?)");
     for (const fact of facts) insert.run(fact.seq, JSON.stringify(fact));
     return evolve(view, facts, db);
   });
