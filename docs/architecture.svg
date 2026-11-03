@@ -38,21 +38,21 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 </defs>
 <rect class="bg" x="0" y="0" width="960" height="628" rx="18"/>
 
-<!-- 顶部自动闭环回弧：直接完成 / 预约复查 -> 回到内核 -->
+<!-- 顶部自动闭环回弧：自己干完 / 到点复查 -> 回到内核 -->
 <path class="back" d="M838 66V28H480V63"/>
-<rect class="loop-pill" x="502" y="13" width="312" height="30" rx="15"/>
-<text x="658" y="33" class="loop-text" text-anchor="middle">自动闭环：直接完成 · 到期复查 · 触发新事件</text>
+<rect class="loop-pill" x="486" y="13" width="344" height="30" rx="15"/>
+<text x="658" y="33" class="loop-text" text-anchor="middle">自动闭环：自己干完 · 到点复查 · 触发下一步</text>
 
 <!-- 左：事件插件 -->
 <rect class="plug" x="24" y="68" width="196" height="264" rx="14"/>
 <text x="42" y="98" class="h2">事件插件</text>
-<text x="42" y="118" class="s">把变化变成事件</text>
+<text x="42" y="118" class="s">负责发现新任务</text>
 <rect class="item" x="40" y="136" width="164" height="32" rx="8"/>
 <text x="122" y="157" class="r" text-anchor="middle">定时任务</text>
 <rect class="item" x="40" y="176" width="164" height="32" rx="8"/>
 <text x="122" y="197" class="r" text-anchor="middle">GitHub</text>
 <rect class="item" x="40" y="216" width="164" height="32" rx="8"/>
-<text x="122" y="237" class="r" text-anchor="middle">你的系统</text>
+<text x="122" y="237" class="r" text-anchor="middle">你的业务系统</text>
 <rect class="item" x="40" y="256" width="164" height="32" rx="8"/>
 <text x="122" y="277" class="r" text-anchor="middle">轮询脚本</text>
 <rect class="more" x="40" y="296" width="164" height="24" rx="8"/>
@@ -60,11 +60,11 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <circle class="dot" cx="122" cy="308" r="2.4"/>
 <circle class="dot" cx="134" cy="308" r="2.4"/>
 
-<!-- 1: 事件 -->
+<!-- 1: 新事件 -->
 <path class="conn" d="M222 200H286"/>
 <circle class="badge" cx="254" cy="177" r="12"/>
 <text x="254" y="181.5" class="n" text-anchor="middle">1</text>
-<text x="254" y="220" class="l" text-anchor="middle">事件</text>
+<text x="254" y="220" class="l" text-anchor="middle">新事件</text>
 
 <!-- 中：Autoloop 内核 -->
 <rect class="core" x="290" y="68" width="380" height="264" rx="22"/>
@@ -72,18 +72,18 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <text x="510" y="104" class="cs">按需读状态 · 零依赖</text>
 
 <rect class="chip" x="312" y="124" width="336" height="54" rx="10"/>
-<text x="480" y="148" class="cn" text-anchor="middle">1. 按规则派活与合并</text>
-<text x="480" y="167" class="cd" text-anchor="middle">决定交给哪个 Agent、在哪个目录 · 同一件事去重合并</text>
+<text x="480" y="148" class="cn" text-anchor="middle">1. 按你的规则分派任务</text>
+<text x="480" y="167" class="cd" text-anchor="middle">决定交给哪个 Agent、去哪个目录干 · 同一件事自动合并</text>
 
 <rect class="chip" x="312" y="188" width="336" height="54" rx="10"/>
-<text x="480" y="212" class="cn" text-anchor="middle">2. 唯一确定性决策</text>
-<text x="480" y="231" class="cd" text-anchor="middle">不主动连任何外部服务 · 同样输入永远同样结果</text>
+<text x="480" y="212" class="cn" text-anchor="middle">2. 跑完即退，平时零消耗</text>
+<text x="480" y="231" class="cd" text-anchor="middle">Agent 干完一轮就退出 · 等你回复时不占进程、不烧 Token</text>
 
 <rect class="chip" x="312" y="252" width="336" height="60" rx="10"/>
-<text x="480" y="276" class="cn" text-anchor="middle">3. 一条追加日志 + 到期表</text>
-<text x="480" y="296" class="cd" text-anchor="middle">强杀不丢 · 每个决定可追溯 · 等人时不占进程不花 Token</text>
+<text x="480" y="276" class="cn" text-anchor="middle">3. 全程留痕，中断也不丢</text>
+<text x="480" y="296" class="cd" text-anchor="middle">每一步为什么这么干随时可查 · 电脑重启后自动接着跑</text>
 
-<!-- 2 & 3: 派活与回执 -->
+<!-- 2 & 3: 派活与交结果 -->
 <path class="conn" d="M672 166H736"/>
 <circle class="badge" cx="704" cy="143" r="12"/>
 <text x="704" y="147.5" class="n" text-anchor="middle">2</text>
@@ -92,12 +92,12 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <path class="conn" d="M736 242H672"/>
 <circle class="badge" cx="704" cy="219" r="12"/>
 <text x="704" y="223.5" class="n" text-anchor="middle">3</text>
-<text x="704" y="262" class="l" text-anchor="middle">回执</text>
+<text x="704" y="262" class="l" text-anchor="middle">交结果</text>
 
 <!-- 右：Agent 插件 -->
 <rect class="plug" x="740" y="68" width="196" height="264" rx="14"/>
 <text x="758" y="98" class="h2">Agent 插件</text>
-<text x="758" y="118" class="s">跑完一轮就退出</text>
+<text x="758" y="118" class="s">负责干活的 AI</text>
 <rect class="item" x="756" y="136" width="164" height="32" rx="8"/>
 <text x="838" y="157" class="r" text-anchor="middle">Claude Code</text>
 <rect class="item" x="756" y="176" width="164" height="32" rx="8"/>
@@ -111,15 +111,15 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <circle class="dot" cx="838" cy="308" r="2.4"/>
 <circle class="dot" cx="850" cy="308" r="2.4"/>
 
-<!-- 下方人机闭环：4 提问卡片 -> 通道插件 -> 你 -> 5 回答唤醒原会话 -->
+<!-- 下方人机闭环：4 拿不准才问你 -> 通道插件 -> 你 -> 5 拍板后接着干 -->
 <path class="conn" d="M560 334V396"/>
 <circle class="badge" cx="560" cy="365" r="12"/>
 <text x="560" y="369.5" class="n" text-anchor="middle">4</text>
-<text x="580" y="370" class="l">要拍板才发卡片</text>
+<text x="580" y="370" class="l">拿不准才发卡片问你</text>
 
 <rect class="plug" x="390" y="400" width="546" height="92" rx="14"/>
 <text x="410" y="428" class="h2">通道插件</text>
-<text x="490" y="428" class="s">把卡片送到你面前</text>
+<text x="490" y="428" class="s">把问题卡片送到你手边</text>
 <rect class="item" x="410" y="442" width="114" height="36" rx="8"/>
 <text x="467" y="465" class="r" text-anchor="middle">桌面通知</text>
 <rect class="item" x="534" y="442" width="104" height="36" rx="8"/>
@@ -134,28 +134,28 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <text x="248" y="441" class="you-t" text-anchor="middle">你</text>
 <text x="248" y="465" class="you-s" text-anchor="middle">只管拍板</text>
 
-<!-- 5: 你的回答 -> 回到内核唤醒下一轮 -->
+<!-- 5: 你的回答 -> 回到内核接着干 -->
 <path class="conn" d="M248 400V358H400V334"/>
 <circle class="badge" cx="324" cy="358" r="12"/>
 <text x="324" y="362.5" class="n" text-anchor="middle">5</text>
-<text x="232" y="363" class="l" text-anchor="end">回答唤醒原会话</text>
+<text x="232" y="363" class="l" text-anchor="end">点一下，接着原对话干完</text>
 
 <!-- 底部：交付流水线 -->
 <rect class="plug" x="24" y="532" width="912" height="72" rx="14"/>
-<text x="42" y="562" class="h2">交付流水线</text>
-<text x="42" y="584" class="s">也是一个插件（事件 + Agent）</text>
+<text x="42" y="562" class="h2">代码交付流水线</text>
+<text x="42" y="584" class="s">内置插件示例（事件 + Agent）</text>
 <rect class="item" x="260" y="550" width="106" height="36" rx="8"/>
-<text x="313" y="573" class="r" text-anchor="middle">审查</text>
+<text x="313" y="573" class="r" text-anchor="middle">审代码</text>
 <path class="flow" d="M367 568H395"/>
 <rect class="item" x="396" y="550" width="106" height="36" rx="8"/>
-<text x="449" y="573" class="r" text-anchor="middle">检查</text>
+<text x="449" y="573" class="r" text-anchor="middle">跑检查</text>
 <path class="flow" d="M503 568H531"/>
 <rect class="item" x="532" y="550" width="106" height="36" rx="8"/>
-<text x="585" y="573" class="r" text-anchor="middle">合并</text>
+<text x="585" y="573" class="r" text-anchor="middle">合代码</text>
 <path class="flow" d="M639 568H667"/>
 <rect class="item" x="668" y="550" width="106" height="36" rx="8"/>
-<text x="721" y="573" class="r" text-anchor="middle">上线</text>
+<text x="721" y="573" class="r" text-anchor="middle">自动上线</text>
 <path class="flow" d="M775 568H803"/>
 <rect class="item" x="804" y="550" width="112" height="36" rx="8"/>
-<text x="860" y="573" class="r" text-anchor="middle">核对版本</text>
+<text x="860" y="573" class="r" text-anchor="middle">核对线上版本</text>
 </svg>

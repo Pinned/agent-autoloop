@@ -40,13 +40,13 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 
 <!-- Top auto-loop arc: finish directly / scheduled follow-up -> back to kernel -->
 <path class="back" d="M838 66V28H480V63"/>
-<rect class="loop-pill" x="476" y="13" width="356" height="30" rx="15"/>
-<text x="654" y="33" class="loop-text" text-anchor="middle">Auto-loop: done · scheduled check · new events</text>
+<rect class="loop-pill" x="466" y="13" width="368" height="30" rx="15"/>
+<text x="650" y="33" class="loop-text" text-anchor="middle">Auto-loop: finishes on its own · checks back later</text>
 
 <!-- Left: Event plugins -->
 <rect class="plug" x="24" y="68" width="196" height="264" rx="14"/>
 <text x="42" y="98" class="h2">Event plugins</text>
-<text x="42" y="118" class="s">Changes become events</text>
+<text x="42" y="118" class="s">Spot new work to do</text>
 <rect class="item" x="40" y="136" width="164" height="32" rx="8"/>
 <text x="122" y="157" class="r" text-anchor="middle">Schedules</text>
 <rect class="item" x="40" y="176" width="164" height="32" rx="8"/>
@@ -60,7 +60,7 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <circle class="dot" cx="122" cy="308" r="2.4"/>
 <circle class="dot" cx="134" cy="308" r="2.4"/>
 
-<!-- 1: event -->
+<!-- 1: new event -->
 <path class="conn" d="M222 200H286"/>
 <circle class="badge" cx="254" cy="177" r="12"/>
 <text x="254" y="181.5" class="n" text-anchor="middle">1</text>
@@ -72,32 +72,32 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <text x="516" y="104" class="cs">Indexed state · 0 deps</text>
 
 <rect class="chip" x="312" y="124" width="336" height="54" rx="10"/>
-<text x="480" y="148" class="cn" text-anchor="middle">1. Route &amp; batch by rules</text>
-<text x="480" y="167" class="cd" text-anchor="middle">picks agent &amp; folder · dedupes same subject</text>
+<text x="480" y="148" class="cn" text-anchor="middle">1. Dispatch work by your rules</text>
+<text x="480" y="167" class="cd" text-anchor="middle">picks which agent &amp; folder · merges duplicate events</text>
 
 <rect class="chip" x="312" y="188" width="336" height="54" rx="10"/>
-<text x="480" y="212" class="cn" text-anchor="middle">2. Sole deterministic decider</text>
-<text x="480" y="231" class="cd" text-anchor="middle">no outbound requests · same input, same result</text>
+<text x="480" y="212" class="cn" text-anchor="middle">2. Exit after each round, zero idle cost</text>
+<text x="480" y="231" class="cd" text-anchor="middle">no hanging processes or wasted tokens while waiting</text>
 
 <rect class="chip" x="312" y="252" width="336" height="60" rx="10"/>
-<text x="480" y="276" class="cn" text-anchor="middle">3. One append-only log &amp; due table</text>
-<text x="480" y="296" class="cd" text-anchor="middle">crash-safe · traceable · 0 processes while waiting</text>
+<text x="480" y="276" class="cn" text-anchor="middle">3. Full history, survives crashes &amp; reboots</text>
+<text x="480" y="296" class="cd" text-anchor="middle">every step is traceable · picks right back up after restart</text>
 
-<!-- 2 & 3: work & receipt -->
+<!-- 2 & 3: dispatch & result -->
 <path class="conn" d="M672 166H736"/>
 <circle class="badge" cx="704" cy="143" r="12"/>
 <text x="704" y="147.5" class="n" text-anchor="middle">2</text>
-<text x="704" y="186" class="l" text-anchor="middle">work</text>
+<text x="704" y="186" class="l" text-anchor="middle">dispatch</text>
 
 <path class="conn" d="M736 242H672"/>
 <circle class="badge" cx="704" cy="219" r="12"/>
 <text x="704" y="223.5" class="n" text-anchor="middle">3</text>
-<text x="704" y="262" class="l" text-anchor="middle">receipt</text>
+<text x="704" y="262" class="l" text-anchor="middle">result</text>
 
 <!-- Right: Agent plugins -->
 <rect class="plug" x="740" y="68" width="196" height="264" rx="14"/>
 <text x="758" y="98" class="h2">Agent plugins</text>
-<text x="758" y="118" class="s">Work one round, then exit</text>
+<text x="758" y="118" class="s">The AI that does the work</text>
 <rect class="item" x="756" y="136" width="164" height="32" rx="8"/>
 <text x="838" y="157" class="r" text-anchor="middle">Claude Code</text>
 <rect class="item" x="756" y="176" width="164" height="32" rx="8"/>
@@ -115,11 +115,11 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <path class="conn" d="M560 334V396"/>
 <circle class="badge" cx="560" cy="365" r="12"/>
 <text x="560" y="369.5" class="n" text-anchor="middle">4</text>
-<text x="580" y="370" class="l">card when needed</text>
+<text x="580" y="370" class="l">asks you only when needed</text>
 
 <rect class="plug" x="390" y="400" width="546" height="92" rx="14"/>
 <text x="410" y="428" class="h2">Channel plugins</text>
-<text x="564" y="428" class="s">Cards reach you</text>
+<text x="564" y="428" class="s">Deliver cards to your hand</text>
 <rect class="item" x="410" y="442" width="114" height="36" rx="8"/>
 <text x="467" y="465" class="r" text-anchor="middle">Desktop</text>
 <rect class="item" x="534" y="442" width="104" height="36" rx="8"/>
@@ -132,18 +132,18 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <path class="both" d="M388 446H328"/>
 <rect class="you" x="172" y="402" width="152" height="88" rx="26"/>
 <text x="248" y="441" class="you-t" text-anchor="middle">You</text>
-<text x="248" y="465" class="you-s" text-anchor="middle">Make the call</text>
+<text x="248" y="465" class="you-s" text-anchor="middle">Just make the call</text>
 
 <!-- 5: answer -> back to kernel -->
 <path class="conn" d="M248 400V358H400V334"/>
 <circle class="badge" cx="324" cy="358" r="12"/>
 <text x="324" y="362.5" class="n" text-anchor="middle">5</text>
-<text x="232" y="363" class="l" text-anchor="end">answer resumes session</text>
+<text x="232" y="363" class="l" text-anchor="end">one tap resumes the chat</text>
 
 <!-- Bottom: Delivery pipeline -->
 <rect class="plug" x="24" y="532" width="912" height="72" rx="14"/>
-<text x="42" y="562" class="h2">Delivery pipeline</text>
-<text x="42" y="584" class="s">also a plugin (event + agent)</text>
+<text x="42" y="562" class="h2">Code delivery pipeline</text>
+<text x="42" y="584" class="s">built-in plugin (event + agent)</text>
 <rect class="item" x="260" y="550" width="106" height="36" rx="8"/>
 <text x="313" y="573" class="r" text-anchor="middle">Review</text>
 <path class="flow" d="M367 568H395"/>
@@ -154,8 +154,8 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <text x="585" y="573" class="r" text-anchor="middle">Merge</text>
 <path class="flow" d="M639 568H667"/>
 <rect class="item" x="668" y="550" width="106" height="36" rx="8"/>
-<text x="721" y="573" class="r" text-anchor="middle">Ship</text>
+<text x="721" y="573" class="r" text-anchor="middle">Deploy</text>
 <path class="flow" d="M775 568H803"/>
 <rect class="item" x="804" y="550" width="112" height="36" rx="8"/>
-<text x="860" y="573" class="r" text-anchor="middle">Verify</text>
+<text x="860" y="573" class="r" text-anchor="middle">Verify live</text>
 </svg>

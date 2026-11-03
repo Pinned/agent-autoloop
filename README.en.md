@@ -1,45 +1,57 @@
 # Agent Autoloop
 
-**A deterministic kernel under 1,500 lines, with everything else built as plugins. Let agents follow work through to completion on their own, and bring you in only when a decision is yours to make.**
+**Let your command-line agents pick up work and follow it through in the background — staying quiet when they can handle it, and sending you a card only when a decision is yours to make.**
 
 [中文](README.md) | **English**
 
-> Note: The CLI output and default notification strings are currently in Chinese.
+> Note: CLI output and default notification strings are currently in Chinese.
 
 ![Architecture](docs/architecture.en.svg)
 
-## How the loop works
+## What problem does it solve?
 
-Following the diagram above, every piece of work moves through five steps and two loops:
+Most of us use command-line agents like Claude Code or Codex by babysitting a terminal: you type a prompt, watch it run, and answer its questions. Close the window or walk away, and the workflow stops.
 
-1. **① Events come in (Event plugins)**: A new GitHub issue, a production alert, or 9:00 AM on the clock turns into a standard **event** delivered to the kernel.
-2. **② Route & batch by rules (Autoloop kernel)**: Your **rules** (`rules.json`) pick which agent runs, in which folder, and with which instructions. Events for the same subject are deduplicated and batched, and every state change is recorded in a single append-only fact log.
-3. **③ Work one round, leave a receipt, exit (Agent plugins)**: An agent is just a command-line process. It runs **one round**, prints its follow-up actions in its final message (**receipt**), and exits immediately:
-   - **Auto-loop (top dashed line — quiet by default)**: The agent finishes the job, schedules a follow-up check (`later`), or emits new events to trigger the next step on its own.
-   - **Human-in-the-loop (bottom solid line — ④ Card → You make the call → ⑤ Answer resumes session)**: When an action requires your approval, the kernel sends a **card** through a **channel plugin**. **While waiting for your answer, zero agent processes run, zero tokens are spent, and restarts lose nothing.** Once you answer, the next round resumes the original session and finishes the job.
+**Agent Autoloop** turns your command-line agents into an always-on background loop. At the center is a deterministic **kernel** with zero runtime dependencies. Around it, **event sources, agents, notification channels, and even CI/CD delivery pipelines** are all hot-swappable **plugins**.
 
-- **One computer, one install command**: No server or inbound ports required.
-- **No dashboard, no SDK**: The protocol is plain HTTP + JSON; the CLI is just one client.
-- **Everything is a plugin**: Event sources, agents, channels, and even the CI delivery pipeline are hot-swappable plugins. Any CLI agent that prints a final message connects with one line of config.
-- **Zero runtime dependencies**: Node 24 built-ins are enough.
+Following the architecture diagram above, here is how a piece of work flows from start to finish:
 
-## Quick start
+1. **Something happens (① Event plugins)**: A 9:00 AM schedule, a new GitHub issue, or a production alert is turned into a standard event and sent to the kernel.
+2. **Dispatched by your rules (② Autoloop kernel)**: Your `rules.json` file decides which agent handles the event and in which folder. If multiple events arrive for the same subject while it's queued, the kernel merges them into a single round instead of running duplicate jobs.
+3. **Work one round and exit (③ Agent plugins)**: The agent runs one round, prints its conclusion and any follow-up actions in its final message, and exits immediately — branching into two loops:
+   - **Auto-loop (top dashed line — quiet by default)**: If the agent can finish the job on its own, schedule a follow-up check (e.g., in 30 minutes), or trigger the next step, it loops automatically without bothering you.
+   - **Human-in-the-loop (bottom solid line — you just make the call)**: When the agent hits a sensitive action (deleting data, restarting a service, spending money, messaging users), the kernel sends a decision card (**④**) to your phone or desktop via a channel plugin. **While waiting hours for your reply, zero agent processes run and zero tokens are spent.** One tap on the card (**⑤**) wakes the original session right back up to finish the job.
 
-Works on macOS and Linux. Requires Node 24, Git, GitHub CLI signed in with access to this repository, and a command-line agent you have already signed into. You can also hand the [installation guide](INSTALL.md) directly to your agent.
+---
 
-**1. Install the program, configuration, and desktop notifications in one command:**
+## Key highlights
+
+- **One machine, one install command**: Runs right on your Mac or Linux machine. No cloud server or inbound ports required.
+- **Everything is a plugin — connect any CLI agent in one line**: No SDKs to integrate, no agent source code to fork. Any CLI tool that takes a prompt and prints a final reply (Claude Code, Codex, DeepSeek Harness, Pi, OpenClaw, Cursor, etc.) plugs in with a single config entry.
+- **No bloated web dashboard**: Stay focused. The system runs quietly in the background, pushes cards to Feishu, DingTalk, WeCom, Slack, Discord, or desktop notifications when it needs you, and lets you inspect everything from the CLI.
+- **Full history, survives crashes and reboots**: Every trigger, rule version, agent result, and human decision is committed to a local SQLite log before acknowledging. Even after a hard crash or reboot, it picks right back up where it left off.
+
+---
+
+## Try it in 30 seconds
+
+Works on macOS and Linux. You need Node 24, Git, GitHub CLI (`gh`) signed in with access to this repository, and at least one command-line agent already signed in. You can also hand the [installation guide](INSTALL.md) directly to your agent and let it install everything for you.
+
+### 1. Install in one command
 
 ```bash
 gh api repos/KKKKhazix/agent-autoloop/contents/install.sh -H 'Accept: application/vnd.github.raw+json' | sh
 ```
 
-**2. Run a complete loop (question → process exits → you make the call → session resumes) with your own agent:**
+### 2. Run your first loop (ask → exit with 0 cost → make the call → resume)
+
+Run the built-in trial with your own local agent:
 
 ```bash
 agent-autoloop try
 ```
 
-Actual output from Codex in a non-interactive terminal:
+Here is the actual output from Codex in a non-interactive terminal:
 
 ```text
 事件发出去了，Agent 开始干活……
@@ -54,13 +66,17 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 答完运行 agent-autoloop status，能看到它接着把活干完。
 ```
 
-Run `agent-autoloop answer 1 2` to choose green. Then `agent-autoloop status` shows “你选了绿色，试跑通过” — the agent resumed and finished the trial. In an interactive terminal, type the choice number directly.
+In an interactive terminal, just type the option number. In a non-interactive terminal, run `agent-autoloop answer 1 2` to pick green, then run `agent-autoloop status` — you'll see the agent resumed its previous conversation and completed the task.
 
-## Rules & agent receipts
+---
 
-### 1. Write a rule
+## Day-to-day usage
 
-A rule states what happened, which agent handles it, where it works, and which instructions to follow:
+### 1. Write your rules (`rules.json`)
+
+No glue code needed. Open `~/.agent-autoloop/rules.json` and declare **what happened, who handles it, and where they work**.
+
+For example, hand new GitHub issues to Codex:
 
 ```json
 {
@@ -73,80 +89,102 @@ A rule states what happened, which agent handles it, where it works, and which i
 }
 ```
 
-Schedules live in the same `rules.json` file:
+Scheduled tasks live in the exact same file:
 
 ```json
-{ "name": "Morning brief", "when": { "cron": "0 9 * * *" }, "to": "codex", "cwd": "~/notes", "prompt": "Write today's brief." }
+{
+  "name": "Morning brief",
+  "when": { "cron": "0 9 * * *" },
+  "to": "codex",
+  "cwd": "~/notes",
+  "prompt": "Summarize yesterday's notes and commits into today's brief."
+}
 ```
 
-Edit `~/.agent-autoloop/rules.json` and run `agent-autoloop check`. Changes reload within seconds; invalid edits keep the previous rules running and send a card telling you what needs fixing.
+Changes take effect within seconds of saving. Run `agent-autoloop check` to validate your config; if you make a syntax mistake, the hub keeps running the previous valid rules and sends you a card pointing out the error.
 
-### 2. The agent has only one job
+### 2. How agents talk back to the hub
 
-Print a final message. Put the one-line conclusion on the first line and any follow-up actions for the hub inside an `agent-autoloop` block:
+Why can any CLI agent plug in without an SDK? Because the hub asks only one thing of an agent: **put your conclusion in your final message**.
+
+- If the task is done and needs no follow-up, a plain one-line summary is enough.
+- If the agent needs to ask you a question, send a notice, close an existing card, or schedule a follow-up check, it appends an `agent-autoloop` JSON block at the end of its final message:
 
 ````text
-Order checked. There is enough stock.
+Order checked. We have enough stock in the warehouse.
 
 ```agent-autoloop
-{ "ask": [{ "title": "How should we deliver it?", "text": "Both options are available.", "options": ["Courier", "Pickup"], "key": "shipping" }] }
+{ "ask": [{ "title": "How should we ship it?", "text": "Both options can go out today.", "options": ["Courier", "Pickup"], "key": "shipping" }] }
 ```
 ````
 
-Omit the code block when no follow-up is needed. A receipt can also send notifications (`notice`), close open cards (`resolve`), schedule a follow-up check (`later`), or emit new events (`events`). If a receipt is malformed, the worker asks the agent to rewrite only the receipt without repeating the business operation.
+Besides `ask`, receipts can send notifications (`notice`), resolve open cards (`resolve`), schedule future checks (`later`), or emit new events (`events`). If the agent outputs invalid JSON in the block, the worker resumes the same session and asks it to rewrite just the final message — without redoing the actual work.
 
-## Everything is a plugin
+---
 
-Outside the kernel, all four parts of the system are plugins:
+## Plugin ecosystem: swap any of the four sides
 
-### 1. Event plugins: turn changes into events
+Everything outside the kernel is a plugin:
 
-Your systems can `POST /v1/events`, GitHub sends signed webhooks, and schedules use `cron`. Systems without webhooks can use a [polling script](examples/watch-github-issues.sh) — when there are no new events, no model is called and no tokens are spent.
+### 1. Event plugins (how work gets triggered)
 
-### 2. Agent plugins: work one round, then exit
+- **Direct HTTP API**: Post JSON to `POST /v1/events` from your own services.
+- **GitHub Webhooks**: Built-in signature verification and event normalization.
+- **Cron schedules**: Defined right inside `rules.json`.
+- **Polling scripts**: For systems that can't push webhooks, use the included [polling script](examples/watch-github-issues.sh). When nothing has changed, no model is called and no tokens are used.
 
-**Tested end-to-end (including question, answer, and resumed conversation):**
+### 2. Agent plugins (who does the work)
+
+**Ready out of the box (tested end-to-end with multi-turn Q&A and session resumption):**
 
 - **Claude Code**: `use: "claude"`
 - **Codex**: `use: "codex"`
-- **ACP**: `use: "acp"` (verified with the official Codex ACP adapter across processes)
+- **ACP-compatible agents**: `use: "acp"` (verified end-to-end with the official Codex ACP adapter)
 
-**One-line connections from official documentation (not yet run by us):**
+**Connect other CLI agents in one line (commands below are from each tool's official docs, ready for you to plug in):**
 
 | Agent | Command |
 |---|---|
-| [Hermes](https://hermes-agent.nousresearch.com/docs/user-guide/cli) | `hermes chat -q {prompt}` |
+| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/cli-help.md#dsh-headless) | `dsh --profile headless {prompt}` |
 | [pi](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md) | `pi --print {prompt}` |
 | [OpenClaw](https://docs.openclaw.ai/cli/agent) | `openclaw agent exec {prompt}` |
-| [WorkBuddy / CodeBuddy](https://www.codebuddy.ai/docs/cli/headless) | `codebuddy -p {prompt}` |
-| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/cli-help.md#dsh-headless) | `dsh --profile headless {prompt}` |
+| [Hermes](https://hermes-agent.nousresearch.com/docs/user-guide/cli) | `hermes chat -q {prompt}` |
 | [Cursor](https://cursor.com/docs/cli/reference/parameters) | `agent -p --trust {prompt}` |
+| [WorkBuddy / CodeBuddy](https://www.codebuddy.ai/docs/cli/headless) | `codebuddy -p {prompt}` |
 
-Use `use: "command"` and split the command into a `command` array; `{prompt}` is passed as a single argument, never evaluated as shell code. Write an [agent plugin](docs/plugins.md#agent-插件) when you need session recovery, token/cost reporting, or custom permission mapping.
+For any generic CLI tool, set `use: "command"` and pass the command as an array (`{prompt}` is passed as a single argument, never evaluated as shell code). To add session resumption, token/cost tracking, or custom permission flags, you can write a small [agent plugin](docs/plugins.md#agent-插件).
 
-### 3. Channel plugins: cards reach you
+### 3. Channel plugins (how cards reach you)
 
-Desktop notifications are enabled by default. Feishu uses interactive card buttons; DingTalk, WeCom, Slack, and Discord send text with an answer link. You can also use the CLI directly via `agent-autoloop status` and `agent-autoloop answer`.
+- **Desktop notifications**: Enabled by default on macOS and Linux.
+- **Feishu interactive cards**: Verified end-to-end with real card delivery, button callbacks, and live card updates.
+- **DingTalk · WeCom · Slack · Discord**: Built-in webhook templates that send text plus a script-free HTML form link for answering (verified against local mock servers).
+- **CLI & MCP**: Check status and answer cards anytime via `agent-autoloop status` and `agent-autoloop answer`, or mount `agent-autoloop mcp` in any client supporting stdio MCP (`2025-11-25`).
 
-Feishu has been verified with real sends, button clicks, and card updates; the group webhook templates have been tested against local mock servers. Clients supporting stdio MCP 2025-11-25 can run `agent-autoloop mcp` to inspect, trace, answer, and manage work.
+### 4. Code delivery pipeline plugin (CI/CD as a plugin)
 
-### 4. Delivery pipeline plugin: CI/CD is a plugin too
+The repository ships with a complete `delivery` plugin built on top of the event and agent plugin interfaces. Add the `deliver` label to a GitHub PR, and it drives the entire release loop:
 
-Add the `deliver` label to a PR. The built-in delivery plugin (composed of an event polling script + delivery agent) runs **Review → Checks → Merge → Ship → Verify** against the live health endpoint. Configuration is read exclusively from `main`; PR code, tests, and config are never checked out or executed on the worker machine.
+**Review diff → Wait for CI checks → Merge PR → Wait for deploy → Verify live health version**
 
-Queueing, concurrency, and retries are handled by the kernel. See [delivery configuration](skills/agent-autoloop/SKILL.md#交付流水线).
+For safety, delivery settings are read strictly from `main`, and untrusted PR code, tests, or hooks are never checked out or executed on the worker machine. Queueing, concurrency, and retries are all handled by the kernel. See [delivery configuration](skills/agent-autoloop/SKILL.md#交付流水线).
+
+---
 
 ## Ready-to-use recipes
 
-- [Morning brief](examples/recipes/morning-brief): summarize local notes and commits on a schedule.
-- [GitHub issues](examples/recipes/github-issues): poll new issues, prepare local fixes, and ask you to review.
-- [Production alerts](examples/recipes/ops-alerts): investigate against local code and ask before restarting a service.
+- **[Morning brief](examples/recipes/morning-brief)**: Summarize local notes and Git commits every morning.
+- **[GitHub issues](examples/recipes/github-issues)**: Poll new issues, prepare a fix locally, and send you a card to review.
+- **[Production alerts](examples/recipes/ops-alerts)**: Investigate errors against local source code and ask before restarting services.
 
-## Why the kernel works this way
+---
 
-Run the reproduction commands below from the program directory, `~/.agent-autoloop/app`.
+## Why the kernel is rock-solid
 
-- **One append-only log**: Every accepted change is recorded as an append-only fact, and current state is rebuilt from that log. Trace any round from trigger to completion with `agent-autoloop why 1`:
+You can run the reproduction commands below directly from `~/.agent-autoloop/app`:
+
+- **Trace the "why" behind every run (`agent-autoloop why`)**
+  Every state change is recorded as an append-only fact. To see exactly what triggered a run, which rule version matched, who claimed it, and what happened next, run `agent-autoloop why 1`:
 
   ```text
   第 1 轮 · 演示
@@ -156,21 +194,24 @@ Run the reproduction commands below from the program directory, `~/.agent-autolo
   11-03 20:47:25  结束：演示完成
   ```
 
-- **One deterministic kernel**: The Autoloop kernel makes no outbound network requests, reads no clock, and uses no randomness. Identical inputs always produce identical results, so the same kernel and in-memory SQLite can simulate network drops, crashes, and duplicate requests reproducibly from a single seed:
+- **200,000-step fault simulation, reproducible from a single seed**
+  The kernel is purely deterministic: it never reads the system clock, never calls `Math.random()`, and never makes network requests on its own. Identical inputs always yield identical outputs, so the same kernel and in-memory SQLite can simulate network drops, crashes, and duplicate requests reproducibly from a single seed:
 
   ```bash
   node sim/random.ts 24301 200000
   ```
 
-- **One timer**: Cron schedules, follow-up checks, and retries share a single due table; the host waits only for the next deadline. This test kills the process with `SIGKILL` 1,000 times and verifies that every acknowledged fact survives:
+- **1,000 `SIGKILL` crash tests with zero data loss**
+  Cron jobs, follow-up timers, and retries all live in a single due table, and every HTTP write waits for its SQLite WAL transaction to sync to disk before replying. This test kills the hub process with `SIGKILL` 1,000 times and verifies that every acknowledged fact survives:
 
   ```bash
   node sim/crash.ts 1000 12648430
   ```
 
-- **One protocol**: Event plugins, workers, channels, and the CLI all speak the same HTTP + JSON protocol. A working channel using only `curl` and `jq` fits in a few dozen lines: [examples/channel.sh](examples/channel.sh).
+- **Plain HTTP + JSON protocol**
+  Event plugins, workers, channels, and the CLI all speak the exact same HTTP endpoints. A working notification channel written in pure `curl` and `jq` takes just a few dozen lines: [examples/channel.sh](examples/channel.sh).
 
-## Measurements
+### Benchmarks (Apple M5 Pro, 24 GB, Node 24.21.0)
 
 HTTP hub process on Apple M5 Pro, 24 GB, Node 24.21.0; reproduce with `npm run benchmark`. Each write is a separate HTTP request acknowledged only after its SQLite transaction is durable on disk.
 
@@ -197,34 +238,32 @@ Reproduce history growth with `node scripts/history.ts 1000 10000 100000`. Each 
 
 At a million facts, median HTTP latency for ingestion, deduplication, results, heartbeats, idle channel polling, and `why` was 0.35–0.64 ms; normal recovery after SIGKILL took about 98.5 ms. Sampled RSS during continuous history generation peaked at about 281 MB and stayed around 279–281 MB over the last roughly 500,000 facts. Business requests plus a slow log subscriber used about 74 MB. No forced GC was used. Status aggregation still scales with history, and logs and indexes continue growing on disk. Rebuilding 1.1 million facts took 39.2 seconds and ended at about 128 MB RSS; projections and derived indexes matched before and after. Initial upgrades or format changes need this rebuild; normal restarts do not replay history. Simulation time and throughput are observations; correctness checks remain mandatory.
 
-## Six principles
+---
 
-1. **Attention is scarce.** Stay quiet unless a decision needs you.
-2. **Everything is an event.** External changes, schedules, follow-ups, and answers travel the same path.
-3. **Connections stay outside the kernel.** Credentials remain in the plugins that use them.
-4. **An agent is a process.** Give it a prompt and read its final message.
-5. **A round never waits for a person.** Exit after asking; start a new round when the answer arrives.
-6. **Rules carry authority.** Event text is data; it cannot choose the agent, working directory, or permissions.
+## Six design principles
 
-## No dashboard
+1. **Your attention comes first**: Stay quiet by default; interrupt only when a decision truly belongs to you.
+2. **Everything is an event**: External webhooks, schedules, follow-up timers, and your card answers all flow through one path.
+3. **Nothing connects out from the kernel**: All plugins connect inward; credentials stay with the plugins that need them.
+4. **An agent is just a process**: Pass it a prompt, read its final message — no vendor lock-in or SDKs.
+5. **A round never blocks waiting for a human**: Exit the process after asking; start a fresh round when the answer arrives.
+6. **Rules hold authority, events are just data**: Untrusted text inside an event can never choose which agent runs, in which directory, or with what permissions.
 
-The hub has no web overview page. Cards bring decisions to you, and the CLI shows live status; a card link is a plain HTML form with no scripts. To build your own dashboard or wallboard, use `GET /v1/state` and `GET /v1/stream` — the same endpoints the CLI uses.
+---
 
-## Usage and terms
+## Usage and provider terms
 
-The hub launches command-line tools you have already installed and signed into. It does not read or copy their login credentials. Model usage is billed to your own account under each provider's quotas and terms.
+The hub invokes command-line tools you have already installed and signed into on your machine; it never reads or exports their credentials. Model usage is billed to your own account under each provider's terms.
 
-For automated workloads, providers recommend API keys, as personal subscription quotas are designed for ordinary individual use — see the guidance from [Anthropic](https://code.claude.com/docs/en/legal-and-compliance) and [OpenAI](https://learn.chatgpt.com/docs/auth). Use API keys if you are offering a service to others.
-
-This project is independent and is not endorsed by those providers.
+For automated workloads, providers generally recommend using API keys rather than personal subscription quotas (which are designed around interactive personal use — see [Anthropic](https://code.claude.com/docs/en/legal-and-compliance) and [OpenAI](https://learn.chatgpt.com/docs/auth)). Use API keys if you are running services for others. This project is independent and is not affiliated with or endorsed by those providers.
 
 ## Documentation
 
-- [Installation](INSTALL.md)
-- [Configuration](skills/agent-autoloop/SKILL.md)
+- [Installation guide](INSTALL.md)
+- [Configuration & delivery pipeline manual](skills/agent-autoloop/SKILL.md)
 - [Writing plugins](docs/plugins.md)
-- [Protocol](docs/protocol.md)
+- [Full HTTP protocol specification](docs/protocol.md)
 - [Security boundaries](SECURITY.md)
-- [Development guide](AGENTS.md)
+- [Development guidelines](AGENTS.md)
 
-[MIT](LICENSE)
+[MIT License](LICENSE)
