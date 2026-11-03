@@ -15,7 +15,8 @@
 ## 怎么改
 
 - 测试写在实现之前，每个测试文件开头先写它防的失败方式；修 bug 先写复现它的失败测试。
-- `npm test`、`npm run typecheck` 和 `npm run format:check` 都要过。
+- `npm test`、`npm run typecheck` 和 `npm run format:check` 都要过。没动 `kernel/`、`protocol/`、`sim/` 时，`npm run test:quick` 跳过模拟和穷举，其余测试照跑。
+- CI 由 `scripts/ci-scope.sh` 按改动范围分流：纯文档全部跳过；其他代码的 PR 跳过模拟和穷举；`kernel/`、`protocol/`、`sim/`、依赖、CI 配置和没归类的文件跑完整检查。非纯文档合进 main 后都再跑一遍完整检查。新增目录或让测试读取某份文档时，同步改这个脚本。
 - `npm test` 跑固定种子的 20 万步模拟与有界穷举；涉及日志、到期表或并发时还跑 `npm run test:nightly`。变异必须先证明原版测试实际执行且通过，不拿语法错误当检出。
 - 升级不写数据迁移。事实日志是唯一的权威状态；投影及索引在同一事务内持久化，正常启动复用，格式指纹变化时从日志逐条重建；`kernel/schema.sql` 只声明查询视图的列，不按版本加迁移文件。
 - 面向用户的字用中文大白话；代码注释用英文，只写代码看不出来的原因。

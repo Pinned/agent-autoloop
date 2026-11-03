@@ -21,7 +21,7 @@
 1. 从最新的 `main` 创建分支；外部贡献者使用 Fork。Agent 在独立工作树里开发，主目录保留在 `main`。
 2. 使用 Node.js 24 或更新版本，运行 `npm ci`。一次 PR 解决一个问题，同步更新受影响的中英文说明、示例和配置。
 3. 修 bug 先写能复现它的失败测试，测试文件开头说明防止什么失败。纯文档、模板或小范围可逆改动，不补照着实现抄的测试。
-4. 提交前运行 `npm test`、`npm run typecheck`、`npm run format:check`。涉及日志、到期表或并发时，再运行 `npm run test:nightly`。CI 在 Linux 和 macOS 上检查，并用已提交的代码运行安装到卸载的冒烟验证。
+4. 提交前运行 `npm test`、`npm run typecheck`、`npm run format:check`。涉及日志、到期表或并发时，再运行 `npm run test:nightly`。CI 在 Linux 和 macOS 上检查，并用已提交的代码运行安装到卸载的冒烟验证；只改文档时跳过这些检查，没动 `kernel/`、`protocol/`、`sim/` 时跳过耗时的模拟，合并后再跑完整检查。
 5. 向 `main` 提交 PR，说明问题、改后的行为、验证结果和兼容影响。未完成的工作使用草稿；合并前确认当前提交的两项系统检查通过。
 
 测试使用临时 `AGENT_AUTOLOOP_HOME`、随机端口、本地假 HTTP 和假通知命令。不要连接真实业务数据库、发送消息，或给已在线的飞书应用再开事件监听。真实交付脚本会创建和删除指定测试仓库，只在用户明确要求时运行。
