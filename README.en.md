@@ -67,7 +67,19 @@ Anything the agent can handle alone takes the auto-loop at the top of the diagra
 
 ### Write your rules (`rules.json`)
 
-No glue code needed. Open `~/.agent-autoloop/rules.json` and declare **what happened, who handles it, and where they work**. For example, hand new GitHub issues to Codex:
+No glue code needed. Open `~/.agent-autoloop/rules.json` and, under `rules`, declare **what happened, who handles it, and where they work**. Set `to` to a name already under `agents`. For example, write a brief every morning at 9:
+
+```json
+{
+  "name": "Morning brief",
+  "when": { "cron": "0 9 * * *" },
+  "to": "codex",
+  "cwd": "~/notes",
+  "prompt": "Summarize yesterday's notes and commits into today's brief."
+}
+```
+
+External events work the same way once the source is connected. To hand new GitHub issues to Codex, first register `github` under `sources` ([guide](skills/agent-autoloop/SKILL.md#接一个事件插件)):
 
 ```json
 {
@@ -77,18 +89,6 @@ No glue code needed. Open `~/.agent-autoloop/rules.json` and declare **what happ
   "cwd": "~/code/app",
   "skill": "handle-issue",
   "parallel": 3
-}
-```
-
-Scheduled tasks live in the same file:
-
-```json
-{
-  "name": "Morning brief",
-  "when": { "cron": "0 9 * * *" },
-  "to": "codex",
-  "cwd": "~/notes",
-  "prompt": "Summarize yesterday's notes and commits into today's brief."
 }
 ```
 
@@ -146,7 +146,7 @@ Built-in plugins ship with the program and are enabled through configuration. Us
 | **Channels**: how cards reach you | [Desktop notifications](plugins/desktop/channel.ts) (on by default), [Feishu](plugins/feishu/channel.ts), [DingTalk / WeCom / Slack / Discord](plugins/webhook/templates.ts) | [Guide](skills/agent-autoloop/SKILL.md#接一个通道) |
 | **Delivery**: CI/CD as a plugin | [`delivery`](plugins/delivery/delivery.ts) | [Guide](skills/agent-autoloop/SKILL.md#交付流水线) |
 
-**What has been tested:** Claude Code, Codex, and ACP (with the official Codex ACP adapter) have run multi-turn Q&A and session resumption across processes. Feishu has run real delivery, button callbacks, and card updates. The four webhook templates have only been checked against local mock servers.
+**What has been tested:** Claude Code, Codex, and ACP (with the official Codex ACP adapter) have run multi-turn Q&A and session resumption across processes. Feishu has run real delivery, button callbacks, and card updates. The four webhook templates have only been checked against local mock servers. These text channels answer through a link, so `hub.publicUrl` must be reachable from your phone or computer.
 
 **Other CLI agents connect in one line.** Set `use: "command"` and pass a command array; `{prompt}` is a single argument, never evaluated as shell code. These commands come from each tool's official docs, and we have not run each of them yet:
 
@@ -167,9 +167,9 @@ Built-in plugins ship with the program and are enabled through configuration. Us
 
 The kernel is about 1,650 lines with zero runtime dependencies. It reads no clock, uses no randomness, and makes no outbound requests; plugins connect in, and credentials stay with the plugins that use them. Identical inputs always give identical results. It brings four proven systems patterns to command-line agents:
 
-- **Zero-cost wait**: The process exits while waiting for your call, and the waiting state lives in SQLite — no daemon processes or open connections. If you reply three days later, nothing runs and no tokens are spent in the meantime; your answer resumes the original conversation.
+- **Zero-cost wait**: The process exits while waiting for your call, and the waiting state lives in SQLite, so the agent does not stay alive. If you reply three days later, no agent process runs and no tokens are spent in the meantime — only the lightweight hub waits in the background; your answer resumes the original conversation.
 - **Event sourcing**: All state is derived from an append-only fact log, committed in the same SQLite transaction as its indexes before the hub replies. Confirmed facts survive `SIGKILL` (whole-machine power loss is not separately tested), every run can be traced with a single command, and format changes rebuild from the log without migration scripts.
-- **Code / data split**: Like parameterized SQL. Text from an issue or any other external event is written only to a local data file, never into the prompt; `rules.json` alone decides which agent runs, in which folder, and with what access. Events carrying `cwd`, `agent`, or `access` fields are rejected outright.
+- **Code / data split**: Like parameterized SQL. Issue titles, bodies, and other external text are written only to a local data file, never into the prompt, which carries only character-checked types, IDs, and links; `rules.json` alone decides which agent runs, in which folder, and with what access. Events carrying `cwd`, `agent`, or `access` fields are rejected outright.
 - **Hop circuit breaker**: Like packet TTL in networking. Events returned by an agent can dispatch more agents, and the hop count keeps growing — across human questions and scheduled follow-ups too — and an agent cannot reset it. Past 8 hops, the kernel records the event, stops dispatching, and sends you a notice card.
 
 ### Check it yourself
@@ -193,7 +193,7 @@ Run these from `~/.agent-autoloop/app`:
 
 ### Benchmarks
 
-Apple M5 Pro, 24 GB, Node 24.21.0. Each write is a separate request, acknowledged only after its transaction is durable.
+Apple M5 Pro, 24 GB, Node 24.21.0. Each write is a separate request, acknowledged only after its transaction is durable. The pass marks in `npm run benchmark` are set for this machine, so another machine may report a miss.
 
 | Metric | Measured |
 |---|---:|

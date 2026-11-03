@@ -51,7 +51,7 @@ description: 配置 Agent 自动化中台：加规则、接新的事件插件、
 任何能打印最后一条消息的命令，在 `rules.json` 的 `agents` 写一行：
 
 ```json
-"hermes": { "name": "Hermes", "worker": "这台电脑", "use": "command", "command": ["hermes", "chat", "-Q", "-q", "{prompt}"] }
+"hermes": { "name": "Hermes", "worker": "my-mac", "use": "command", "command": ["hermes", "chat", "-Q", "-q", "{prompt}"] }
 ```
 
 退出码不是 0 算没跑成。要会话接续、打开会话的链接和用量统计，在 `~/.agent-autoloop/plugins/<名字>/agent.ts` 写一个插件（照 `plugins/codex/agent.ts`）：`command` 给命令行，`read` 从输出读最后一条消息和会话，`link` 给链接。
