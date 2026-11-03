@@ -86,7 +86,7 @@ In an interactive terminal, just type the option number. In a non-interactive te
 
 ## Ready-to-use recipes
 
-Start with the task you want to automate. The six recipes include `rules.json`, a task `SKILL.md`, and setup instructions. PR delivery uses the built-in `delivery` plugin and its configuration manual.
+Start with the task you want to automate. The seven recipes include `rules.json`, a task `SKILL.md`, and setup instructions. PR delivery uses the built-in `delivery` plugin and its configuration manual.
 
 | Task | Included workflow | What to configure |
 |---|---|---|
@@ -96,9 +96,10 @@ Start with the task you want to automate. The six recipes include `rules.json`, 
 | [User feedback](examples/recipes/feedback/README.md) | Re-read current feedback, fix, deliver and verify, then prepare a reply; ask the owner in Feishu and resume after their answer | Your feedback read/write tools, project delivery workflow, agent, and a private Feishu channel |
 | [Website watch](examples/recipes/website-watch/README.md) | Check HTTP status and expected content every five minutes; wake the agent on a new incident, keep ongoing failures quiet, and update the card on recovery | An external worker, health URL, expected content, code directory, and Feishu |
 | [Feishu weekly and business brief](examples/recipes/feishu-brief/README.md) | Read selected reports and tables as the user at 6 PM Sunday; summarize only complete inputs locally, and send the owner a short summary without sensitive details | Signed-in `lark-cli`, report rule and users, tables, and required fields |
+| [Claude-to-Codex browser handoff](examples/recipes/browser-handoff/README.md) | Delegate only web steps, return evidence to the main task, and resume the same Codex session after the owner clears a block | A verified browser entry point, Claude command permissions, target URL, and allowed actions |
 | [PR delivery](skills/agent-autoloop/SKILL.md#交付流水线) | Add `deliver` to a PR to review it, wait for CI, merge, wait for deployment, and verify the live version | Signed-in `gh`, a review tool, hub rules, and check, deployment, and health settings on the project's main branch |
 
-The three new recipes default to Asia/Shanghai and a private Feishu conversation with the owner. Samples contain only fictional data and placeholders; configured business data stays in your private working directory. Scripts and receipts are verified with local HTTP and a fake Feishu CLI, not a live account or production business workflow.
+Feedback, website watch, and Feishu briefs default to Asia/Shanghai and a private Feishu conversation with the owner. Samples contain only fictional data and placeholders; configured business data stays in your private working directory. Scripts and receipts are verified with local HTTP and a fake Feishu CLI, not a live account or production business workflow.
 
 **Enable a recipe:** Open its instructions, put the task Skill in your agent's skills directory, merge the sample rule entries into your existing `~/.agent-autoloop/rules.json`, replace worker names and paths, then run `agent-autoloop check`. Each recipe lists its additional setup. Saved rules take effect within seconds.
 
