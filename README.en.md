@@ -24,12 +24,22 @@ Following the architecture diagram above, here is how a piece of work flows from
 
 ---
 
+## Four kernel mechanisms
+
+At ~1,600 lines of code with zero runtime dependencies and purely deterministic execution, the kernel brings four battle-tested systems patterns to command-line agents:
+
+- **Zero-cost wait**: Exits while waiting for your call — zero tokens spent, then resumes the original conversation. No hanging daemon processes or open connections; waiting state lives entirely in SQLite. Even if you reply three days later, zero processes run in the meantime, and one tap resumes the exact chat.
+- **Event sourcing**: Crash-safe and traceable at every step; upgrades rebuild from the log with zero migrations. All state is derived from an append-only fact log committed in the same SQLite transaction as its indexes. Confirmed facts survive power loss or `SIGKILL`, every run is inspectable with a single command, and schema format changes automatically rebuild projections from the log.
+- **Code / data split**: Untrusted text in an issue never enters the prompt string and can never alter the working directory or permission level. Like parameterized SQL, external event text is written only to a local data file while `rules.json` alone decides which agent runs, in which folder, and with what access (events carrying `cwd`, `agent`, or `access` fields are rejected outright).
+- **Hop circuit breaker**: Agent-to-agent chains automatically stop past 8 hops before burning through your quota. Like packet TTL in networking, hop counts carry across human questions and scheduled follow-ups and cannot be reset by an agent's receipt; past 8 hops, the kernel records the event, halts dispatch, and sends you a notice card.
+
+---
+
 ## Key highlights
 
 - **One machine, one install command**: Runs right on your Mac or Linux machine. No cloud server or inbound ports required.
 - **Everything is a plugin — connect any CLI agent in one line**: No SDKs to integrate, no agent source code to fork. Any CLI tool that takes a prompt and prints a final reply (Claude Code, Codex, DeepSeek Harness, Pi, OpenClaw, Cursor, etc.) plugs in with a single config entry.
 - **No bloated web dashboard**: Stay focused. The system runs quietly in the background, pushes cards to Feishu, DingTalk, WeCom, Slack, Discord, or desktop notifications when it needs you, and lets you inspect everything from the CLI.
-- **Full history, survives crashes and reboots**: Every trigger, rule version, agent result, and human decision is committed to a local SQLite log before acknowledging. Even after a hard crash or reboot, it picks right back up where it left off.
 
 ---
 
