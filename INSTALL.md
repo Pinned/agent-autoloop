@@ -62,7 +62,7 @@ agent-autoloop try
 
 ## 写第一条规则
 
-安装验证完成后，问用户希望什么事自动处理，再照[配置手册](skills/agent-autoloop/SKILL.md)写规则。用 `agent-autoloop check` 检查；改动几秒内生效。
+安装验证完成后，按用户希望自动处理的事从 [README 的场景模板](README.md#拿来即用的场景模板)选一个，再照[配置手册](skills/agent-autoloop/SKILL.md)写规则；用户还没指定用途时再问。用 `agent-autoloop check` 检查；改动几秒内生效。
 
 桌面通知只在这台电脑上显示。需要别的通道时，先确认接收位置，再按配置手册接入。不要直接测试发信或发群消息。`access` 的含义见[插件说明](docs/plugins.md#access-实际能做什么)，不要替用户扩大权限。
 

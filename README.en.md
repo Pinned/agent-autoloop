@@ -4,6 +4,8 @@
 
 [中文](README.md) | **English**
 
+[Install & try](#try-it-in-30-seconds) · [Recipes](#ready-to-use-recipes) · [Built-in plugins](#plugin-ecosystem-swap-any-of-the-four-sides) · [Developer examples](#plugin-and-script-examples) · [Repository layout](#repository-layout)
+
 > Note: CLI output and default notification strings are currently in Chinese.
 
 ![Architecture](docs/architecture.en.svg)
@@ -80,6 +82,28 @@ In an interactive terminal, just type the option number. In a non-interactive te
 
 ---
 
+## Ready-to-use recipes
+
+Start with the task you want to automate. The first three entries include `rules.json`, a task `SKILL.md`, and setup instructions. PR delivery uses the built-in `delivery` plugin and its configuration manual.
+
+| Task | Included workflow | What to configure |
+|---|---|---|
+| [Morning brief](examples/recipes/morning-brief/README.md) | Summarize local notes and Git commits at 8 AM by default; write `briefs/YYYY-MM-DD.md` | Agent, worker, notes directory, and optionally the schedule; no network needed |
+| [GitHub issues](examples/recipes/github-issues/README.md) | Poll every five minutes, edit code locally, and notify you to review; no commits, pushes, or issue replies | Signed-in `gh`, repository, start date, agent, and code directory |
+| [Production alerts](examples/recipes/ops-alerts/README.md) | Receive an error, investigate local code, ask before restarting, and continue after your answer | Event source, agent, and code directory; the sample `restart.sh` only prints text, so replace it with your restart and health-check commands |
+| [PR delivery](skills/agent-autoloop/SKILL.md#交付流水线) | Add `deliver` to a PR to review it, wait for CI, merge, wait for deployment, and verify the live version | Signed-in `gh`, a review tool, hub rules, and check, deployment, and health settings on the project's main branch |
+
+**Enable a recipe:** Open its instructions, put the task Skill in your agent's skills directory, merge the sample rule entries into your existing `~/.agent-autoloop/rules.json`, replace worker names and paths, then run `agent-autoloop check`. Each recipe lists its additional setup. Saved rules take effect within seconds.
+
+Two standalone task Skills can also be used with your own rules:
+
+| Skill | Purpose |
+|---|---|
+| [Weekly code cleanup](examples/skills/weekly-sweep/SKILL.md) | Review recent changes for leftover code, duplicate implementations, and stale documentation; configure your own schedule and project directory |
+| [Ship a PR](examples/skills/ship-pr/SKILL.md) | Guide an agent through using `delivery` and addressing review findings; use the PR delivery entry above for workflow configuration |
+
+---
+
 ## Day-to-day usage
 
 ### 1. Write your rules (`rules.json`)
@@ -136,22 +160,29 @@ When browser access, sign-in, or verification needs the owner's intervention, th
 
 ## Plugin ecosystem: swap any of the four sides
 
-Everything outside the kernel is a plugin:
+Built-in plugins ship with the program and are enabled through configuration. Use `agent-autoloop add <git URL>` for third-party plugins. Choose an entry below by what you need to connect.
 
 ### 1. Event plugins (how work gets triggered)
 
-- **Direct HTTP API**: Post JSON to `POST /v1/events` from your own services.
-- **GitHub Webhooks**: Built-in signature verification and event normalization.
-- **Cron schedules**: Defined right inside `rules.json`.
-- **Polling scripts**: For systems that can't push webhooks, use the included [polling script](examples/watch-github-issues.sh). When nothing has changed, no model is called and no tokens are used.
+| Integration | What it does | How to use it |
+|---|---|---|
+| [GitHub Webhook](plugins/github/source.ts) | Verify signatures and normalize GitHub events | Set the source's `adapter: "github"`, configure its signing secret, and let GitHub reach `/v1/in/<source>`; [setup](skills/agent-autoloop/SKILL.md#接一个事件插件) |
+| [Direct HTTP API](docs/protocol.md#来源把世界变成事件) | Accept events in the shared format | Call `POST /v1/events` with a source key |
+| [Cron rules](skills/agent-autoloop/SKILL.md#改规则) | Dispatch work on a schedule | Set `when.cron` in a rule; no extra plugin needed |
+| [GitHub issue polling script](examples/watch-github-issues.sh) | Fetch new issues without accepting public webhooks; polling itself makes no model calls | Use the [GitHub issues recipe](examples/recipes/github-issues/README.md) above |
 
 ### 2. Agent plugins (who does the work)
 
-**Ready out of the box (tested end-to-end with multi-turn Q&A and session resumption):**
+Choose `use` and a worker in the `agents` section of `rules.json`, then set the working directory in a rule. [Full configuration](skills/agent-autoloop/SKILL.md#接一个-agent)
 
-- **Claude Code**: `use: "claude"`
-- **Codex**: `use: "codex"`
-- **ACP-compatible agents**: `use: "acp"` (verified end-to-end with the official Codex ACP adapter)
+| Built-in plugin | What it does | How to use it |
+|---|---|---|
+| [Claude Code](plugins/claude/agent.ts) | Run tasks, resume sessions, and read receipts and usage | Install and sign in to Claude Code; set `use: "claude"` |
+| [Codex](plugins/codex/agent.ts) | Run tasks, resume sessions, and read receipts and usage | Install and sign in to Codex; set `use: "codex"` |
+| [ACP](plugins/acp/agent.ts) | Connect an ACP v1 agent with session loading and permission requests | Set `use: "acp"` and the ACP program's `command` |
+| [Generic command](plugins/command/agent.ts) | Run other CLI agents or fixed scripts and read their final output | Set `use: "command"` and a command array; see below |
+
+Claude Code, Codex, and ACP have been tested with multi-turn Q&A and session resumption across processes. ACP was verified using the official Codex ACP adapter.
 
 Web tasks use the agent's configured browser tools or a project-specified entry point. A working background CLI does not establish access to the desktop browser; [verify browser access separately](docs/plugins.md#浏览器接入).
 
@@ -170,10 +201,15 @@ For any generic CLI tool, set `use: "command"` and pass the command as an array 
 
 ### 3. Channel plugins (how cards reach you)
 
-- **Desktop notifications**: Enabled by default on macOS and Linux.
-- **Feishu interactive cards**: Verified end-to-end with real card delivery, button callbacks, and live card updates.
-- **DingTalk · WeCom · Slack · Discord**: Built-in webhook templates that send text plus a script-free HTML form link for answering (verified against local mock servers).
-- **CLI & MCP**: Check status and answer cards anytime via `agent-autoloop status` and `agent-autoloop answer`, or mount `agent-autoloop mcp` in any client supporting stdio MCP (`2025-11-25`).
+| Channel | What it does | How to use it |
+|---|---|---|
+| [Desktop notifications](plugins/desktop/channel.ts) | Show macOS / Linux reminders; view and answer from the CLI | Enabled by default on new installations |
+| [Feishu](plugins/feishu/channel.ts) | Send interactive cards, receive button answers, and update card state | Configure `lark-cli`, a Feishu app, and allowed answerers; [setup](skills/agent-autoloop/SKILL.md#接一个通道) |
+| [DingTalk / WeCom / Slack / Discord](plugins/webhook/templates.ts) | Send text and a separate answer-form link | Share the `webhook` plugin; set `url`, `platform`, and enable card links; [setup](skills/agent-autoloop/SKILL.md#接一个通道) |
+
+Feishu has been verified with real delivery, button callbacks, and card updates. The four webhook templates have been checked against local mock servers. Answer links need a `publicUrl` reachable from the device used to answer.
+
+CLI and MCP clients can also inspect and answer cards: use `agent-autoloop status`, `agent-autoloop answer`, or configure [`agent-autoloop mcp`](skills/agent-autoloop/SKILL.md#mcp-与密钥撤销) in a client supporting stdio MCP (`2025-11-25`).
 
 ### 4. Code delivery pipeline plugin (CI/CD as a plugin)
 
@@ -185,11 +221,17 @@ For safety, delivery settings are read strictly from `main`, and untrusted PR co
 
 ---
 
-## Ready-to-use recipes
+## Plugin and script examples
 
-- **[Morning brief](examples/recipes/morning-brief)**: Summarize local notes and Git commits every morning.
-- **[GitHub issues](examples/recipes/github-issues)**: Poll new issues, prepare a fix locally, and send you a card to review.
-- **[Production alerts](examples/recipes/ops-alerts)**: Investigate errors against local source code and ask before restarting services.
+To connect a new tool or system, start with one of these runnable templates and follow the [plugin guide](docs/plugins.md):
+
+| Template | Included example | What to replace |
+|---|---|---|
+| [Agent](examples/plugins/hello-agent/agent.ts) | Simulate execution with `echo`, read output and session IDs | Your agent's launch command and output parser |
+| [Channel](examples/plugins/hello-channel/channel.ts) | Claim cards, write them to a file, and report delivery; answer through the CLI | Your platform's send, update, and answer callbacks |
+| [Event plugin](examples/plugins/hello-source/source.ts) | Verify HMAC-SHA256 signatures and convert mock orders into events | Your system's signature checks and field mappings |
+
+For Shell clients, see the [worker script](examples/worker.sh) and [channel script](examples/channel.sh). Set the hub URL and key, then run with `curl` and `jq` installed. These demonstrate short tasks; use the built-in worker for long tasks that need heartbeats, cancellation, and recovery. Plugin entry points remain `agent.ts`, `channel.ts`, and `source.ts`; `source.ts` is the event plugin shown in the diagram.
 
 ---
 
@@ -270,6 +312,26 @@ At a million facts, median HTTP latency for ingestion, deduplication, results, h
 The hub invokes command-line tools you have already installed and signed into on your machine; it never reads or exports their credentials. Model usage is billed to your own account under each provider's terms.
 
 For automated workloads, providers generally recommend using API keys rather than personal subscription quotas (which are designed around interactive personal use — see [Anthropic](https://code.claude.com/docs/en/legal-and-compliance) and [OpenAI](https://learn.chatgpt.com/docs/auth)). Use API keys if you are running services for others. This project is independent and is not affiliated with or endorsed by those providers.
+
+## Repository layout
+
+| Location | Contents |
+|---|---|
+| `kernel/` | Decisions, fact log, projections, deadlines, rule matching, endpoint behavior, and card forms |
+| `host/` | Node HTTP, files and SQLite connections, clock, configuration, background services, and plugin loading |
+| `protocol/` | Wire formats, JSON Schema, input validation, HTTP client, and conformance checks |
+| `worker/` | Claim work, run agents, handle heartbeats and cancellation, read and submit receipts |
+| `cli/`, `bin/` | User commands and entry point: status, answers, `why`, MCP, updates, and uninstall |
+| `plugins/` | Built-in agent, event, channel, and delivery plugins |
+| `examples/recipes/` | Complete recipes with rules, a task Skill, and setup instructions |
+| `examples/plugins/`, `examples/skills/`, `examples/*.sh` | Minimal plugin templates, standalone task guides, and Shell examples |
+| `skills/agent-autoloop/` | The hub's configuration and operation manual, also made available to agents during installation |
+| `docs/` | Protocol, plugin guide, and Chinese / English architecture diagrams |
+| `tests/`, `sim/` | Everyday behavior tests, simulation, enumeration, crash tests, and mutation checks |
+| `scripts/`, `.github/workflows/` | Performance and real-agent checks, installation smoke scripts, and Linux / macOS CI |
+| Root documents and `install.sh` | Chinese / English READMEs, installation, security, development guidelines, license, and installer |
+
+Start reading at `bin/agent-autoloop.ts` → `cli/main.ts`, then follow the feature into `host/`, `worker/`, or `plugins/`. Read the [protocol](docs/protocol.md) for kernel design. Similarly named files serve different layers: `host/http.ts` adapts Node requests while `kernel/http.ts` defines endpoint behavior; `protocol/rules.ts` validates input while `kernel/rules.ts` defines rule types and matching.
 
 ## Documentation
 

@@ -314,13 +314,21 @@ Webhook 通道的 `config.json` 配置使用 `use: "webhook"`、`url` 和 `platf
 
 | 目录 | 职责 |
 |---|---|
-| `kernel/` | 确定性决策、演进、日志、到期、规则、请求处理、卡片表单 |
-| `host/` | Node HTTP、文件、SQLite、时钟、配置和进程入口 |
-| `protocol/` | 类型、JSON Schema、`rules.json` 校验、HTTP 客户端与一致性检查 |
-| `worker/`、`cli/` | 接单进程与用户命令 |
-| `plugins/` | Agent、来源、通道和交付，统一发现入口 |
+| `kernel/` | 确定性决策、演进、日志、到期、规则匹配、请求处理、卡片表单 |
+| `host/` | Node HTTP、文件与 SQLite 连接、时钟、配置、后台服务和插件加载 |
+| `protocol/` | 类型、JSON Schema、输入校验、HTTP 客户端与一致性检查 |
+| `worker/` | 接单、Agent 进程、心跳与停止、回执读取和提交 |
+| `cli/`、`bin/` | 用户命令、MCP 与命令行启动入口 |
+| `plugins/` | Agent、事件、通道和交付插件，统一发现入口 |
+| `examples/recipes/` | 完整场景的规则、任务 Skill 与启用说明 |
+| `examples/plugins/`、`examples/skills/`、`examples/*.sh` | 最小插件、独立任务手册和 curl/jq 示例 |
+| `skills/agent-autoloop/` | 中台的正式配置与操作手册，供用户和 Agent 使用 |
+| `docs/` | 通信协议、插件开发说明与架构图 |
+| `tests/` | 日常行为测试及测试辅助代码 |
 | `sim/` | 固定种子模拟、有界穷举、强杀与变异 |
-| `examples/` | curl/jq 示例和处理手册 |
+| `scripts/`、`.github/workflows/` | 性能与真机验证、安装冒烟和跨平台 CI |
+
+现成场景、内置插件与开发模板的入口见 [README](../README.md#拿来即用的场景模板)。插件文件名仍使用协议中的 `source.ts`，对应面向用户的“事件插件”。
 
 | 检查 | 上限或下限 |
 |---|---|

@@ -4,6 +4,8 @@
 
 **中文** | [English](README.en.md)
 
+[安装试跑](#30-秒上手体验) · [场景模板](#拿来即用的场景模板) · [内置插件](#插件体系四个方向都能自由替换) · [开发示例](#插件开发与脚本示例) · [仓库目录](#仓库目录)
+
 ![架构图](docs/architecture.svg)
 
 ## 它解决什么问题？
@@ -78,6 +80,28 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 
 ---
 
+## 拿来即用的场景模板
+
+先选想做的事。前三项提供 `rules.json`、任务 `SKILL.md` 和启用说明；PR 交付由内置 `delivery` 插件提供，配置在交付手册里。
+
+| 想做什么 | 已经封装好的流程 | 启用时要填什么 |
+|---|---|---|
+| [每日早报](examples/recipes/morning-brief/README.md) | 默认每天 8 点整理本地笔记和 Git 提交，写入 `briefs/YYYY-MM-DD.md` | Agent、接单电脑、笔记目录，可改时间；无需联网 |
+| [跟进 GitHub Issue](examples/recipes/github-issues/README.md) | 每 5 分钟查新 Issue，在本地改代码并通知你查看；不提交、不推送、不回复 Issue | 已登录的 `gh`、仓库、启用日期、Agent 和代码目录 |
+| [线上告警排查](examples/recipes/ops-alerts/README.md) | 接收报错、对照代码查原因，需要重启时发卡片询问，回答后继续 | 告警来源、Agent、代码目录；示例 `restart.sh` 只打印文字，要换成自己的重启和健康检查命令 |
+| [PR 自动交付](skills/agent-autoloop/SKILL.md#交付流水线) | 打上 `deliver` 标签后，审查、等 CI、合并、等发布并核对线上版本 | 已登录的 `gh`、审查程序、中台规则，以及项目 main 上的检查、发布和健康配置 |
+
+**启用场景模板：** 打开对应说明，把任务 Skill 放进所用 Agent 的 skills 目录，将示例规则中的条目合入已有 `~/.agent-autoloop/rules.json`，替换电脑名和路径，再运行 `agent-autoloop check`。各场景说明列出了额外配置，规则保存后几秒内生效。
+
+另有两份可复用的任务手册，按需配合自己的规则使用：
+
+| Skill | 用途 |
+|---|---|
+| [每周代码清理](examples/skills/weekly-sweep/SKILL.md) | 检查近期改动，清理遗留代码、重复实现和失效文档；需自行配置定时规则与项目目录 |
+| [交付 PR](examples/skills/ship-pr/SKILL.md) | 指导 Agent 配合 `delivery` 插件、处理审查问题；交付流程与配置使用上面的 PR 自动交付入口 |
+
+---
+
 ## 日常怎么配？
 
 ### 1. 写一份规则（`rules.json`）
@@ -134,22 +158,29 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 
 ## 插件体系：四个方向都能自由替换
 
-除了中间的内核，外围四个模块全部是插件，你可以直接用内置插件，也可以按需魔改：
+内置插件随程序安装，填好配置即可启用；第三方插件才需要 `agent-autoloop add <git 地址>`。下面按用途列出入口。
 
 ### 1. 事件插件（怎么发现新活）
 
-- **业务系统直连**：直接调 `POST /v1/events` 发一条 JSON。
-- **GitHub Webhook**：内置验签与事件转换。
-- **定时触发**：在规则里直接写 `cron` 表达式。
-- **主动轮询**：对于没法发 Webhook 的外部系统，用自带的[轮询脚本](examples/watch-github-issues.sh)定时去拉。没有新变化时脚本直接退出，不调用大模型，也不花 Token。
+| 接入方式 | 能做什么 | 怎么用 |
+|---|---|---|
+| [GitHub Webhook](plugins/github/source.ts) | 验签并转换 GitHub 事件 | 来源配置 `adapter: "github"`，设置验签秘密，并让 GitHub 能访问 `/v1/in/<来源>`；[接入说明](skills/agent-autoloop/SKILL.md#接一个事件插件) |
+| [业务系统 HTTP 接口](docs/protocol.md#来源把世界变成事件) | 直接接收统一格式的事件 | 用来源密钥调用 `POST /v1/events` |
+| [定时规则](skills/agent-autoloop/SKILL.md#改规则) | 到时间自动派活 | 在规则中填写 `when.cron`，无需另装插件 |
+| [GitHub Issue 轮询脚本](examples/watch-github-issues.sh) | 定时取新 Issue，无需接收公网 Webhook；轮询本身不调用模型 | 使用上面的 [Issue 场景模板](examples/recipes/github-issues/README.md) |
 
 ### 2. Agent 插件（谁来干活）
 
-**开箱即用（已实测跑通多轮问答与跨进程会话续接）：**
+在 `rules.json` 的 `agents` 中选择 `use`，填写接单电脑，再由规则指定工作目录。[完整配置](skills/agent-autoloop/SKILL.md#接一个-agent)
 
-- **Claude Code**：配置 `use: "claude"`
-- **Codex**：配置 `use: "codex"`
-- **ACP 协议 Agent**：配置 `use: "acp"`（已用官方 Codex ACP 适配器实测通过）
+| 内置插件 | 能做什么 | 怎么用 |
+|---|---|---|
+| [Claude Code](plugins/claude/agent.ts) | 执行任务、接续会话、读取回执与用量 | 安装并登录 Claude Code，设置 `use: "claude"` |
+| [Codex](plugins/codex/agent.ts) | 执行任务、接续会话、读取回执与用量 | 安装并登录 Codex，设置 `use: "codex"` |
+| [ACP](plugins/acp/agent.ts) | 通过 ACP v1 连接 Agent，支持会话恢复和权限请求 | 设置 `use: "acp"` 与 ACP 程序的 `command` |
+| [通用命令](plugins/command/agent.ts) | 运行其他 CLI Agent 或固定脚本，读取最终输出 | 设置 `use: "command"` 与命令数组，见下表 |
+
+Claude Code、Codex 和 ACP 已实测多轮问答与跨进程会话续接；ACP 使用官方 Codex ACP 适配器验证。
 
 需要操作网页时，使用 Agent 已配置的浏览器工具或项目指定的入口。后台 CLI 能运行不代表桌面浏览器也已接通，接入时需[单独验收浏览器](docs/plugins.md#浏览器接入)。
 
@@ -168,10 +199,15 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 
 ### 3. 通道插件（去哪找你拍板）
 
-- **桌面通知**：安装后默认开启（macOS / Linux 原生通知）。
-- **飞书卡片**：已实测跑通消息发送、按钮点击回调与卡片状态更新。
-- **钉钉 · 企业微信 · Slack · Discord**：内置群机器人 Webhook 模板（通过文字 + 独立回答表单链接交互，已在本地模拟服务验证）。
-- **命令行与 MCP**：随时用 `agent-autoloop status` 和 `agent-autoloop answer` 查看或回复；支持 stdio MCP（`2025-11-25`）的客户端也可以直接挂载 `agent-autoloop mcp` 工具。
+| 通道 | 能做什么 | 怎么用 |
+|---|---|---|
+| [桌面通知](plugins/desktop/channel.ts) | 在 macOS / Linux 弹出提醒，通过命令行查看和回答 | 新安装默认开启 |
+| [飞书](plugins/feishu/channel.ts) | 发交互卡片、收按钮回答、更新卡片状态 | 配置 `lark-cli`、飞书应用与回答人；[配置说明](skills/agent-autoloop/SKILL.md#接一个通道) |
+| [钉钉 / 企微 / Slack / Discord](plugins/webhook/templates.ts) | 发文字和独立回答表单链接 | 共用 `webhook` 插件，填写 `url`、`platform` 并启用卡片链接；[配置说明](skills/agent-autoloop/SKILL.md#接一个通道) |
+
+飞书已实测消息发送、按钮回调与卡片更新；四种 Webhook 模板已在本地模拟服务验证。使用回答链接时，需要配置手机或电脑可访问的 `publicUrl`。
+
+命令行与 MCP 也能查看和回答：运行 `agent-autoloop status`、`agent-autoloop answer`，或为支持 stdio MCP（`2025-11-25`）的客户端配置 [`agent-autoloop mcp`](skills/agent-autoloop/SKILL.md#mcp-与密钥撤销)。
 
 ### 4. 代码交付流水线插件（把 CI/CD 也做成插件）
 
@@ -183,13 +219,17 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 
 ---
 
-## 拿来即用的场景模板
+## 插件开发与脚本示例
 
-想直接抄作业，可以看这三个现成例子：
+要接新的工具或系统，从这三个可运行的最小模板开始，按[插件开发说明](docs/plugins.md)替换业务部分：
 
-- **[每日早报](examples/recipes/morning-brief)**：每天早上定时汇总本地笔记和 Git 提交。
-- **[自动跟进 GitHub Issue](examples/recipes/github-issues)**：发现新 Issue 后自动在本地排查改好，发卡片请你过目。
-- **[线上告警排查](examples/recipes/ops-alerts)**：收到线上报错后自动对照源码定位原因，需要重启服务前先发卡片请示你。
+| 模板 | 已经演示了什么 | 你要替换什么 |
+|---|---|---|
+| [Agent 模板](examples/plugins/hello-agent/agent.ts) | 用 `echo` 模拟执行，读取输出与会话编号 | 新 Agent 的启动命令和输出解析 |
+| [通道模板](examples/plugins/hello-channel/channel.ts) | 领卡片、写到文件、报告送达；通过命令行回答 | 目标平台的发送、更新和回答回调 |
+| [事件插件模板](examples/plugins/hello-source/source.ts) | 验证 HMAC-SHA256 签名，把模拟订单转换成事件 | 业务系统的验签方式和字段映射 |
+
+只用 Shell 接协议，可以看 [接单脚本](examples/worker.sh) 和 [通道脚本](examples/channel.sh)：设置中台地址与密钥后运行，需要 `curl`、`jq`。它们适合演示短任务；长任务使用内置接单程序的心跳、停止和恢复能力。插件入口保持 `agent.ts`、`channel.ts`、`source.ts`；其中 `source.ts` 就是图里的“事件插件”。
 
 ---
 
@@ -270,6 +310,26 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 中台直接调用你本机已经安装并登录好的命令行工具，不会读取或转存你的账号凭据。模型调用消耗算在你自己的账号名下，额度和使用范围遵循各家模型厂商的服务条款。
 
 在高频自动化场景下，各家厂商通常更建议使用 API Key（个人订阅额度主要是为日常人工交互设计的，详见 [Anthropic](https://code.claude.com/docs/en/legal-and-compliance) 与 [OpenAI](https://learn.chatgpt.com/docs/auth) 的官方说明）。如果你用它对外提供服务，请使用 API Key。本项目为独立开源项目，与上述厂商无隶属或背书关系。
+
+## 仓库目录
+
+| 位置 | 放什么 |
+|---|---|
+| `kernel/` | 内核：决策、事实日志、状态投影、到期任务、规则匹配、接口行为与卡片表单 |
+| `host/` | 运行外壳：Node HTTP、文件与 SQLite 连接、时钟、配置、后台服务和插件加载 |
+| `protocol/` | 通信格式、JSON Schema、输入校验、HTTP 客户端和一致性检查 |
+| `worker/` | 接单程序：领活、运行 Agent、心跳与停止、读取和提交回执 |
+| `cli/`、`bin/` | 用户命令及启动入口，包括状态、回答、`why`、MCP、更新与卸载 |
+| `plugins/` | 内置 Agent、事件、通道和交付插件 |
+| `examples/recipes/` | 完整场景：规则、任务 Skill 和启用说明 |
+| `examples/plugins/`、`examples/skills/`、`examples/*.sh` | 最小插件模板、独立任务手册和 Shell 示例 |
+| `skills/agent-autoloop/` | 中台的正式配置与操作手册，安装时也提供给 Agent 使用 |
+| `docs/` | 通信协议、插件开发说明与中英文架构图 |
+| `tests/`、`sim/` | 日常行为测试，以及模拟、穷举、强杀和变异检查 |
+| `scripts/`、`.github/workflows/` | 性能与真机验证、安装冒烟脚本，以及 Linux / macOS CI |
+| 根目录文档与 `install.sh` | 中英文 README、安装说明、安全边界、开发约定、许可证与安装脚本 |
+
+读代码可以从 `bin/agent-autoloop.ts` → `cli/main.ts` 开始，再按功能进入 `host/`、`worker/` 或 `plugins/`；内核设计先看[协议](docs/protocol.md)。同名文件分属不同层：`host/http.ts` 转换 Node 请求，`kernel/http.ts` 定义接口行为；`protocol/rules.ts` 校验输入，`kernel/rules.ts` 定义规则类型和匹配。
 
 ## 更多文档
 
