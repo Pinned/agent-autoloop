@@ -328,6 +328,7 @@ Claude Code、Codex 和 ACP 已实测多轮问答与跨进程会话续接；ACP 
 
 ## 更多文档
 
+- [参与贡献与交流](CONTRIBUTING.md)
 - [安装说明](INSTALL.md)
 - [规则与交付流水线配置手册](skills/agent-autoloop/SKILL.md)
 - [如何编写插件](docs/plugins.md)

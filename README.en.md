@@ -330,6 +330,7 @@ Start reading at `bin/agent-autoloop.ts` → `cli/main.ts`, then follow the feat
 
 ## Documentation
 
+- [Contributing and community](CONTRIBUTING.md)
 - [Installation guide](INSTALL.md)
 - [Configuration & delivery pipeline manual](skills/agent-autoloop/SKILL.md)
 - [Writing plugins](docs/plugins.md)
