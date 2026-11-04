@@ -1,8 +1,9 @@
 // Failure modes: empty/failed reviews pass; findings are unhandled but attested; Codex reads developer
-// config or memories, writes files, sees credentials, or executes a PR's programs/settings. Review receives a text snapshot.
+// config or memories, writes files, sees credentials, or executes a PR's programs/settings; a review prefix
+// replaces the reviewer's line instead of its program. Review receives a text snapshot.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseReview, codexCommand, reviewSnapshot } from "../plugins/delivery/review.ts";
+import { parseReview, codexCommand, reviewArgv, reviewSnapshot } from "../plugins/delivery/review.ts";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,6 +23,32 @@ test("Codex ignores developer configuration and only reads the review snapshot",
   assert.match(policy, /workspace_roots/);
   assert.ok(!policy.includes(".codex"));
   assert.ok(!policy.includes(".ssh"));
+});
+test("a review prefix replaces the program the reviewer runs through, and the line stays the review's", () => {
+  const root = mkdtempSync(join(tmpdir(), "agent-autoloop-review-"));
+  try {
+    const wrapper = join(root, "launcher.sh");
+    writeFileSync(wrapper, '#!/bin/sh\nprintf "%s\\n" /test/wrapper\n', { mode: 0o755 });
+    const shell = process.env.SHELL;
+    process.env.SHELL = wrapper;
+    try {
+      const s = settings({
+        repo: "example/app",
+        internal: [],
+        review: { points: "AGENTS.md", prefix: ["launcher", "codex"] },
+      });
+      const argv = reviewArgv(s, "/snap/review.json", "high");
+      assert.deepEqual(argv.slice(0, 3), ["/test/wrapper", "codex", "exec"]);
+      assert.ok(argv.includes("--ignore-user-config"));
+      assert.ok(argv.includes("-m"));
+      assert.equal(argv.at(-1), "-");
+    } finally {
+      if (shell === undefined) delete process.env.SHELL;
+      else process.env.SHELL = shell;
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 test("review uses main's points and a text-only snapshot; ordinary internal docs skip the reviewer", async () => {
   const root = mkdtempSync(join(tmpdir(), "agent-autoloop-review-"));

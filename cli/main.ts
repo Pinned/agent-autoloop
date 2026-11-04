@@ -384,7 +384,7 @@ async function doctor() {
         if (agent.worker === config.worker?.name) {
           const { adapterFor } = await import("../worker/agents.ts");
           const problem = await adapterFor(agent.use).then(
-            (adapter) => adapter.check?.() ?? null,
+            (adapter) => adapter.check?.(rulesCommand(agent.id)) ?? null,
             (error) => String(error.message),
           );
           say(!problem, problem ?? `${agent.name} 可以用`);
@@ -405,6 +405,16 @@ async function doctor() {
     }
   }
   if (bad) process.exit(1);
+}
+
+/** The agent's configured command, if the rules file says one: check() tests that launcher instead of the usual program. */
+function rulesCommand(id: string): string[] | undefined {
+  try {
+    const command = JSON.parse(readFileSync(RULES_FILE, "utf8"))?.agents?.[id]?.command;
+    return Array.isArray(command) ? command : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The rules module reads the rules file as it loads; the checks here need to survive a bad one. */

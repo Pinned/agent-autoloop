@@ -31,8 +31,9 @@ export type Adapter = {
   read(stdout: string, code: number | null, stderr: string): Reading;
   /** Where a person can open this session. */
   link?(session: string): string;
-  /** Whether it's installed and signed in: what's wrong, in words a person can act on, or nothing. */
-  check?(): string | null;
+  /** Whether it's installed and signed in: what's wrong, in words a person can act on, or nothing. `command` is the
+   * agent's configured launcher when one replaces the usual program. */
+  check?(command?: string[]): string | null;
 };
 
 const adapters = new Map<string, Adapter>();

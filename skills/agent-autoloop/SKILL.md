@@ -58,6 +58,8 @@ description: 配置 Agent 自动化中台：加规则、接新的事件插件、
 
 `access` 默认 `edit`，专用插件翻译成对应 CLI 的权限；`command` 只传参数，不替任意程序限制权限，按该 CLI 文档配置。要完整权限、不审批的话写 `full`，先和用户说清楚。
 
+内置的 Claude Code 和 Codex 也能换启动程序：`command` 写启动前缀，比如 `["launcher", "claude"]`、`["launcher", "codex"]`，会话接续、权限和其余参数仍由插件拼好；`doctor` 只确认该程序找得到，登录是它自己的事。整行命令的写法属于 `use: "command"`。
+
 第三方仓库根目录放 `agent.ts`、`channel.ts` 或 `source.ts`，用 `agent-autoloop add <git 地址>` 安装到 `~/.agent-autoloop/plugins/<仓库名>`。同名本机插件优先于内置插件，不自动更新。插件是可信代码，先读再装。
 
 ACP 用 `use: "acp"` 和 `command: ["ACP 服务程序"]`，支持 v1 的会话新建、恢复、文字与一次性权限请求；先在该 Agent 自己的 CLI 登录。普通命令接法与实测支持范围见 README。
@@ -102,7 +104,7 @@ Claude 主任务要委托 Codex 操作网页时，从 `examples/recipes/browser-
 }
 ```
 
-`AGENTS.md` 要有 `## 审查要点`。`review.command` 可用命令数组替换审查程序：提示词从标准输入读，`{input}` 替换成文字差异文件，标准输出必须是 `{"findings":[{"title":"文件:行号和问题","text":"触发条件和后果"}]}`；没问题交空列表。默认 Codex 忽略用户配置、禁用记忆，只读单独的审查快照。`admin_merge` 默认为空；只有 main 明确列出的 PR 作者才能使用管理员合并。没有线上服务的项目可以省略 `health`，回执会明确写只完成合并。
+`AGENTS.md` 要有 `## 审查要点`。`review.command` 可用命令数组替换审查程序：提示词从标准输入读，`{input}` 替换成文字差异文件，标准输出必须是 `{"findings":[{"title":"文件:行号和问题","text":"触发条件和后果"}]}`；没问题交空列表。`review.prefix` 只换启动程序（如 `["launcher", "codex"]`），默认的 Codex 审查参数原样接在其后。默认 Codex 忽略用户配置、禁用记忆，只读单独的审查快照。`admin_merge` 默认为空；只有 main 明确列出的 PR 作者才能使用管理员合并。没有线上服务的项目可以省略 `health`，回执会明确写只完成合并。
 
 规则示例（把绝对路径、接单电脑和仓库改成自己的）：
 

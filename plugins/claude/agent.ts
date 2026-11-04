@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { findProgram, tail, type Adapter } from "../../worker/agents.ts";
+import { findProgram, tail, type Adapter, type Turn } from "../../worker/agents.ts";
 
 const PERMISSIONS = { read: "plan", edit: "acceptEdits", full: "bypassPermissions" };
 
@@ -18,9 +18,15 @@ function inTheApp() {
   });
 }
 
+/** A configured `command` is the launcher: `["launcher", "claude"]` runs that program instead of the installed one. */
+function launcher(turn: Turn) {
+  const [head, ...rest] = turn.command ?? [];
+  return head ? [findProgram(head), ...rest] : [findProgram("claude", inTheApp)];
+}
+
 export default {
   command: (turn) => [
-    findProgram("claude", inTheApp),
+    ...launcher(turn),
     "-p",
     turn.prompt,
     ...(turn.resume ? ["--resume", turn.resume] : ["--session-id", turn.session]),
@@ -62,7 +68,17 @@ export default {
     return code === null ? {} : { error: tail(stderr || stdout) || "没留下结果" };
   },
   link: (session) => `claude://resume?session=${session}`,
-  check() {
+  check(command?: string[]) {
+    // A configured launcher is another program; being signed in is its own business, and it does not necessarily
+    // forward `auth status`, so here only that it can be found is checked.
+    if (command?.length) {
+      try {
+        findProgram(command[0]);
+        return null;
+      } catch {
+        return `找不到 ${command[0]}：先装好它`;
+      }
+    }
     try {
       const program = findProgram("claude", inTheApp);
       const status = JSON.parse(execFileSync(program, ["auth", "status"], { encoding: "utf8", timeout: 20_000 }));
