@@ -8,7 +8,7 @@ export type Settings = {
   admin_merge: string[];
   check: { workflow: string; job: string };
   ship: { workflow: string };
-  review: { points: string; xhigh: string[]; status: string; command?: string[] };
+  review: { points: string; xhigh: string[]; status: string; command?: string[]; prefix?: string[] };
   health?: { url: string; require: Record<string, unknown>; field: string; pattern: string };
 };
 export type Live = { sha: string; release: string };
@@ -30,6 +30,7 @@ export function settings(value: any, testLocalHealth = false): Settings {
   const { review, health } = value;
   if (!review || !isPaths([review.points]) || (review.xhigh !== undefined && !isPaths(review.xhigh))) bad();
   if (review.command !== undefined && (!isWords(review.command) || !review.command.length)) bad();
+  if (review.prefix !== undefined && (!isWords(review.prefix) || !review.prefix.length)) bad();
   if (review.status !== undefined && (typeof review.status !== "string" || !review.status.trim())) bad();
   if (value.admin_merge !== undefined && !isWords(value.admin_merge)) bad();
   for (const workflow of [value.check?.workflow, value.ship?.workflow]) {

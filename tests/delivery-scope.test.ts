@@ -87,6 +87,7 @@ test("only main provides configuration, with exact path patterns and explicit lo
   assert.throws(() => settings({ ...config, health: { ...health, url: "http://localhost:1234" } }, true));
   assert.throws(() => settings({ ...config, health: { ...health, url: "http://192.168.1.2" } }, true));
   assert.throws(() => settings({ ...config, review: { ...config.review, command: "sh bad" } }));
+  assert.throws(() => settings({ ...config, review: { ...config.review, prefix: [""] } }));
 });
 test("unhealthy, redirected or malformed health cannot authorize skipping a release", async () => {
   const s = settings({

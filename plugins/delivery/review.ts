@@ -55,6 +55,17 @@ export function codexCommand(output: string, effort: string) {
   ];
 }
 
+/** The reviewer's whole command line: `command` replaces it outright, `prefix` replaces the program it runs through. */
+export function reviewArgv(config: Settings, output: string, level: string) {
+  const { command, prefix } = config.review;
+  return (
+    command ?? [
+      ...(prefix ? [findProgram(prefix[0]), ...prefix.slice(1)] : [findProgram("codex", () => CODEX_IN_THE_APP)]),
+      ...codexCommand(output, level),
+    ]
+  );
+}
+
 export async function reviewSnapshot(bare: string, snapshot: string, main: string, head: string, config: Settings) {
   // No checkout: hooks, filters, AGENTS.md and program/config files from the PR never become executable inputs here.
   const branchLog = ["--diff-merges=remerge", "--no-renames"];
@@ -91,8 +102,7 @@ export async function reviewSnapshot(bare: string, snapshot: string, main: strin
     '只返回 JSON：{"findings":[{"title":"文件:行号和问题","text":"触发条件和后果"}]}。没有问题返回 {"findings":[]}。';
   const level = paths.some((path) => matches(path, config.review.xhigh)) ? "xhigh" : "high";
   const output = join(snapshot, "review.json");
-  const { command } = config.review;
-  const argv = command ?? [findProgram("codex", () => CODEX_IN_THE_APP), ...codexCommand(output, level)];
+  const argv = reviewArgv(config, output, level);
   const args = argv.slice(1).map((arg) => arg.replaceAll("{input}", changesFile));
   const child = execFile(argv[0], args, { cwd: snapshot, timeout: 600000, maxBuffer: 8 * 1024 * 1024 });
   child.stdin!.end(prompt);
@@ -106,5 +116,5 @@ export async function reviewSnapshot(bare: string, snapshot: string, main: strin
       code === 0 ? resolve(stdout) : reject(new Error(`审查没有完成：${stderr.slice(-1000)}`)),
     );
   });
-  return parseReview(command ? text : readFileSync(output, "utf8"));
+  return parseReview(config.review.command ? text : readFileSync(output, "utf8"));
 }

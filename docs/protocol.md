@@ -374,7 +374,7 @@ Apple M5 Pro、24 GB、Node 24.21.0，用 `node scripts/history.ts 1000 10000 10
 
 ## 交付插件
 
-交付是 `plugins/delivery` 的普通 Agent 进程，内核不认识它。项目仍用 `ops/delivery.json`，标签仍是 `deliver`、`deliver-attended`、`deliver-review`、`ask-owner`，提交状态仍为 `delivery`。审查状态默认 `agent-review`，由 `review.status` 修改；命令由 `review.command` 修改。设置格式、规则与 Ship 示例见[配置手册](../skills/agent-autoloop/SKILL.md#交付流水线)。
+交付是 `plugins/delivery` 的普通 Agent 进程，内核不认识它。项目仍用 `ops/delivery.json`，标签仍是 `deliver`、`deliver-attended`、`deliver-review`、`ask-owner`，提交状态仍为 `delivery`。审查状态默认 `agent-review`，由 `review.status` 修改；命令由 `review.command` 修改，审查的启动程序由 `review.prefix` 修改。设置格式、规则与 Ship 示例见[配置手册](../skills/agent-autoloop/SKILL.md#交付流水线)。
 
 来源只给事件，仓库与执行命令由中台规则固定。内置 `poll.ts` 读取待处理标签，以“仓库、事项、标签记录、当前提交”生成稳定事件编号，不另存游标。无标签、关闭且未合并、fork 或非 main 目标不启动交付。每个 PR 一个事项，并发由规则 `parallel` 和接单程序容量控制；进程失败使用中台的 5 分钟起重试和连续失败通知，不另建队列、槽位、失败计数或通知服务。
 

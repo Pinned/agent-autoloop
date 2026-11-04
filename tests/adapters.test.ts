@@ -1,7 +1,8 @@
 // What's different about each agent. Failure cases: a level of access maps to the wrong flag, full access is given unasked,
 // a retry starts a new conversation instead of going on, an error or a turn that never finished counts as an answer, a
 // program's warning is taken for its answer, the session isn't picked out, a command line's placeholder isn't filled in,
-// or a background Codex run assumes it inherited an application's browser connection.
+// a configured launcher replaces the program without keeping the adapter's flags, or a background Codex run assumes it
+// inherited an application's browser connection.
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -13,9 +14,14 @@ const { findProgram } = await import("../worker/agents.ts");
 // Command construction must also run on CI machines without Codex installed.
 const shell = process.env.SHELL;
 const lookup = join(setup("adapters"), "lookup.sh");
-writeFileSync(lookup, '#!/bin/sh\nprintf "%s\\n" /test/codex\n', { mode: 0o755 });
+writeFileSync(
+  lookup,
+  '#!/bin/sh\ncase "$2" in\n*codex*) printf "%s\\n" /test/codex ;;\n*launcher*) printf "%s\\n" /test/wrapper ;;\nesac\n',
+  { mode: 0o755 },
+);
 process.env.SHELL = lookup;
 findProgram("codex");
+findProgram("launcher");
 if (shell === undefined) delete process.env.SHELL;
 else process.env.SHELL = shell;
 type Adapter = import("../worker/agents.ts").Adapter;
@@ -164,6 +170,20 @@ test("a plain command: placeholders filled in, stdout is its last message, a bad
   assert.deepEqual(command.read("中途", null, ""), {});
   assert.match(command.read("", 3, "boom").error!, /退出码 3：boom/);
   assert.equal(command.link, undefined, "it has no session to go on in");
+});
+
+test("a configured launcher replaces the program, and the flags stay the adapter's", () => {
+  const argv = claude.command({ ...turn, command: ["launcher", "claude"] });
+  assert.deepEqual(argv.slice(0, 2), ["/test/wrapper", "claude"]);
+  assert.ok(has(argv, "-p", "做这件事"));
+  assert.ok(has(argv, "--permission-mode", "acceptEdits"));
+  assert.equal(claude.check?.(["launcher", "claude"]), null);
+  assert.match(claude.check?.(["nowhere-at-all"])!, /找不到/);
+  const again = codex.command({ ...turn, resume: "thread-1", command: ["launcher", "codex"] });
+  assert.deepEqual(again.slice(0, 3), ["/test/wrapper", "codex", "exec"]);
+  assert.ok(has(again, "--json"));
+  assert.ok(again.includes("thread-1"));
+  assert.ok(again.includes('sandbox_mode="workspace-write"'));
 });
 
 test("a program that isn't there says so", () => {
