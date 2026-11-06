@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>agent-autoloop 控制台</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <h1>agent-autoloop</h1>
+      <span id="conn" class="conn">未连接</span>
+      <input id="key" type="password" placeholder="本人密钥（owner key）" autocomplete="off" />
+      <button id="saveKey" type="button">记住密钥</button>
+    </header>
+    <nav>
+      <button type="button" class="tab active" data-tab="tasks">任务</button>
+      <button type="button" class="tab" data-tab="new">新建任务</button>
+      <button type="button" class="tab" data-tab="settings">入口设置</button>
+    </nav>
+    <main>
+      <section id="tasks" class="panel">
+        <div id="overview" class="overview"></div>
+        <h2>等你决定</h2>
+        <div id="cards" class="cards"></div>
+        <h2>最近收尾的卡片</h2>
+        <div id="recentCards" class="recent"></div>
+        <h2>任务</h2>
+        <table id="runs" class="runs"></table>
+        <div class="more"><button id="older" type="button" class="hidden">更早的任务</button></div>
+      </section>
+      <section id="new" class="panel hidden">
+        <h2>新建任务</h2>
+        <p class="hint" id="typeHint"></p>
+        <form id="taskForm">
+          <label
+            >类型
+            <select id="taskType"></select>
+          </label>
+          <label
+            >一句话标题
+            <input id="taskSummary" maxlength="200" placeholder="要做什么，一句话" required />
+          </label>
+          <label
+            >详情
+            <textarea id="taskDetail" rows="8" placeholder="背景、要求、注意事项……（可空）"></textarea>
+          </label>
+          <button type="submit" class="primary">发出去</button>
+        </form>
+        <p id="taskResult" class="result"></p>
+      </section>
+      <section id="settings" class="panel hidden">
+        <h2>入口设置</h2>
+        <p class="hint">
+          这里只管「手动任务入口」——发给本机（local 来源）的事件由谁做。保存时只替换这些入口，rules.json
+          里其它规则原样保留。
+        </p>
+        <div id="entries"></div>
+        <div class="more">
+          <button id="addEntry" type="button">加一个入口</button>
+          <button id="saveEntries" type="button" class="primary">保存</button>
+        </div>
+        <p id="entriesResult" class="result"></p>
+      </section>
+    </main>
+  </body>
+</html>

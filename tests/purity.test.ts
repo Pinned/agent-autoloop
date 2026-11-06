@@ -33,8 +33,8 @@ test("nothing is installed to run it", () => {
   assert.deepEqual(manifest.dependencies ?? {}, {});
 });
 
-test("there's no interface in it", () => {
-  assert.ok(!existsSync(join(root, "web")));
+test("there's no interface in the kernel", () => {
+  // The console is the host's page; the kernel behind it still knows no script and no cookie.
   for (const [file, text] of kernel) assert.ok(!/<script|cookie/i.test(text), file);
 });
 

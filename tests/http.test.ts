@@ -365,7 +365,13 @@ test("someone else's webhook goes through its source's adapter: signed, or not t
   assert.equal((await call("/v1/in/nowhere", { raw: items })).status, 404);
 });
 
-test("there's no other page: what's going on is read through the doors", async () => {
-  for (const path of ["/", "/index.html", "/app.js", "/style.css", "/../package.json"])
+test("the console is the only page: everything else is read through the doors", async () => {
+  for (const path of ["/", "/app.js", "/style.css"]) {
+    const page = await call(path);
+    assert.equal(page.status, 200, path);
+    assert.match(page.headers.get("content-security-policy") ?? "", /script-src 'self'/, path);
+  }
+  for (const path of ["/index.html", "/../package.json", "/nope.js"])
     assert.equal((await call(path)).status, 404, path);
+  assert.equal((await call("/v1/state")).status, 401);
 });

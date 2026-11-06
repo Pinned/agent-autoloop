@@ -4,6 +4,7 @@ import { watch } from "node:fs";
 import { dirname } from "node:path";
 import { RULES_FILE } from "./home.ts";
 import { loadPlugin } from "./plugins.ts";
+import { uiRoutes } from "./ui.ts";
 import * as hub from "./runtime.ts";
 import { AuthError, NotFound } from "../kernel/errors.ts";
 import { createHandler } from "../kernel/http.ts";
@@ -99,7 +100,7 @@ export function makeHandler(commit = "dev") {
     hub.tick();
     arm();
   });
-  const handle = createHandler({
+  const kernel = createHandler({
     commit,
     now: Date.now,
     view: hub.getView,
@@ -127,6 +128,8 @@ export function makeHandler(commit = "dev") {
     stream: logStream,
     adapt: adaptWebhook,
   });
+  // The console's page and doors answer first; everything else is the kernel's business, untouched.
+  const handle = async (request: Request) => (await uiRoutes(request)) ?? kernel(request);
   hub.tick();
   arm();
   return {
