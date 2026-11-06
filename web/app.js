@@ -326,82 +326,354 @@ $("taskForm").addEventListener("submit", async (event) => {
   }
 });
 
-// ---- the settings tab ----
+// ---- the settings tab: every section of rules.json, one card each ----
+// Each section is gathered from its own fields and saved on its own; the server merges it into
+// rules.json and checks the whole file, so nothing on disk is ever a half-edit.
 
-/** One editable entry: the fields, and one reader that gathers them back the way the server expects. */
-function entryNode(entry) {
-  const field = (label, node) => el("label", { className: "field" }, el("span", { textContent: label }), node);
-  const name = el("input", { value: entry.name ?? "", placeholder: "规则名，比如 每日报告" });
-  const types = el("input", {
-    value: (entry.types ?? []).join(", "),
-    placeholder: "事件类型，逗号分隔，比如 daily.report",
-  });
-  const to = el(
-    "select",
-    {},
-    ...agents.map((agent) =>
-      el("option", { value: agent.id, textContent: `${agent.name}（${agent.id}）`, selected: agent.id === entry.to }),
-    ),
-  );
-  const cwd = el("input", { value: entry.cwd ?? "", placeholder: "~/项目目录" });
-  const prompt = el("textarea", { rows: 4, placeholder: "要做的事（和 skill 至少写一个）" });
-  prompt.value = entry.prompt ?? "";
-  const skill = el("input", { value: entry.skill ?? "", placeholder: "Skill 名（可空）" });
-  const parallel = el("input", { type: "number", min: "1", value: entry.parallel ?? "", placeholder: "默认 1" });
-  const node = el(
-    "article",
-    { className: "entry" },
-    field("规则名", name),
-    field("类型（逗号分隔）", types),
-    field("交给 Agent", to),
-    field("目录", cwd),
-    field("提示词", prompt),
-    field("Skill（可空）", skill),
-    field("同时跑几个", parallel),
-    el("button", { type: "button", className: "remove", textContent: "删掉这个入口", onclick: () => node.remove() }),
-  );
-  node.read = () => ({
-    name: name.value.trim(),
-    types: types.value
-      .split(/[,，]/)
-      .map((type) => type.trim())
-      .filter(Boolean),
-    to: to.value,
-    cwd: cwd.value.trim(),
-    ...(prompt.value.trim() && { prompt: prompt.value.trim() }),
-    ...(skill.value.trim() && { skill: skill.value.trim() }),
-    ...(Number(parallel.value) > 0 && { parallel: Number(parallel.value) }),
-  });
-  return node;
+let config = null;
+
+const SECTION_TEXT = {
+  settings: "全局（时区、哪些事先问你）",
+  agents: "Agent（谁干活）",
+  rules: "规则（什么事交给谁、几点跑）",
+  sources: "来源（事件从哪来）",
+  channels: "通道（怎么找到你）",
+  elsewhere: "定时任务发到别处（高级，平时用不到）",
+};
+const ACCESS_TEXT = { read: "只读", edit: "可改（默认）", full: "全放开（干什么都不再问你）" };
+const TELL_TEXT = { always: "总是", needed: "需要才说（默认）", never: "从不" };
+
+/** A field spec is [name, label, kind, options?]; kinds: text, words, number, select, textarea, bool. */
+const SPECS = {
+  settings: [
+    ["timezone", "时区", "text", "比如 Asia/Shanghai"],
+    ["askFirst", "必须先问你的事（逗号分隔）", "words", "默认：删数据、停服、花钱……"],
+  ],
+  agent: [
+    ["name", "名字", "text", "比如 Claude Code（全权限）"],
+    ["worker", "哪台电脑", "select", "workerIds"],
+    ["use", "程序", "select", { claude: "claude", codex: "codex", command: "command（自定义命令）" }],
+    ["access", "权限", "select", ACCESS_TEXT],
+    ["model", "模型（可空）", "text", "默认模型"],
+    ["effort", "力度（可空）", "text", "比如 high"],
+    ["command", "启动命令（可空，逗号分隔）", "words", "command 程序才需要"],
+    ["timeout", "超时分钟（可空）", "number", "默认不超时"],
+  ],
+  rule: [
+    ["name", "规则名", "text", "比如 每日早报"],
+    ["whenKind", "什么时候", "select", { event: "事件来了就跑", cron: "按时间表" }],
+    ["source", "来源", "text", "比如 local"],
+    ["types", "类型（逗号分隔）", "words", "比如 daily.report，可用 x.*"],
+    ["cron", "时间表（cron）", "text", "比如 0 9 * * *"],
+    ["to", "交给哪个 Agent", "select", "agentIds"],
+    ["cwd", "目录", "text", "~/项目目录"],
+    ["prompt", "提示词", "textarea", "要做的事（和 skill 至少写一个）"],
+    ["skill", "Skill（可空）", "text", "Skill 名"],
+    ["parallel", "同时跑几个（可空）", "number", "默认 1"],
+    ["group", "分组（可空）", "text", "同组规则并发一致"],
+    ["tell", "收尾时告诉谁", "select", TELL_TEXT],
+  ],
+  source: [
+    ["name", "名字", "text", "比如 本机"],
+    ["adapter", "适配器（可空）", "text", "接插件名"],
+  ],
+  channel: [
+    ["name", "名字", "text", "比如 飞书"],
+    ["answerers", "能回答的人（逗号分隔，可空）", "words", "渠道里的用户标识"],
+    ["links", "回答走链接", "bool", ""],
+  ],
+  elsewhere: [
+    ["name", "名字", "text", "比如 桌面提醒喝水"],
+    ["source", "来源", "text", "已登记的来源"],
+    ["to", "交给哪个 Agent", "select", "agentIds"],
+    ["cron", "时间表（cron）", "text", "比如 0 9 * * *"],
+    ["where", "去哪跑", "text", "目标机器的说明"],
+  ],
+};
+
+/** One input, remembering how to read itself back. Empty optional fields read as absent. */
+function fieldNode(spec, value) {
+  const [name, label, kind, options] = spec;
+  let node;
+  if (kind === "select") {
+    const map =
+      options === "workerIds"
+        ? Object.fromEntries(config.workerIds.map((id) => [id, id]))
+        : options === "agentIds"
+          ? Object.fromEntries(Object.keys(config.agents).map((id) => [id, `${config.agents[id].name}（${id}）`]))
+          : options;
+    node = el(
+      "select",
+      {},
+      ...Object.entries(map).map(([id, text]) =>
+        el("option", { value: id, textContent: text, selected: id === value }),
+      ),
+    );
+  } else if (kind === "bool") {
+    node = el(
+      "select",
+      {},
+      el("option", { value: "", textContent: "（默认）" }),
+      el("option", { value: "true", textContent: "是" }),
+      el("option", { value: "false", textContent: "否" }),
+    );
+    node.value = value === undefined ? "" : String(value);
+  } else if (kind === "words") {
+    node = el("input", { placeholder: options });
+    node.value = Array.isArray(value) ? value.join(", ") : "";
+  } else if (kind === "number") {
+    node = el("input", { type: "number", min: "1", placeholder: options });
+    node.value = value ?? "";
+  } else if (kind === "textarea") {
+    node = el("textarea", { rows: 4, placeholder: options });
+    node.value = value ?? "";
+  } else {
+    node = el("input", { placeholder: options });
+    node.value = value ?? "";
+  }
+  node.dataset.fieldName = name;
+  node.dataset.fieldKind = kind;
+  return el("label", { className: "field" }, el("span", { textContent: label }), node);
 }
+
+/** Gather one record back: only filled fields, the way the server's section checker expects it. */
+function readRecord(article) {
+  const out = {};
+  for (const node of article.querySelectorAll("[data-field-name]")) {
+    const name = node.dataset.fieldName;
+    const kind = node.dataset.fieldKind;
+    if (kind === "bool") {
+      if (node.value !== "") out[name] = node.value === "true";
+    } else if (kind === "number") {
+      if (node.value !== "") out[name] = Number(node.value);
+    } else if (kind === "words") {
+      const words = node.value
+        .split(/[,，]/)
+        .map((word) => word.trim())
+        .filter(Boolean);
+      if (words.length) out[name] = words;
+    } else if (node.value.trim()) {
+      out[name] = node.value.trim();
+    }
+  }
+  return out;
+}
+
+/** One rule: event rules show source+types, cron rules show only the cron field. */
+function ruleNode(rule) {
+  const when = rule.when ?? {};
+  const isCron = "cron" in when;
+  const article = el("article", { className: "entry rule" });
+  const byName = {};
+  for (const field of SPECS.rule) {
+    const value =
+      field[0] === "whenKind"
+        ? isCron
+          ? "cron"
+          : "event"
+        : field[0] === "source"
+          ? when.source
+          : field[0] === "types"
+            ? when.types
+            : field[0] === "cron"
+              ? when.cron
+              : rule[field[0]];
+    byName[field[0]] = fieldNode(field, value);
+  }
+  const eventFields = el("div", { className: "fields" }, byName.source, byName.types);
+  const cronFields = el("div", { className: "fields" }, byName.cron);
+  eventFields.classList.toggle("hidden", isCron);
+  cronFields.classList.toggle("hidden", !isCron);
+  byName.whenKind.querySelector("select").addEventListener("change", () => {
+    const asCron = byName.whenKind.querySelector("select").value === "cron";
+    eventFields.classList.toggle("hidden", asCron);
+    cronFields.classList.toggle("hidden", !asCron);
+  });
+  article.append(
+    byName.name,
+    byName.whenKind,
+    eventFields,
+    cronFields,
+    byName.to,
+    byName.cwd,
+    byName.prompt,
+    byName.skill,
+    byName.parallel,
+    byName.group,
+    byName.tell,
+  );
+  article.read = () => {
+    const read = readRecord(article);
+    const kind = read.whenKind;
+    delete read.whenKind;
+    if (kind === "cron") {
+      delete read.source;
+      delete read.types;
+      read.when = { cron: read.cron ?? "" };
+      delete read.cron;
+    } else {
+      delete read.cron;
+      read.when = { source: read.source ?? "", types: read.types ?? [] };
+      delete read.source;
+      delete read.types;
+    }
+    return read;
+  };
+  return article;
+}
+
+/** The id of a keyed record: settable when new, fixed afterwards — the key and the rules hang off it. */
+function idNode(id, isNew) {
+  return el(
+    "label",
+    { className: "field" },
+    el("span", { textContent: isNew ? "编号（定一次，之后不改）" : "编号" }),
+    (() => {
+      const node = el("input", { placeholder: "比如 claude-full", disabled: !isNew });
+      node.value = id ?? "";
+      node.dataset.fieldId = "true";
+      return node;
+    })(),
+  );
+}
+
+/** A record in a keyed table (agent, source, channel) or a plain item (elsewhere, rule). */
+function recordNode(specName, record, { id, isNew } = {}) {
+  const article = el("article", { className: "entry" });
+  if (id !== undefined) article.dataset.id = id;
+  article.append(
+    ...(id !== undefined || isNew ? [idNode(id, isNew)] : []),
+    ...SPECS[specName].map((field) => fieldNode(field, record[field[0]])),
+    el("button", { type: "button", className: "remove", textContent: "删掉", onclick: () => article.remove() }),
+  );
+  article.read = () => readRecord(article);
+  return article;
+}
+
+/** One section card: heading, hint, records, an add button, and a save button with its own result line. */
+function sectionCard(kind, options) {
+  const result = el("p", { className: "result" });
+  const holder = el("div", { className: "records" });
+  const save = async () => {
+    result.textContent = "保存中……";
+    result.classList.remove("error");
+    try {
+      await api(`/v1/ui/config/${kind}`, "PUT", options.read(holder));
+      result.textContent = "已保存，几秒内生效。";
+      config = await api("/v1/ui/config");
+      renderSettings();
+    } catch (error) {
+      result.textContent = [error.message, ...(error.issues ?? [])].join("\n");
+      result.classList.add("error");
+    }
+  };
+  const card = el(
+    "section",
+    { className: `config-section${options.advanced ? " advanced" : ""}` },
+    el("h3", { textContent: SECTION_TEXT[kind] }),
+    options.hint ? el("p", { className: "hint", textContent: options.hint }) : null,
+    holder,
+    el(
+      "div",
+      { className: "more" },
+      options.add
+        ? el("button", { type: "button", textContent: options.add, onclick: () => options.build(holder) })
+        : null,
+      el("button", { type: "button", className: "primary", textContent: "保存这一段", onclick: save }),
+    ),
+    result,
+  );
+  return { card, holder, save };
+}
+
+/** The records of a keyed section, read back as {id: fields}. New records take their id from the input. */
+const keyedRead = () => (holder) => {
+  const out = {};
+  for (const article of holder.querySelectorAll(".entry")) {
+    const input = article.querySelector("[data-field-id]");
+    if (input) out[input.value.trim()] = article.read();
+    else if (article.dataset.id) out[article.dataset.id] = article.read();
+  }
+  return out;
+};
+
+/** The records of a list section, read back as a plain list. */
+const listRead = () => (holder) => [...holder.querySelectorAll(".entry")].map((article) => article.read());
 
 function renderSettings() {
-  const list = $("entries");
-  list.replaceChildren(...entries.map((entry) => entryNode(entry)));
-  $("entriesResult").textContent = "";
-}
-
-$("addEntry").addEventListener("click", () => {
-  $("entries").append(entryNode({ types: [], to: agents[0]?.id, cwd: "~/" }));
-});
-
-$("saveEntries").addEventListener("click", async () => {
-  $("entriesResult").textContent = "保存中……";
-  try {
-    const saved = await api(
-      "/v1/ui/rules",
-      "PUT",
-      [...$("entries").querySelectorAll(".entry")].map((node) => node.read()),
-    );
-    entries = saved.entries ?? entries;
-    $("entriesResult").textContent = "已保存并生效。";
-  } catch (error) {
-    $("entriesResult").textContent = [error.message, ...(error.issues ?? [])].join("\n");
-    $("entriesResult").classList.add("error");
+  const root = $("configSections");
+  if (!config) {
+    root.textContent = "读取中……";
+    api("/v1/ui/config")
+      .then((shown) => {
+        config = shown;
+        renderSettings();
+      })
+      .catch((error) => (root.textContent = error.message));
     return;
   }
-  $("entriesResult").classList.remove("error");
-});
+  root.replaceChildren();
+
+  const settings = sectionCard("settings", {
+    hint: "时区决定所有定时规则按哪个钟跑。",
+    read: (holder) => readRecord(holder.querySelector(".entry")),
+  });
+  settings.holder.append(recordNode("settings", { timezone: config.timezone, askFirst: config.askFirst }, {}));
+  root.append(settings.card);
+
+  const agentsCard = sectionCard("agents", {
+    hint: "改权限要留神：选「全放开」后，这个 Agent 干什么都不再问你。",
+    add: "加一个 Agent",
+    build: (holder) => holder.append(recordNode("agent", {}, { isNew: true })),
+    read: keyedRead(),
+  });
+  for (const [id, agent] of Object.entries(config.agents)) agentsCard.holder.append(recordNode("agent", agent, { id }));
+  root.append(agentsCard.card);
+
+  const rulesCard = sectionCard("rules", {
+    hint: "事件规则写来源和类型；定时规则写 cron。规则名别重复。",
+    add: "加一条规则",
+    build: (holder) => holder.append(ruleNode({ when: { source: "local", types: [] } })),
+    read: listRead(),
+  });
+  for (const rule of config.rules) rulesCard.holder.append(ruleNode(rule));
+  root.append(rulesCard.card);
+
+  const sourcesCard = sectionCard("sources", {
+    hint: "来源编号是密钥挂靠的主键；删掉一个来源，对应的密钥就再也发不进事件。",
+    add: "加一个来源",
+    build: (holder) => holder.append(recordNode("source", {}, { isNew: true })),
+    read: keyedRead(),
+  });
+  for (const [id, source] of Object.entries(config.sources))
+    sourcesCard.holder.append(recordNode("source", source, { id }));
+  root.append(sourcesCard.card);
+
+  const channelsCard = sectionCard("channels", {
+    hint: "通道决定卡片怎么到你手上；answerers 是允许回答的人。",
+    add: "加一个通道",
+    build: (holder) => holder.append(recordNode("channel", {}, { isNew: true })),
+    read: keyedRead(),
+  });
+  for (const [id, channel] of Object.entries(config.channels))
+    channelsCard.holder.append(recordNode("channel", channel, { id }));
+  root.append(channelsCard.card);
+
+  const elsewhereCard = sectionCard("elsewhere", {
+    hint: "在别的电脑上按时间表跑、由中台记录的事，平时留空即可。",
+    add: "加一个定时任务",
+    build: (holder) => holder.append(recordNode("elsewhere", {}, {})),
+    read: listRead(),
+    advanced: true,
+  });
+  for (const task of config.elsewhere) elsewhereCard.holder.append(recordNode("elsewhere", task, {}));
+  root.append(elsewhereCard.card);
+
+  for (const head of root.querySelectorAll(".advanced > h3")) {
+    head.classList.add("fold");
+    head.addEventListener("click", () => head.parentElement.classList.toggle("open"));
+  }
+}
 
 // ---- boot ----
 

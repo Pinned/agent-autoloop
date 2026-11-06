@@ -17,7 +17,7 @@
     <nav>
       <button type="button" class="tab active" data-tab="tasks">任务</button>
       <button type="button" class="tab" data-tab="new">新建任务</button>
-      <button type="button" class="tab" data-tab="settings">入口设置</button>
+      <button type="button" class="tab" data-tab="settings">设置</button>
     </nav>
     <main>
       <section id="tasks" class="panel">
@@ -51,16 +51,12 @@
         <p id="taskResult" class="result"></p>
       </section>
       <section id="settings" class="panel hidden">
-        <h2>入口设置</h2>
+        <h2>设置</h2>
         <p class="hint">
-          这里只管「手动任务入口」——发给本机（local 来源）的事件由谁做。保存时只替换这些入口，rules.json
-          里其它规则原样保留。
+          rules.json 的每一段在这里都能改，改哪段保存哪段，其它段落原样保留。保存前整份校验，写错就拒收，
+          不会改坏文件。编号（Agent、来源、通道的 id）是密钥和规则引用的主键，定一次就不要改。
         </p>
-        <div id="entries"></div>
-        <div class="more">
-          <button id="addEntry" type="button">加一个入口</button>
-          <button id="saveEntries" type="button" class="primary">保存</button>
-        </div>
+        <div id="configSections"></div>
         <p id="entriesResult" class="result"></p>
       </section>
     </main>
