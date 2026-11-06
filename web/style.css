@@ -305,6 +305,46 @@ button.remove:hover {
   grid-column: 1 / -1;
 }
 
+/* ---- the settings tab: one card per section of rules.json ---- */
+
+.config-section {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+}
+.config-section h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+.config-section > .hint {
+  margin: 0 0 12px;
+}
+
+/* A section folded away until its owner needs it: one click, and it opens. */
+.config-section.advanced > h3.fold {
+  cursor: pointer;
+  color: var(--faint);
+}
+.config-section.advanced > h3.fold::after {
+  content: "（点开）";
+  font-size: 12px;
+  margin-left: 6px;
+}
+.config-section.advanced:not(.open) > .records,
+.config-section.advanced:not(.open) > .more,
+.config-section.advanced:not(.open) > .result {
+  display: none;
+}
+
+.entry .fields {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr 1fr;
+  grid-column: 1 / -1;
+}
+
 .more {
   margin-top: 14px;
   display: flex;
