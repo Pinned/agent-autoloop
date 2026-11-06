@@ -327,8 +327,8 @@ $("taskForm").addEventListener("submit", async (event) => {
 });
 
 // ---- the settings tab: every section of rules.json, one card each ----
-// Each section is gathered from its own fields and saved on its own; the server merges it into
-// rules.json and checks the whole file, so nothing on disk is ever a half-edit.
+// What is there shows as one quiet line per record; clicking a line opens its editor, and the editor's
+// save writes that section at once — what the page shows is what runs, nothing is ever half-saved.
 
 let config = null;
 
@@ -342,6 +342,11 @@ const SECTION_TEXT = {
 };
 const ACCESS_TEXT = { read: "只读", edit: "可改（默认）", full: "全放开（干什么都不再问你）" };
 const TELL_TEXT = { always: "总是", needed: "需要才说（默认）", never: "从不" };
+const KIND_TEXT = { agent: "Agent", rule: "规则", source: "来源", channel: "通道", elsewhere: "定时任务" };
+// Which section a record kind belongs to, and which sections are keyed by an id rather than held in a list.
+const SECTION_OF = { agent: "agents", rule: "rules", source: "sources", channel: "channels", elsewhere: "elsewhere" };
+const KEYED = ["agents", "sources", "channels"];
+const LISTED = ["rules", "elsewhere"];
 
 /** A field spec is [name, label, kind, options?]; kinds: text, words, number, select, textarea, bool. */
 const SPECS = {
@@ -537,68 +542,152 @@ function idNode(id, isNew) {
   );
 }
 
-/** A record in a keyed table (agent, source, channel) or a plain item (elsewhere, rule). */
+/** A record's fields as the editor shows them; keyed records carry their id, the settings none. */
 function recordNode(specName, record, { id, isNew } = {}) {
   const article = el("article", { className: "entry" });
-  if (id !== undefined) article.dataset.id = id;
   article.append(
-    ...(id !== undefined || isNew ? [idNode(id, isNew)] : []),
+    ...((id !== undefined || isNew) && specName !== "settings" ? [idNode(id, isNew)] : []),
     ...SPECS[specName].map((field) => fieldNode(field, record[field[0]])),
-    el("button", { type: "button", className: "remove", textContent: "删掉", onclick: () => article.remove() }),
   );
   article.read = () => readRecord(article);
   return article;
 }
 
-/** One section card: heading, hint, records, an add button, and a save button with its own result line. */
-function sectionCard(kind, options) {
+/** What one line of the list says: the name in ink, the rest a quiet note after it. */
+const ROW_TEXT = {
+  agent: (id, agent) => [
+    agent.name,
+    `（${id}）· ${agent.worker} · ${agent.use} · ${ACCESS_TEXT[agent.access ?? "edit"]}`,
+  ],
+  rule: (id, rule) => {
+    const to = config.agents[rule.to]?.name ?? rule.to;
+    const at = rule.when?.cron
+      ? `定时 ${rule.when.cron}`
+      : `事件 ${rule.when?.source ?? ""} ${(rule.when?.types ?? []).join("、")}`;
+    return [rule.name, `${at} → ${to}`];
+  },
+  source: (id, source) => [source.name, `（${id}）`],
+  channel: (id, channel) => [
+    channel.name,
+    `（${id}）${channel.answerers?.length ? " · " + channel.answerers.join("、") : ""}`,
+  ],
+  elsewhere: (id, task) => [task.name, `${task.cron} · ${task.where}`],
+};
+
+/** One record as a single quiet line; clicking it opens the editor. */
+function rowNode(specName, record, where) {
+  const [main, note] = ROW_TEXT[specName](where.id, record);
+  return el(
+    "div",
+    { className: "row", onclick: () => openEditor(specName, record, where) },
+    el("b", { textContent: main }),
+    note ? el("span", { className: "meta", textContent: note }) : null,
+    el("button", { type: "button", className: "modify", textContent: "修改" }),
+  );
+}
+
+/** The section as the merge-write door takes it: one record added or replaced, the rest as they are. */
+function withRecord(kind, id, index, fields) {
+  if (LISTED.includes(kind)) {
+    const list = [...config[kind]];
+    if (index === undefined) list.push(fields);
+    else list[index] = fields;
+    return list;
+  }
+  return { ...config[kind], [id]: fields };
+}
+
+/** The section without one record, for the editor's delete. */
+function withoutRecord(kind, id, index) {
+  if (LISTED.includes(kind)) return config[kind].filter((_, at) => at !== index);
+  return Object.fromEntries(Object.entries(config[kind]).filter(([key]) => key !== id));
+}
+
+/** One record in its own dialog: save or delete writes the whole section at once, so a mistake never half-lands. */
+function openEditor(specName, record, { id, index, isNew = false } = {}) {
+  const kind = SECTION_OF[specName];
+  const article = specName === "rule" ? ruleNode(record) : recordNode(specName, record, { id, isNew });
+  const error = el("p", { className: "result error" });
+  const commit = async (section) => {
+    error.textContent = "";
+    try {
+      await api(`/v1/ui/config/${kind}`, "PUT", section);
+      config = await api("/v1/ui/config");
+      dialog.close();
+      renderSettings();
+    } catch (caught) {
+      error.textContent = [caught.message, ...(caught.issues ?? [])].join("\n");
+    }
+  };
+  const save = async () => {
+    const key = id ?? article.querySelector("[data-field-id]")?.value.trim();
+    if (KEYED.includes(kind) && !key) {
+      error.textContent = "编号不能为空";
+      return;
+    }
+    await commit(withRecord(kind, key, index, article.read()));
+  };
+  const dialog = el(
+    "dialog",
+    { className: "editor", onclose: () => dialog.remove() },
+    el(
+      "form",
+      { onsubmit: (event) => void event.preventDefault() || save() },
+      el("h3", { textContent: `${isNew ? "加" : "改"}${KIND_TEXT[specName]}` }),
+      article,
+      error,
+      el(
+        "div",
+        { className: "actions" },
+        el("button", { type: "button", textContent: "取消", onclick: () => dialog.close() }),
+        isNew
+          ? null
+          : el("button", {
+              type: "button",
+              className: "remove",
+              textContent: "删掉",
+              onclick: async () => {
+                if (confirm("确定删掉？删掉立即生效。")) await commit(withoutRecord(kind, id, index));
+              },
+            }),
+        el("button", { type: "submit", className: "primary", textContent: "保存" }),
+      ),
+    ),
+  );
+  document.body.append(dialog);
+  dialog.showModal();
+}
+
+/** The two whole-file settings stay inline: one small form, one save. */
+function settingsCard() {
+  const article = recordNode("settings", { timezone: config.timezone, askFirst: config.askFirst }, {});
   const result = el("p", { className: "result" });
-  const holder = el("div", { className: "records" });
   const save = async () => {
     result.textContent = "保存中……";
     result.classList.remove("error");
     try {
-      await api(`/v1/ui/config/${kind}`, "PUT", options.read(holder));
-      result.textContent = "已保存，几秒内生效。";
+      await api("/v1/ui/config/settings", "PUT", article.read());
       config = await api("/v1/ui/config");
-      renderSettings();
+      result.textContent = "已保存，几秒内生效。";
     } catch (error) {
       result.textContent = [error.message, ...(error.issues ?? [])].join("\n");
       result.classList.add("error");
     }
   };
-  const card = el(
+  return el(
     "section",
-    { className: `config-section${options.advanced ? " advanced" : ""}` },
-    el("h3", { textContent: SECTION_TEXT[kind] }),
-    options.hint ? el("p", { className: "hint", textContent: options.hint }) : null,
-    holder,
+    { className: "config-section" },
+    el("h3", { textContent: SECTION_TEXT.settings }),
+    el("p", { className: "hint", textContent: "时区决定所有定时规则按哪个钟跑。" }),
     el(
-      "div",
-      { className: "more" },
-      options.add
-        ? el("button", { type: "button", textContent: options.add, onclick: () => options.build(holder) })
-        : null,
-      el("button", { type: "button", className: "primary", textContent: "保存这一段", onclick: save }),
+      "form",
+      { onsubmit: (event) => void event.preventDefault() || save() },
+      article,
+      el("div", { className: "more" }, el("button", { type: "submit", className: "primary", textContent: "保存全局" })),
     ),
     result,
   );
-  return { card, holder, save };
 }
-
-/** The records of a keyed section, read back as {id: fields}. New records take their id from the input. */
-const keyedRead = () => (holder) => {
-  const out = {};
-  for (const article of holder.querySelectorAll(".entry")) {
-    const input = article.querySelector("[data-field-id]");
-    if (input) out[input.value.trim()] = article.read();
-    else if (article.dataset.id) out[article.dataset.id] = article.read();
-  }
-  return out;
-};
-
-/** The records of a list section, read back as a plain list. */
-const listRead = () => (holder) => [...holder.querySelectorAll(".entry")].map((article) => article.read());
 
 function renderSettings() {
   const root = $("configSections");
@@ -612,69 +701,73 @@ function renderSettings() {
       .catch((error) => (root.textContent = error.message));
     return;
   }
-  root.replaceChildren();
+  root.replaceChildren(settingsCard());
 
-  const settings = sectionCard("settings", {
-    hint: "时区决定所有定时规则按哪个钟跑。",
-    read: (holder) => readRecord(holder.querySelector(".entry")),
-  });
-  settings.holder.append(recordNode("settings", { timezone: config.timezone, askFirst: config.askFirst }, {}));
-  root.append(settings.card);
-
-  const agentsCard = sectionCard("agents", {
-    hint: "改权限要留神：选「全放开」后，这个 Agent 干什么都不再问你。",
-    add: "加一个 Agent",
-    build: (holder) => holder.append(recordNode("agent", {}, { isNew: true })),
-    read: keyedRead(),
-  });
-  for (const [id, agent] of Object.entries(config.agents)) agentsCard.holder.append(recordNode("agent", agent, { id }));
-  root.append(agentsCard.card);
-
-  const rulesCard = sectionCard("rules", {
-    hint: "事件规则写来源和类型；定时规则写 cron。规则名别重复。",
-    add: "加一条规则",
-    build: (holder) => holder.append(ruleNode({ when: { source: "local", types: [] } })),
-    read: listRead(),
-  });
-  for (const rule of config.rules) rulesCard.holder.append(ruleNode(rule));
-  root.append(rulesCard.card);
-
-  const sourcesCard = sectionCard("sources", {
-    hint: "来源编号是密钥挂靠的主键；删掉一个来源，对应的密钥就再也发不进事件。",
-    add: "加一个来源",
-    build: (holder) => holder.append(recordNode("source", {}, { isNew: true })),
-    read: keyedRead(),
-  });
-  for (const [id, source] of Object.entries(config.sources))
-    sourcesCard.holder.append(recordNode("source", source, { id }));
-  root.append(sourcesCard.card);
-
-  const channelsCard = sectionCard("channels", {
-    hint: "通道决定卡片怎么到你手上；answerers 是允许回答的人。",
-    add: "加一个通道",
-    build: (holder) => holder.append(recordNode("channel", {}, { isNew: true })),
-    read: keyedRead(),
-  });
-  for (const [id, channel] of Object.entries(config.channels))
-    channelsCard.holder.append(recordNode("channel", channel, { id }));
-  root.append(channelsCard.card);
-
-  const elsewhereCard = sectionCard("elsewhere", {
-    hint: "在别的电脑上按时间表跑、由中台记录的事，平时留空即可。",
-    add: "加一个定时任务",
-    build: (holder) => holder.append(recordNode("elsewhere", {}, {})),
-    read: listRead(),
-    advanced: true,
-  });
-  for (const task of config.elsewhere) elsewhereCard.holder.append(recordNode("elsewhere", task, {}));
-  root.append(elsewhereCard.card);
+  const SECTIONS = [
+    {
+      kind: "agents",
+      spec: "agent",
+      add: "加一个 Agent",
+      hint: "改权限要留神：选「全放开」后，这个 Agent 干什么都不再问你。",
+    },
+    {
+      kind: "rules",
+      spec: "rule",
+      add: "加一条规则",
+      hint: "事件规则写来源和类型；定时规则写 cron。规则名别重复。",
+    },
+    {
+      kind: "sources",
+      spec: "source",
+      add: "加一个来源",
+      hint: "来源编号是密钥挂靠的主键；删掉一个来源，对应的密钥就再也发不进事件。",
+    },
+    {
+      kind: "channels",
+      spec: "channel",
+      add: "加一个通道",
+      hint: "通道决定卡片怎么到你手上；answerers 是允许回答的人。",
+    },
+    {
+      kind: "elsewhere",
+      spec: "elsewhere",
+      add: "加一个定时任务",
+      hint: "在别的电脑上按时间表跑、由中台记录的事，平时留空即可。",
+      advanced: true,
+    },
+  ];
+  for (const section of SECTIONS) {
+    const records = LISTED.includes(section.kind)
+      ? config[section.kind].map((record, index) => [record, { index }])
+      : Object.entries(config[section.kind]).map(([id, record]) => [record, { id }]);
+    root.append(
+      el(
+        "section",
+        { className: `config-section${section.advanced ? " advanced" : ""}` },
+        el("h3", { textContent: SECTION_TEXT[section.kind] }),
+        el("p", { className: "hint", textContent: section.hint }),
+        el("div", { className: "rows" }, ...records.map(([record, where]) => rowNode(section.spec, record, where))),
+        el(
+          "div",
+          { className: "more" },
+          el("button", {
+            type: "button",
+            textContent: section.add,
+            onclick: () =>
+              openEditor(section.spec, section.spec === "rule" ? { when: { source: "local", types: [] } } : {}, {
+                isNew: KEYED.includes(section.kind),
+              }),
+          }),
+        ),
+      ),
+    );
+  }
 
   for (const head of root.querySelectorAll(".advanced > h3")) {
     head.classList.add("fold");
     head.addEventListener("click", () => head.parentElement.classList.toggle("open"));
   }
 }
-
 // ---- boot ----
 
 $("key").value = key;

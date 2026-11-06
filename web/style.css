@@ -305,7 +305,7 @@ button.remove:hover {
   grid-column: 1 / -1;
 }
 
-/* ---- the settings tab: one card per section of rules.json ---- */
+/* ---- the settings tab: one quiet line per record, the editor in its own dialog ---- */
 
 .config-section {
   background: var(--card);
@@ -332,10 +332,76 @@ button.remove:hover {
   font-size: 12px;
   margin-left: 6px;
 }
-.config-section.advanced:not(.open) > .records,
-.config-section.advanced:not(.open) > .more,
-.config-section.advanced:not(.open) > .result {
+.config-section.advanced:not(.open) > .rows,
+.config-section.advanced:not(.open) > .more {
   display: none;
+}
+
+/* The list: one line per record, the name in ink, the rest a quiet note. */
+.rows {
+  display: grid;
+  gap: 2px;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.row:hover {
+  background: #f0f3f8;
+}
+.row b {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.row .meta {
+  flex: 1;
+  color: var(--faint);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row .modify {
+  padding: 2px 10px;
+  font-size: 12px;
+}
+
+/* The editor: the same fields the dialogs always had, now in their own window over the page. */
+dialog.editor {
+  width: min(680px, 92vw);
+  max-height: 86vh;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0;
+}
+dialog.editor::backdrop {
+  background: rgba(31, 36, 48, 0.35);
+}
+dialog.editor form {
+  max-width: none;
+  padding: 16px 20px;
+  overflow: auto;
+}
+dialog.editor form h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+dialog.editor .entry {
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+dialog.editor .actions {
+  display: flex;
+  gap: 10px;
+}
+dialog.editor .actions .primary {
+  margin-left: auto;
 }
 
 .entry .fields {
