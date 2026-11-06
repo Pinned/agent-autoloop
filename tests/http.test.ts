@@ -265,6 +265,14 @@ test("the owner's key reads everything, answers, resolves and stops; nothing els
   assert.equal((await call(`/v1/runs/${waiting.json.job.run}/cancel`, { body: {} })).status, 401);
   assert.equal((await call(`/v1/runs/${waiting.json.job.run}/cancel`, { key: keys.owner, body: {} })).status, 200);
   assert.deepEqual((await call("/v1/work?claim=c-11&wait=0", { key: keys.w1 })).json.cancel, [waiting.json.job.run]);
+  const memoed = await call(`/v1/runs/${waiting.json.job.run}/memo`, { key: keys.owner, body: { text: "x" } });
+  assert.equal((await call(`/v1/runs/${waiting.json.job.run}/memo`, { body: { text: "x" } })).status, 401);
+  assert.equal(
+    (await call(`/v1/runs/${waiting.json.job.run}/memo`, { key: keys.w1, body: { text: "x" } })).status,
+    401,
+  );
+  assert.equal(memoed.status, 400); // claimed but never started: no session to correct
+  assert.match(memoed.json.error, /没有可接的会话/);
 });
 
 const form = (path: string, fields: string) =>

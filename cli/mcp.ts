@@ -17,6 +17,12 @@ const specs = [
   ["resolve", "将卡片结案，写明已核实的结果", { card: positive, reason: string }, ["card", "reason"]],
   ["stop", "停止一轮", { run: positive }, ["run"]],
   [
+    "correct",
+    "给一轮的会话发一句本人的更正：正在跑的先停下，接着原会话继续",
+    { run: positive, text: string },
+    ["run", "text"],
+  ],
+  [
     "emit",
     "用本机来源发送事件；相同编号只记一次",
     { id: string, type: string, subject: string, summary: string, detail: string, link: string },
@@ -34,7 +40,10 @@ function toolsFor(config: ReturnType<typeof readConfig>) {
       name,
       description,
       inputSchema: { type: "object", properties, required, additionalProperties: false },
-      annotations: { readOnlyHint: ["status", "why"].includes(name), destructiveHint: name === "stop" },
+      annotations: {
+        readOnlyHint: ["status", "why"].includes(name),
+        destructiveHint: ["stop", "correct"].includes(name),
+      },
     }));
 }
 type Tool = ReturnType<typeof toolsFor>[number];
@@ -67,6 +76,8 @@ function callTool(hub: Hub, name: Tool["name"], args: any) {
       return hub.resolve(args.card, args.reason);
     case "stop":
       return hub.cancel(args.run);
+    case "correct":
+      return hub.memo(args.run, args.text);
     case "emit":
       return hub.event(args);
     case "tell":

@@ -151,6 +151,8 @@ export const finish = (run: number, token: string, input: unknown, now = Date.no
   execute("finish", [run, token, input], now);
 export const cancel = (run: number, now = Date.now()) => execute("cancel", [run], now);
 export const cancels = (worker: string) => query.cancels(getView(), worker);
+export const memo = (run: number, text: string, now = Date.now()): { stopped: boolean } =>
+  execute("memo", [run, { text }], now);
 export const sweep = (now = Date.now()) => execute("sweep", [], now);
 
 export function tick(now = Date.now()) {

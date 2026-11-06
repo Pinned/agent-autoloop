@@ -34,6 +34,8 @@ const HELP = `Agent 自动化中台
   agent-autoloop tell <编号> [--task 定时任务名]
                                     直接告诉你一件事，内容从标准输入读
   agent-autoloop stop <第几轮>           停掉一轮
+  agent-autoloop correct <第几轮> <更正的话>
+                                    给一轮的会话发本人的更正：正在跑的先停下，接着原会话继续
   agent-autoloop key new <source|worker|channel|owner> <名字>
                                     新建一把密钥（只显示这一次）
   agent-autoloop key list                有哪些密钥
@@ -501,6 +503,19 @@ async function stop(args: string[]) {
   console.log("通知它停了。");
 }
 
+async function correct(args: string[]) {
+  const [id, ...words] = args;
+  const run = Number(id);
+  if (!Number.isInteger(run) || run < 1 || !words.length)
+    return fail("用法：agent-autoloop correct <第几轮> <更正的话>");
+  const done = await ownerClient().memo(run, words.join(" "));
+  console.log(
+    done.stopped
+      ? "更正记下了，正在跑的这一轮已叫停，Agent 会带着更正接着原会话继续。"
+      : "更正记下了，Agent 下一轮会带着它接着原会话继续。",
+  );
+}
+
 function service(args: string[]) {
   if (args[0] === "install") return installService();
   if (args[0] === "remove") return removeService();
@@ -556,6 +571,7 @@ const commands: Record<string, () => unknown> = {
   emit: () => emit(args),
   tell: () => tell(args),
   stop: () => stop(args),
+  correct: () => correct(args),
   update,
   uninstall: async () => {
     const { uninstall } = await import("./uninstall.ts");
