@@ -1,10 +1,15 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, session, Tray } from "electron";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { assertSender, channels, isolatedHome, parseTheme, parseWindowAction, webPreferences } from "./policy.ts";
 import { createLifecycle } from "./lifecycle.ts";
 import { loadTheme, saveTheme } from "./preferences.ts";
+import { createSupervisor } from "./supervisor.ts";
+import { createRuntimeControl, SAFE_STOP_ERROR, type RuntimeControlState } from "./runtime-control.ts";
+import type * as RuntimeResources from "../scripts/runtime.mjs";
 
 let home: string | undefined;
 try {
@@ -61,22 +66,134 @@ if (ownsAppLock)
   app
     .whenReady()
     .then(async () => {
-      Menu.setApplicationMenu(
-        Menu.buildFromTemplate([
-          {
-            label: "agent-autoloop",
-            submenu: [
-              { label: "显示窗口", click: restore },
-              { label: "隐藏窗口", accelerator: "CommandOrControl+W", click: () => window.close() },
-              { type: "separator" },
-              { label: "退出…", accelerator: "CommandOrControl+Q", click: () => void requestQuit() },
-            ],
-          },
-          { label: "编辑", submenu: [{ role: "copy" }, { role: "paste" }, { role: "selectAll" }] },
-        ]),
-      );
       const prefsHome = app.getPath("userData");
       mkdirSync(prefsHome, { recursive: true });
+      const runtimeHome = join(prefsHome, "runtime-home");
+      const controller = createRuntimeControl({
+        home: runtimeHome,
+        enabled: !app.isPackaged && !!home && !smoke,
+        prepare: async (ownCleanup) => {
+          // Fixed development paths; loading this module at startup would also run its CLI after bundling.
+          const resourcesModule = pathToFileURL(join(base, "..", "scripts", "runtime.mjs")).href;
+          const { ensureRuntime, copySources } = (await import(resourcesModule)) as typeof RuntimeResources;
+          const runtime = await ensureRuntime({ cacheDir: join(base, "..", ".cache", "runtime"), ownCleanup });
+          const resources = await mkdtemp(join(prefsHome, "runtime resources "));
+          ownCleanup(() => rm(resources, { recursive: true, force: true }));
+          await copySources(join(base, "..", ".."), resources);
+          return { nodePath: runtime.node, entryPath: join(resources, "bin", "agent-autoloop.ts"), home: runtimeHome };
+        },
+        supervisorFactory: (options) =>
+          createSupervisor({
+            ...options,
+            // Business processes must not inherit the user's real HOME or agent credential directories.
+            spawn: (file, args, childOptions) =>
+              spawn(file, args, {
+                ...childOptions,
+                env: { ...childOptions.env, HOME: runtimeHome, USERPROFILE: runtimeHome },
+              }),
+          }),
+      });
+      const statusLabel = (state: RuntimeControlState) => {
+        const labels: Record<RuntimeControlState["status"], string> = {
+          stopped: "本机运行服务未启动",
+          starting: "正在准备或启动本机运行服务",
+          running: "本机运行服务运行中",
+          draining: "正在停止本机 Agent 并排空",
+          failed: "本机运行服务失败",
+          unknown: "本机运行服务状态未确认",
+          unconfigured: "隔离运行目录未配置，请先完成设置（不会自动初始化）",
+          unavailable: smoke ? "纯壳验证，运行服务未启动" : "打包运行资源尚未提供，无法启动运行服务",
+        };
+        return state.status === "stopped" && (state.pendingSync ?? 0) > 0
+          ? `本机已停止；${state.pendingSync} 条结果离线持久待同步`
+          : labels[state.status];
+      };
+      let nativeOperation = false;
+      let nativeStopping = false;
+      const showSafeError = (message: string) =>
+        dialog.showMessageBox(window, {
+          type: "error",
+          title: "运行服务安全提示",
+          message,
+          buttons: ["知道了"],
+          noLink: true,
+        });
+      async function runtimeAction(action: "start" | "stop") {
+        if (quit.quitting || nativeStopping || (action === "start" && nativeOperation)) return;
+        if (action === "start") nativeOperation = true;
+        else nativeStopping = true;
+        refreshMenus();
+        try {
+          if (action === "start") {
+            const state = await controller.start();
+            if (state.error) await showSafeError(state.error);
+            else if (state.status === "unconfigured")
+              await dialog.showMessageBox(window, {
+                type: "info",
+                title: "运行服务未配置",
+                message: statusLabel(state),
+                detail: "仅使用开发临时目录中的 runtime-home；不会读取真实配置或密钥，也不会自动初始化。",
+                buttons: ["知道了"],
+                noLink: true,
+              });
+          } else if (!(await controller.stop())) await showSafeError(SAFE_STOP_ERROR);
+        } catch {
+          await showSafeError(action === "stop" ? SAFE_STOP_ERROR : "无法启动本机运行服务，请检查后手动重试。");
+        } finally {
+          if (action === "start") nativeOperation = false;
+          else nativeStopping = false;
+          refreshMenus();
+        }
+      }
+      function refreshMenus() {
+        const state = controller.getState();
+        const operations = (): Electron.MenuItemConstructorOptions[] => [
+          { label: statusLabel(state), enabled: false },
+          ...(state.error ? [{ label: state.error, enabled: false }] : []),
+          {
+            label: "启动运行服务",
+            enabled:
+              !nativeOperation &&
+              !nativeStopping &&
+              !quit?.quitting &&
+              ["stopped", "unconfigured", "failed"].includes(state.status),
+            click: () => void runtimeAction("start"),
+          },
+          {
+            label: "停止本机运行服务",
+            enabled: !nativeStopping && !quit?.quitting && state.status !== "unavailable",
+            click: () => void runtimeAction("stop"),
+          },
+        ];
+        Menu.setApplicationMenu(
+          Menu.buildFromTemplate([
+            {
+              label: "agent-autoloop",
+              submenu: [
+                { label: "显示窗口", click: restore },
+                { label: "隐藏窗口", accelerator: "CommandOrControl+W", click: () => window.close() },
+                { type: "separator" },
+                ...operations(),
+                { type: "separator" },
+                { label: "退出…", accelerator: "CommandOrControl+Q", click: () => void requestQuit() },
+              ],
+            },
+            { label: "编辑", submenu: [{ role: "copy" }, { role: "paste" }, { role: "selectAll" }] },
+          ]),
+        );
+        if (tray) {
+          tray.setToolTip(`agent-autoloop · ${statusLabel(state)}`);
+          tray.setContextMenu(
+            Menu.buildFromTemplate([
+              { label: "打开指挥台", click: () => quit.restore() },
+              ...operations(),
+              { type: "separator" },
+              { label: "退出…", click: () => void requestQuit() },
+            ]),
+          );
+        }
+      }
+      controller.subscribe(refreshMenus);
       nativeTheme.themeSource = loadTheme(prefsHome);
       session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
       session.defaultSession.setPermissionCheckHandler(() => false);
@@ -104,6 +221,11 @@ if (ownsAppLock)
         hide: () => window.hide(),
         restore,
         exit: () => app.quit(),
+        prepareQuit: async () => {
+          const safe = await controller.stop();
+          if (!safe) await showSafeError(SAFE_STOP_ERROR);
+          return safe;
+        },
         confirm: async () => {
           restore();
           if (smoke) return smokeAnswer;
@@ -111,8 +233,9 @@ if (ownsAppLock)
             type: "question",
             title: "退出 agent-autoloop？",
             message: "确认退出桌面应用？",
-            detail:
-              "本版本未连接运行服务，没有正在执行的任务。退出后托盘也会关闭；只想收起窗口，请选择取消后关闭窗口。",
+            detail: ["starting", "running", "draining", "unknown", "failed"].includes(controller.getState().status)
+              ? "退出前将停止本机 Agent 并等待安全排空；远程队列不会取消。无法确认安全停止时不会退出，也不会强制终止。退出后托盘关闭；只想收起窗口请选择取消。"
+              : `${statusLabel(controller.getState())}。退出不会取消远程队列；离线持久待同步结果将保留。退出后托盘关闭；只想收起窗口请选择取消。`,
             buttons: ["取消", "退出应用"],
             defaultId: 0,
             cancelId: 0,
@@ -139,15 +262,7 @@ if (ownsAppLock)
       const trayImage = nativeImage.createFromBitmap(pixels, { width: 22, height: 22 });
       trayImage.setTemplateImage(true);
       tray = new Tray(trayImage);
-      tray.setToolTip("agent-autoloop · 桌面壳，服务未接入");
-      tray.setContextMenu(
-        Menu.buildFromTemplate([
-          { label: "打开指挥台", click: () => quit.restore() },
-          { label: "运行服务未接入", enabled: false },
-          { type: "separator" },
-          { label: "退出…", click: () => void requestQuit() },
-        ]),
-      );
+      refreshMenus();
       tray.on("double-click", () => quit.restore());
       tray.on("click", () => quit.restore());
       const themeState = () => ({

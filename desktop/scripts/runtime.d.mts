@@ -16,6 +16,8 @@ export type RuntimeOptions = {
   download?: (url: string) => Promise<Uint8Array>;
   sourceDir?: string;
   tempDir?: string;
+  /** Register local resource ownership immediately after acquiring the runtime lock. Rejects until cleanup is complete. */
+  ownCleanup?: (cleanup: () => Promise<void>) => void;
 };
 export type RuntimeIdentity = { version: string; platform: string; arch: string; execPath: string; electron: null };
 export const NODE_VERSION: string;

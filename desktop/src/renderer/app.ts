@@ -10,7 +10,7 @@ const pages = [
     title: "今天",
     description: "把需要你关心的进展和决策放在一起。",
     empty: "还没有可展示的工作进展",
-    detail: "运行服务尚未接入。接入后，这里会展示真实进展和需要你判断的事项。",
+    detail: "此页面尚未读取进展数据。本机运行状态与启停请查看应用菜单或托盘；这里不展示模拟进展。",
     icon: "today",
   },
   {
@@ -34,7 +34,7 @@ const pages = [
     title: "执行机",
     description: "了解哪些设备可以接活，以及它们的真实状态。",
     empty: "执行机服务尚未接入",
-    detail: "当前没有读取设备或 Agent 状态，也不会启动执行程序。连接能力将在后续迭代接入。",
+    detail: "此页面尚未读取设备或 Agent 状态。本机运行状态与启停请查看应用菜单或托盘。",
     icon: "workers",
   },
   {
@@ -102,7 +102,7 @@ function render(id: string, focus = true) {
   } else {
     main.insertAdjacentHTML(
       "beforeend",
-      `<div class="notice"><span class="connection">待接入</span><span>当前没有业务数据，不代表任务数量为零或设备离线。</span></div><section class="empty"><div class="empty-icon">${icon(page.icon)}</div><h2>${page.empty}</h2><p>${page.detail}</p><span class="empty-foot">不展示演示任务，不连接真实运行服务</span></section>`,
+      `<div class="notice"><span class="connection">待接入</span><span>当前没有业务数据，不代表任务数量为零或设备离线。</span></div><section class="empty"><div class="empty-icon">${icon(page.icon)}</div><h2>${page.empty}</h2><p>${page.detail}</p><span class="empty-foot">不展示演示任务；页面数据接入将在后续迭代提供</span></section>`,
     );
   }
   if (focus) main.focus();
