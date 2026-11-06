@@ -397,6 +397,54 @@ function answer(draft: Draft, id: number, given: Row) {
   return { changed: true, state: "decided" };
 }
 
+/** The owner's correction to a thread that already ran: it lands among the answers as if asked, and the next
+ *  turn resumes the same session. A run still working from the wrong story is stopped first; one still waiting
+ *  takes the correction into itself, since nothing it would do needs undoing. */
+function memo(draft: Draft, id: number, given: Row) {
+  const run = draft.view.get("runs", id);
+  if (!run) throw new NotFound("没有这一轮");
+  const text = typeof given?.text === "string" ? given.text.trim() : "";
+  if (!text) throw new InputError("写一句更正的话");
+  if ([...text].length > 4000) throw new InputError("更正最多 4000 字");
+  const session = run.session ?? run.resume;
+  if (!session) throw new InputError("这一轮还没开始过，没有可接的会话；停掉重发一个新任务就好");
+  const rule = ruleNamed(draft, run.rule);
+  if (!rule) throw new NotFound(`规则 ${run.rule} 已经不在了，这条更正没有地方落`);
+  if (run.agent !== rule.to) throw new InputError(`这条规则已改交给 ${rule.to}，接不上原会话；停掉重发一个新任务就好`);
+  const working = run.state === "claimed";
+  if (working) put(draft, "runs", id, { cancel_at: draft.at });
+  const created = createCard(draft, {
+    key: `memo:${id}`,
+    kind: "ask",
+    title: "本人的更正",
+    text,
+    about: "本人后来的更正：与历史冲突的说法以这条为准，核实当前事实后接着做。",
+    ...threadOf(run),
+    source: SCHEDULE,
+    agent: run.agent,
+    session,
+    run: id,
+  });
+  const event = {
+    id: `memo:${created.card}`,
+    type: "owner.memo",
+    subject: run.lane,
+    summary: "本人的更正",
+    hops: hopsOf(draft, run),
+  };
+  const eventId = recordEvent(draft, SCHEDULE, event, [rule.name]);
+  put(draft, "cards", created.card, {
+    state: "decided",
+    choice: null,
+    answer: text,
+    by: "本人",
+    decided_at: draft.at,
+    answer_event: eventId,
+  });
+  enqueue(draft, rule, eventId, run.lane, session);
+  return { stopped: working };
+}
+
 function nextCard(draft: Draft, channel: string) {
   const { now } = draft;
   for (const card of draft.view.deliveryCandidates(channel, now)) {
@@ -516,6 +564,7 @@ const HANDLERS: Record<string, (draft: Draft, ...args: any[]) => unknown> = {
     return true;
   },
   answer,
+  memo,
   nextCard,
   delivered(draft, channel, id, version, ref) {
     if (!draft.view.get("cards", id)) throw new NotFound("没有这张卡片");
