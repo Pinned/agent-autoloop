@@ -16,7 +16,7 @@ Most of us use command-line agents like Claude Code or Codex by babysitting a te
 
 - **One machine, one install command.** Runs on your Mac or Linux machine. No cloud server or inbound ports required.
 - **Connect a new agent in one line.** No SDK, no agent source code to fork. Any CLI tool that takes a prompt and prints a final reply can plug in.
-- **No web dashboard.** Cards reach you on Feishu, DingTalk, WeCom, Slack, Discord, or desktop notifications when you are needed. Everything else is one command away.
+- **Quiet by default, cards when you need to decide.** Cards reach you on Feishu, DingTalk, WeCom, Slack, Discord, or desktop notifications. Use the CLI or local console to see progress.
 
 ## Get started
 
@@ -60,6 +60,8 @@ If you'd rather not memorize commands, there's a web page. While the hub is runn
 - **Entries**: configure which type goes to which Agent, in which directory, with what prompt. Saving replaces only the local task entries; everything else in rules.json is kept as it is.
 
 The page is reachable only from this machine; no port needs to face the outside.
+
+An Electron desktop app is being developed incrementally: it will manage the hub or a worker inside the app, stay in the menu bar when closed, and support light/dark themes. The prototype does not connect to real services, and there is no usable installer yet. See the [desktop development scope](docs/desktop.md) (Chinese). Existing CLI installations and data are not migrated automatically.
 
 ## How a piece of work flows
 

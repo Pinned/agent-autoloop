@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agent-autoloop 控制台 · #41 每日早报</title>
+<style>
+  /* ============ Design Tokens ============ */
+  :root{
+    --bg-app:#F6F4EF;
+    --bg-side:#FBFAF7;
+    --card:#FFFFFF;
+    --line:#ECE7DF;
+    --line-soft:#F3EFE8;
+    --ink:#25221E;
+    --ink-2:#6E6862;
+    --ink-3:#A39C93;
+    --brand:#E4672F;
+    --brand-strong:#C2511F;
+    --brand-tint:#FBEAE0;
+    --teal-strong:#1F7A6D;
+    --teal-tint:#E1F0ED;
+    --green:#2E8F63;
+    --green-strong:#20684A;
+    --green-tint:#E5F3EB;
+    --amber-strong:#8F6414;
+    --amber-tint:#F8EFDA;
+    --red-strong:#B3372A;
+    --red-tint:#FBECE9;
+    --neutral-chip-bg:#EFEAE2;
+    --neutral-chip-ink:#5F5950;
+    --radius:16px;
+    --shadow-card:0 1px 2px rgba(31,26,20,.05), 0 4px 14px rgba(31,26,20,.045);
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{height:100%;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    font-size:15px;color:var(--ink);
+    background:#E7E3DA;
+    min-height:100vh;display:grid;place-items:center;padding:28px;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+  }
+  ::selection{background:rgba(228,103,47,.22);}
+  a{color:inherit;text-decoration:none;}
+
+  /* ============ 窗口框架 ============ */
+  .window{
+    width:1080px;height:760px;flex:none;
+    background:var(--bg-app);
+    border:1px solid rgba(0,0,0,.08);border-radius:12px;overflow:hidden;
+    display:flex;
+    box-shadow:0 24px 60px rgba(31,26,20,.28), 0 4px 14px rgba(31,26,20,.12);
+  }
+
+  /* ============ 侧边栏 ============ */
+  .sidebar{
+    width:218px;flex:none;
+    background:var(--bg-side);border-right:1px solid var(--line);
+    display:flex;flex-direction:column;
+    padding:0 14px 16px;
+  }
+  .traffic{display:flex;gap:8px;align-items:center;padding:18px 8px 16px;}
+  .traffic i{width:12px;height:12px;border-radius:50%;}
+  .t-red{background:#FF5F57;}.t-yellow{background:#FEBC2E;}.t-green{background:#28C840;}
+  .brand{display:flex;align-items:center;gap:10px;padding:0 8px 20px;}
+  .brand-name{font-size:14.5px;font-weight:700;letter-spacing:-.2px;}
+  .nav{display:flex;flex-direction:column;gap:4px;}
+  .nav a{
+    display:flex;align-items:center;gap:10px;
+    padding:9px 12px;border-radius:10px;
+    font-size:14px;font-weight:550;color:var(--ink-2);
+  }
+  .nav a svg{flex:none;opacity:.9;}
+  .nav a:hover{background:#F1EDE5;color:var(--ink);}
+  .nav a:focus-visible{outline:2px solid var(--brand);outline-offset:2px;}
+  .nav a.active{background:var(--brand-tint);color:var(--brand-strong);font-weight:650;}
+  .side-foot{margin-top:auto;background:#F2EEE6;border-radius:12px;padding:12px 13px;}
+  .conn{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:650;}
+  .conn-sub{font-size:12px;color:var(--ink-2);margin-top:3px;}
+
+  /* ============ 通用小件 ============ */
+  .dot{width:8px;height:8px;border-radius:50%;flex:none;}
+  .dot-live{background:var(--green);animation:pulse-green 2.4s infinite;}
+  .dot-run{width:7px;height:7px;background:var(--brand);animation:pulse 2s infinite;}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(228,103,47,.35);}70%{box-shadow:0 0 0 6px rgba(228,103,47,0);}100%{box-shadow:0 0 0 0 rgba(228,103,47,0);}}
+  @keyframes pulse-green{0%{box-shadow:0 0 0 0 rgba(46,143,99,.30);}70%{box-shadow:0 0 0 6px rgba(46,143,99,0);}100%{box-shadow:0 0 0 0 rgba(46,143,99,0);}}
+  .chip{
+    display:inline-flex;align-items:center;gap:5px;flex:none;
+    height:22px;padding:0 9px;border-radius:99px;
+    font-size:11.5px;font-weight:650;white-space:nowrap;
+  }
+  .chip-cc{background:var(--brand-tint);color:var(--brand-strong);}
+  .chip-done{background:var(--green-tint);color:var(--green-strong);}
+  .chip-ev{background:var(--neutral-chip-bg);color:var(--neutral-chip-ink);}
+  .chip-rule{background:var(--teal-tint);color:var(--teal-strong);}
+  .chip-try{background:var(--brand-tint);color:var(--brand-strong);}
+  code{font-family:var(--mono);font-size:12.5px;background:#F4F0E9;padding:1px 6px;border-radius:6px;color:#4F4943;}
+
+  /* ============ 按钮 ============ */
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;
+    height:36px;padding:0 16px;border-radius:10px;
+    font-family:inherit;font-size:13.5px;font-weight:600;
+    cursor:pointer;border:1px solid transparent;white-space:nowrap;
+    transition:background .15s ease,border-color .15s ease,transform .15s ease;
+  }
+  .btn:focus-visible{outline:2px solid var(--brand);outline-offset:2px;}
+  .btn-primary{background:var(--brand-strong);color:#fff;}
+  .btn-primary:hover{background:#AC4518;}
+  .btn-danger{background:var(--red-tint);color:var(--red-strong);border-color:#F0D8D3;}
+  .btn-danger:hover{background:#F7E0DC;border-color:#E8BFB8;}
+
+  /* ============ 内容区 ============ */
+  .content{
+    flex:1;min-width:0;padding:32px 36px 26px;
+    display:flex;flex-direction:column;overflow:auto;
+  }
+  .crumb{font-size:12.5px;color:var(--ink-3);font-weight:550;margin-bottom:16px;}
+  .card{
+    background:var(--card);border:1px solid var(--line);
+    border-radius:var(--radius);box-shadow:var(--shadow-card);
+  }
+  .card-pad{padding:22px 24px;}
+  .card-title{font-size:15px;font-weight:700;letter-spacing:-.1px;margin-bottom:16px;}
+  .card-title-sub{font-weight:500;color:var(--ink-2);font-size:13px;}
+
+  /* ============ 标题区 ============ */
+  .run-head{display:flex;align-items:flex-start;gap:16px;}
+  .title-row{display:flex;align-items:center;gap:12px;}
+  .run-head h1{font-size:27px;font-weight:700;letter-spacing:-.5px;}
+  .badge-run{
+    display:inline-flex;align-items:center;gap:7px;
+    height:27px;padding:0 12px;border-radius:99px;
+    background:var(--brand-tint);color:var(--brand-strong);
+    font-size:12.5px;font-weight:650;
+  }
+  .head-meta{margin-top:10px;display:flex;align-items:center;gap:9px;font-size:13.5px;color:var(--ink-2);}
+  .head-actions{margin-left:auto;display:flex;gap:10px;padding-top:5px;}
+
+  /* ============ 双栏 ============ */
+  .cols{display:grid;grid-template-columns:1fr 300px;gap:20px;margin-top:28px;align-items:start;}
+  .col{display:flex;flex-direction:column;gap:20px;}
+
+  /* ============ 来龙去脉（时间链） ============ */
+  .tl-step{display:flex;gap:12px;padding-bottom:30px;position:relative;}
+  .tl-step:last-child{padding-bottom:2px;}
+  .tl-time{flex:none;width:42px;font-family:var(--mono);font-size:11.5px;color:var(--ink-3);padding-top:3px;}
+  .tl-rail{flex:none;width:14px;display:flex;justify-content:center;position:relative;}
+  .tl-rail::before{content:"";position:absolute;top:6px;bottom:-8px;width:2px;border-radius:2px;background:var(--line);}
+  .tl-step:last-child .tl-rail::before{display:none;}
+  .tl-dot{
+    position:relative;z-index:1;width:12px;height:12px;border-radius:50%;
+    background:#D9D3C8;flex:none;margin-top:2px;
+  }
+  .tl-step.current .tl-dot{background:var(--brand);animation:pulse 2s infinite;}
+  .tl-body{flex:1;font-size:14px;line-height:1.6;padding-top:1px;}
+  .tl-body .chip{vertical-align:2px;margin-right:9px;}
+  .tl-note{color:var(--ink-3);font-size:12.5px;}
+  .tl-note-nowrap{white-space:nowrap;}
+
+  /* ============ 更正历史 ============ */
+  .correct{background:#FCF4EC;border:1px solid #F3E2D4;border-radius:12px;padding:16px 18px;}
+  .correct-meta{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:700;color:var(--brand-strong);}
+  .correct-time{font-family:var(--mono);font-weight:600;background:rgba(228,103,47,.13);padding:1px 7px;border-radius:6px;font-size:11.5px;}
+  .correct-quote{font-size:15px;font-weight:650;line-height:1.6;margin:9px 0 7px;}
+  .correct-note{font-size:13px;color:var(--ink-2);line-height:1.65;}
+
+  /* ============ 花费 ============ */
+  .cost-row{display:flex;align-items:baseline;justify-content:space-between;padding:10px 0;}
+  .cost-row + .cost-row{border-top:1px solid var(--line-soft);}
+  .cost-label{font-size:13px;color:var(--ink-2);}
+  .cost-val{font-size:15px;font-weight:700;letter-spacing:-.2px;}
+  .cost-val small{font-size:11px;color:var(--ink-3);font-weight:550;margin-left:4px;letter-spacing:0;}
+  .cost-row.total .cost-val{color:var(--brand-strong);font-size:16px;}
+
+  /* ============ 上一次 ============ */
+  .prev{display:flex;gap:12px;align-items:flex-start;}
+  .lead{
+    width:28px;height:28px;border-radius:9px;flex:none;
+    display:inline-flex;align-items:center;justify-content:center;
+  }
+  .lead-green{background:var(--green-tint);color:var(--green-strong);}
+  .prev-text{font-size:13.5px;color:var(--ink-2);margin-top:7px;line-height:1.6;}
+
+  @media (prefers-reduced-motion: reduce){
+    *{animation-duration:.01ms !important;animation-iteration-count:1 !important;}
+  }
+</style>
+</head>
+<body>
+  <div class="window">
+
+    <!-- ===== 侧边栏 ===== -->
+    <aside class="sidebar">
+      <div class="traffic" aria-hidden="true"><i class="t-red"></i><i class="t-yellow"></i><i class="t-green"></i></div>
+      <div class="brand">
+        <svg width="30" height="30" viewBox="0 0 30 30" aria-hidden="true">
+          <rect width="30" height="30" rx="9" fill="#E4672F"/>
+          <path d="M8.5 17.5a6.5 6.5 0 0 1 13 0" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
+          <line x1="6.6" y1="17.5" x2="8.5" y2="17.5" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
+          <line x1="21.5" y1="17.5" x2="23.4" y2="17.5" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
+          <g stroke="#fff" stroke-width="2.2" stroke-linecap="round">
+            <line x1="15" y1="7.4" x2="15" y2="9.8"/>
+            <line x1="9.6" y1="9.5" x2="11.3" y2="11.2"/>
+            <line x1="20.4" y1="9.5" x2="18.7" y2="11.2"/>
+          </g>
+        </svg>
+        <span class="brand-name">agent-autoloop</span>
+      </div>
+      <nav class="nav" aria-label="主导航">
+        <a class="active" aria-current="page">
+          <svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="9" cy="9.5" r="3.3"/><path d="M9 2.6v1.8M9 14.6v1.8M2.9 9.5h1.8M13.3 9.5h1.8M4.6 5.1l1.3 1.3M12.1 6.4l1.3-1.3M4.6 13.9l1.3-1.3M12.1 12.6l1.3 1.3"/></svg>
+          <span>今天</span>
+        </a>
+        <a>
+          <svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M6.6 5h8.4M6.6 9h8.4M6.6 13h5.4"/><circle cx="3.1" cy="5" r="1.1" fill="currentColor" stroke="none"/><circle cx="3.1" cy="9" r="1.1" fill="currentColor" stroke="none"/><circle cx="3.1" cy="13" r="1.1" fill="currentColor" stroke="none"/></svg>
+          <span>任务</span>
+        </a>
+        <a>
+          <svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="9" cy="9" r="6.5"/><path d="M9 6.1v5.8M6.1 9h5.8"/></svg>
+          <span>新建</span>
+        </a>
+        <a>
+          <svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 5.1h12M3 12.9h12"/><circle cx="11.6" cy="5.1" r="2" fill="currentColor" stroke="none"/><circle cx="6.4" cy="12.9" r="2" fill="currentColor" stroke="none"/></svg>
+          <span>设置</span>
+        </a>
+      </nav>
+      <div class="side-foot">
+        <div class="conn"><span class="dot dot-live"></span>已连接</div>
+        <div class="conn-sub">运行中 1 · 排队 2</div>
+      </div>
+    </aside>
+
+    <!-- ===== 内容区 ===== -->
+    <main class="content">
+
+      <div class="crumb">任务 / #41</div>
+
+      <!-- 标题区 -->
+      <header class="run-head">
+        <div>
+          <div class="title-row">
+            <h1>#41 每日早报</h1>
+            <span class="badge-run"><span class="dot dot-run"></span>运行中</span>
+          </div>
+          <p class="head-meta">
+            <span class="chip chip-cc">Claude Code</span>
+            开始于 09:02
+          </p>
+        </div>
+        <div class="head-actions">
+          <button class="btn btn-danger">停止</button>
+          <button class="btn btn-primary">发更正…</button>
+        </div>
+      </header>
+
+      <div class="cols">
+
+        <!-- 左栏 -->
+        <div class="col">
+
+          <!-- 来龙去脉 -->
+          <section class="card card-pad">
+            <h2 class="card-title">来龙去脉</h2>
+            <div class="tl-step">
+              <span class="tl-time">09:00</span>
+              <span class="tl-rail"><span class="tl-dot"></span></span>
+              <div class="tl-body"><span class="chip chip-ev">事件</span><code>feedback.new</code>「反馈 #47」<span class="tl-note">（来源 飞书）</span></div>
+            </div>
+            <div class="tl-step">
+              <span class="tl-time">09:01</span>
+              <span class="tl-rail"><span class="tl-dot"></span></span>
+              <div class="tl-body"><span class="chip chip-rule">规则</span>「每日早报」接手，派给 Claude Code</div>
+            </div>
+            <div class="tl-step current">
+              <span class="tl-time">09:02</span>
+              <span class="tl-rail"><span class="tl-dot"></span></span>
+              <div class="tl-body"><span class="chip chip-try">尝试</span>第 1 次尝试开始<span class="tl-note-nowrap">（会话 <code>s-8f3k</code>，接续原会话）</span></div>
+            </div>
+          </section>
+
+          <!-- 更正历史 -->
+          <section class="card card-pad">
+            <h2 class="card-title">更正历史</h2>
+            <div class="correct">
+              <div class="correct-meta"><span class="correct-time">09:05</span>本人更正</div>
+              <div class="correct-quote">「接口地址应该用 v2，不是 v1」</div>
+              <p class="correct-note">—— 正在跑的那次已叫停，带着更正接着原会话继续</p>
+            </div>
+          </section>
+        </div>
+
+        <!-- 右栏 -->
+        <div class="col">
+
+          <!-- 花费 -->
+          <section class="card card-pad">
+            <h2 class="card-title">花费</h2>
+            <div class="cost-row"><span class="cost-label">输入</span><span class="cost-val">2.1 万<small>tokens</small></span></div>
+            <div class="cost-row"><span class="cost-label">输出</span><span class="cost-val">4,800<small>tokens</small></span></div>
+            <div class="cost-row total"><span class="cost-label">费用</span><span class="cost-val">¥0.42</span></div>
+          </section>
+
+          <!-- 上一次 -->
+          <section class="card card-pad">
+            <h2 class="card-title">上一次<span class="card-title-sub">（#40 昨天）</span></h2>
+            <div class="prev">
+              <span class="lead lead-green">
+                <svg width="14" height="14" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 9.6 7.6 12.6 13.5 6"/></svg>
+              </span>
+              <div>
+                <span class="chip chip-done">完成</span>
+                <p class="prev-text">早报已生成并发到飞书</p>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</body>
+</html>

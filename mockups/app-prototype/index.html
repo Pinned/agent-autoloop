@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>agent-autoloop · 交互原型</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="desktop">
+    <div class="desktop-bar"><span>桌面行为模拟 <span class="desktop-note">不是原生应用</span></span><button id="tray-button" aria-haspopup="dialog">▣ autoloop <span id="tray-dot">●</span></button></div>
+    <section class="window" id="window" aria-label="agent-autoloop 控制台">
+      <header class="titlebar">
+        <div class="traffic"><button class="traffic-close" data-action="reside" aria-label="关闭窗口并模拟驻留"></button><button class="traffic-min" data-action="minimize" aria-label="模拟最小化"></button><button class="traffic-max" data-action="maximize" aria-label="切换窗口尺寸"></button></div>
+        <span class="window-title">agent-autoloop <span class="muted">/ 指挥台</span></span>
+        <span class="drag-note">拖拽区域示意</span>
+      </header>
+      <div class="prototype-bar"><span><i></i> 交互原型·假数据，不连接真实服务</span><label>演示状态 <select id="demo-state" aria-label="演示状态"><option value="normal">正常</option><option value="empty">空状态</option><option value="offline">断线</option><option value="missing">环境缺失</option></select></label></div>
+      <div class="shell"><aside class="sidebar" id="sidebar"></aside><main id="main" tabindex="-1"></main></div>
+      <footer class="statusbar"><span id="status-text"></span><button data-action="welcome">重新体验首启</button><button data-action="reset">重置演示</button></footer>
+    </section>
+    <section id="residence" class="residence" hidden></section>
+  </div>
+  <dialog id="modal" aria-labelledby="modal-title"><div id="modal-content"></div></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <noscript>此原型需要启用 JavaScript；所有数据仅在本地模拟。</noscript>
+</body>
+</html>

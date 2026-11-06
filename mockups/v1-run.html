@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>agent-autoloop 控制台 — #41 每日早报</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: #11151d;
+    --panel-2: #151a24;
+    --border: #242b3a;
+    --border-soft: #1c2230;
+    --text: #e7eaf2;
+    --muted: #8f97ab;
+    --faint: #5f6678;
+    --blue: #4c8dff;
+    --blue-dim: rgba(76, 141, 255, 0.14);
+    --green: #34c273;
+    --green-dim: rgba(52, 194, 115, 0.13);
+    --amber: #f0a13a;
+    --amber-dim: rgba(240, 161, 58, 0.12);
+    --red: #ef5b52;
+    --red-dim: rgba(239, 91, 82, 0.12);
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #05070a;
+    font-family: var(--sans);
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 20px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .window {
+    width: 1080px;
+    height: 760px;
+    background: var(--bg);
+    border: 1px solid #1a2030;
+    border-radius: 10px;
+    overflow: hidden;
+    display: flex;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+  }
+
+  a { color: inherit; text-decoration: none; }
+  :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 4px; }
+
+  /* ============ 侧边栏（与今天页一致）============ */
+  .sidebar {
+    width: 196px;
+    flex-shrink: 0;
+    background: #0d1118;
+    border-right: 1px solid var(--border-soft);
+    display: flex;
+    flex-direction: column;
+    padding: 18px 12px 14px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px 18px; }
+  .logo {
+    width: 26px; height: 26px;
+    border: 2px solid #6f7d9c;
+    border-radius: 7px;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .logo::after {
+    content: "";
+    position: absolute;
+    right: -4px; bottom: -4px;
+    width: 10px; height: 10px;
+    background: var(--blue);
+    border-radius: 3px;
+    border: 2px solid #0d1118;
+  }
+  .brand-name { font-size: 13px; font-weight: 600; letter-spacing: 0.2px; line-height: 1.25; }
+  .brand-name small {
+    display: block;
+    font-size: 9px; font-weight: 500;
+    color: var(--faint);
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+  .nav { display: flex; flex-direction: column; gap: 2px; }
+  .nav-label {
+    font-size: 10px; color: var(--faint);
+    letter-spacing: 1.6px; text-transform: uppercase;
+    padding: 4px 10px 6px;
+  }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; border-radius: 7px;
+    font-size: 13px; color: var(--muted);
+    transition: background 150ms ease, color 150ms ease;
+  }
+  .nav-item:hover { background: #151b26; color: var(--text); }
+  .nav-item.active { background: #18202f; color: var(--text); font-weight: 600; }
+  .nav-ico { width: 14px; height: 14px; opacity: 0.55; flex-shrink: 0; position: relative; }
+  .nav-item.active .nav-ico { opacity: 1; }
+  .ico-grid::before {
+    content: "";
+    position: absolute;
+    width: 5px; height: 5px;
+    border-radius: 1.5px;
+    background: currentColor;
+    box-shadow: 8px 0 0 currentColor, 0 8px 0 currentColor, 8px 8px 0 currentColor;
+  }
+  .ico-list::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 2px;
+    width: 14px; height: 3px;
+    border-radius: 1.5px;
+    background: currentColor;
+    box-shadow: 0 6px 0 currentColor;
+  }
+  .ico-plus::before, .ico-plus::after {
+    content: "";
+    position: absolute;
+    background: currentColor;
+    border-radius: 1.5px;
+  }
+  .ico-plus::before { left: 6px; top: 0; width: 3px; height: 14px; }
+  .ico-plus::after { left: 0; top: 6px; width: 14px; height: 3px; }
+  .ico-gear { border: 2.5px solid currentColor; border-radius: 50%; width: 10px; height: 10px; margin: 2px; }
+  .ico-gear::after {
+    content: "";
+    position: absolute;
+    inset: 5.5px;
+    width: 3px; height: 3px;
+    background: currentColor;
+    border-radius: 1px;
+  }
+  .nav-item .count {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10px; color: var(--faint);
+    background: #1a2130;
+    padding: 1px 6px; border-radius: 99px;
+  }
+  .nav-item.active .count { color: #aab6cd; background: #222c40; }
+  .sidebar-footer { margin-top: auto; border-top: 1px solid var(--border-soft); padding: 12px 10px 2px; }
+  .conn { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--muted); }
+  .conn-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 6px rgba(52, 194, 115, 0.7);
+    flex-shrink: 0;
+  }
+  .conn-stats { margin-top: 8px; font-family: var(--mono); font-size: 10.5px; color: var(--faint); line-height: 1.7; }
+  .conn-stats b { font-weight: 500; color: var(--muted); }
+
+  /* ============ 内容区 ============ */
+  .main {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    padding: 26px 30px 30px;
+  }
+  .main::-webkit-scrollbar { width: 8px; }
+  .main::-webkit-scrollbar-thumb { background: #1e2534; border-radius: 4px; }
+
+  .crumb {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    color: var(--faint);
+    margin-bottom: 14px;
+    transition: color 150ms ease;
+  }
+  .crumb:hover { color: var(--muted); }
+  .crumb::before { content: "‹"; font-size: 14px; }
+
+  /* 标题区 */
+  .run-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 6px;
+  }
+  .run-id {
+    font-family: var(--mono);
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--faint);
+    background: #161c28;
+    border: 1px solid var(--border-soft);
+    border-radius: 6px;
+    padding: 2px 9px;
+  }
+  .run-title { font-size: 21px; font-weight: 700; letter-spacing: 0.2px; }
+  .badge {
+    font-size: 10.5px; font-weight: 600;
+    padding: 3px 10px; border-radius: 99px;
+    letter-spacing: 0.3px;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .badge-running { color: var(--blue); background: var(--blue-dim); border: 1px solid rgba(76, 141, 255, 0.3); }
+  .badge-running::before {
+    content: "";
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--blue);
+    box-shadow: 0 0 6px rgba(76, 141, 255, 0.9);
+    animation: pulse 1.6s ease infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .badge-done { color: var(--green); background: var(--green-dim); border: 1px solid rgba(52, 194, 115, 0.3); }
+
+  .run-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 18px;
+  }
+  .run-meta .sep { color: var(--faint); }
+  .mono { font-family: var(--mono); font-size: 11px; }
+
+  /* 操作按钮 */
+  .actions { display: flex; gap: 10px; margin-bottom: 26px; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-family: var(--sans);
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 8px 18px;
+    border-radius: 7px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: filter 150ms ease, background 150ms ease;
+  }
+  .btn-primary { background: var(--blue); color: #fff; box-shadow: 0 2px 12px rgba(76, 141, 255, 0.3); }
+  .btn-primary:hover { filter: brightness(1.1); }
+  .btn-danger {
+    background: var(--red-dim);
+    color: var(--red);
+    border-color: rgba(239, 91, 82, 0.35);
+  }
+  .btn-danger:hover { background: rgba(239, 91, 82, 0.2); }
+
+  /* 双栏布局 */
+  .cols {
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    gap: 22px;
+    align-items: start;
+  }
+
+  .sec-head {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 12px;
+  }
+  .sec-title {
+    font-size: 12px; font-weight: 600;
+    letter-spacing: 1.8px; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .sec-head::after {
+    content: "";
+    flex: 1; height: 1px;
+    background: var(--border-soft);
+  }
+
+  .section { margin-bottom: 26px; }
+
+  /* 时间链 */
+  .timeline {
+    background: var(--panel);
+    border: 1px solid var(--border-soft);
+    border-radius: 10px;
+    padding: 18px 20px 6px;
+  }
+  .tl-item {
+    display: flex;
+    gap: 16px;
+    position: relative;
+    padding-bottom: 22px;
+  }
+  .tl-item:last-child { padding-bottom: 16px; }
+  .tl-item::before {
+    content: "";
+    position: absolute;
+    left: 5px; top: 16px; bottom: 0;
+    width: 1.5px;
+    background: var(--border);
+  }
+  .tl-item:last-child::before { display: none; }
+  .tl-node {
+    width: 11px; height: 11px;
+    border-radius: 50%;
+    background: #2a3346;
+    border: 2px solid var(--bg);
+    flex-shrink: 0;
+    margin-top: 4px;
+    position: relative;
+    z-index: 1;
+  }
+  .tl-item.current .tl-node {
+    background: var(--blue);
+    box-shadow: 0 0 0 3px var(--blue-dim), 0 0 8px rgba(76, 141, 255, 0.8);
+  }
+  .tl-time {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--muted);
+    width: 42px;
+    flex-shrink: 0;
+    padding-top: 3px;
+  }
+  .tl-item.current .tl-time { color: var(--blue); }
+  .tl-body { flex: 1; min-width: 0; padding-top: 1px; }
+  .tl-title { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+  .tl-item.current .tl-title { color: #cfe0ff; }
+  .tl-title code, .tl-sub code, .corr-body code {
+    font-family: var(--mono);
+    font-size: 11px;
+    background: #1a2029;
+    border-radius: 4px;
+    padding: 0 5px;
+    color: #b8c2d8;
+  }
+  .tl-sub { font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .tl-sub .k { color: var(--faint); }
+  .tl-src {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10.5px;
+    color: var(--faint);
+    background: #161c28;
+    border: 1px solid var(--border-soft);
+    border-radius: 99px;
+    padding: 1.5px 8px;
+    margin-top: 5px;
+  }
+
+  /* 更正历史 */
+  .corr {
+    background: var(--panel);
+    border: 1px solid rgba(240, 161, 58, 0.25);
+    border-left: 3px solid var(--amber);
+    border-radius: 10px;
+    padding: 14px 18px 15px;
+  }
+  .corr-head {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 8px;
+  }
+  .corr-time { font-family: var(--mono); font-size: 11.5px; font-weight: 600; color: var(--amber); }
+  .corr-who {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.5px;
+    color: var(--amber);
+    background: var(--amber-dim);
+    border: 1px solid rgba(240, 161, 58, 0.3);
+    border-radius: 4px;
+    padding: 1.5px 6px;
+  }
+  .corr-body { font-size: 12.5px; color: var(--text); line-height: 1.7; margin-bottom: 7px; }
+  .corr-body .quote { color: #f5d8ab; }
+  .corr-effect { font-size: 11.5px; color: var(--muted); line-height: 1.65; border-top: 1px dashed var(--border); padding-top: 8px; }
+  .corr-effect .k { color: var(--faint); }
+
+  /* 右栏卡片 */
+  .side-card {
+    background: var(--panel);
+    border: 1px solid var(--border-soft);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin-bottom: 18px;
+  }
+  .side-title {
+    font-size: 12px; font-weight: 600;
+    letter-spacing: 1.8px; text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+  .cost-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 7px 0;
+    border-bottom: 1px dashed var(--border-soft);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .cost-row:last-of-type { border-bottom: none; }
+  .cost-row .v { font-family: var(--mono); font-size: 12.5px; font-weight: 600; color: var(--text); }
+  .cost-total {
+    margin-top: 10px;
+    padding-top: 11px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .cost-total .k { font-size: 11px; color: var(--faint); letter-spacing: 0.5px; }
+  .cost-total .v { font-family: var(--mono); font-size: 17px; font-weight: 700; color: var(--text); }
+
+  .prev-head { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
+  .prev-id {
+    font-family: var(--mono);
+    font-size: 11.5px; font-weight: 600;
+    color: var(--faint);
+    background: #161c28;
+    border: 1px solid var(--border-soft);
+    border-radius: 5px;
+    padding: 1px 7px;
+  }
+  .prev-name { font-size: 13px; font-weight: 600; }
+  .prev-note { font-size: 12px; color: var(--muted); line-height: 1.65; }
+  .prev-note .k { color: var(--faint); font-size: 11px; }
+</style>
+</head>
+<body>
+<div class="window">
+
+  <!-- 侧边栏 -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo"></div>
+      <div class="brand-name">agent-autoloop<small>console</small></div>
+    </div>
+
+    <nav class="nav">
+      <div class="nav-label">菜单</div>
+      <a class="nav-item" href="v1-today.html">
+        <span class="nav-ico ico-grid"></span>今天
+      </a>
+      <a class="nav-item active" href="#">
+        <span class="nav-ico ico-list"></span>任务<span class="count">43</span>
+      </a>
+      <a class="nav-item" href="#">
+        <span class="nav-ico ico-plus"></span>新建
+      </a>
+      <a class="nav-item" href="#">
+        <span class="nav-ico ico-gear"></span>设置
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="conn"><span class="conn-dot"></span>已连接</div>
+      <div class="conn-stats">运行中 <b>1</b> · 排队 <b>2</b></div>
+    </div>
+  </aside>
+
+  <!-- 内容区 -->
+  <main class="main">
+    <a class="crumb" href="v1-today.html">回到今天</a>
+
+    <!-- 标题区 -->
+    <div class="run-head">
+      <span class="run-id">#41</span>
+      <span class="run-title">每日早报</span>
+      <span class="badge badge-running">运行中</span>
+    </div>
+    <div class="run-meta">
+      <span>Agent <b style="font-weight:600;color:var(--text)">Claude Code</b></span>
+      <span class="sep">·</span>
+      <span>开始于 <span class="mono">09:02</span></span>
+      <span class="sep">·</span>
+      <span>第 <span class="mono">1</span> 次尝试</span>
+    </div>
+
+    <!-- 操作 -->
+    <div class="actions">
+      <button class="btn btn-primary">发更正…</button>
+      <button class="btn btn-danger">停止</button>
+    </div>
+
+    <div class="cols">
+      <!-- 左栏 -->
+      <div>
+        <!-- 来龙去脉 -->
+        <section class="section">
+          <div class="sec-head"><span class="sec-title">来龙去脉</span></div>
+          <div class="timeline">
+            <div class="tl-item">
+              <span class="tl-node"></span>
+              <span class="tl-time">09:00</span>
+              <div class="tl-body">
+                <div class="tl-title">事件 <code>feedback.new</code>「反馈 <span class="mono">#47</span>」</div>
+                <div class="tl-sub"><span class="k">来源</span> 飞书</div>
+                <div class="tl-src">事件触发</div>
+              </div>
+            </div>
+            <div class="tl-item">
+              <span class="tl-node"></span>
+              <span class="tl-time">09:01</span>
+              <div class="tl-body">
+                <div class="tl-title">规则「每日早报」接手，派给 Claude Code</div>
+                <div class="tl-sub"><span class="k">队列位置</span> <span class="mono">1</span> · <span class="k">优先级</span> <span class="mono">normal</span></div>
+                <div class="tl-src">规则派发</div>
+              </div>
+            </div>
+            <div class="tl-item current">
+              <span class="tl-node"></span>
+              <span class="tl-time">09:02</span>
+              <div class="tl-body">
+                <div class="tl-title">第 1 次尝试开始（会话 <code>s-8f3k</code>，接续原会话）</div>
+                <div class="tl-sub"><span class="k">已运行</span> <span class="mono">12 分钟</span> · <span class="k">状态</span> 执行中</div>
+                <div class="tl-src">Agent 会话</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 更正历史 -->
+        <section class="section" style="margin-bottom: 4px;">
+          <div class="sec-head"><span class="sec-title">更正历史</span></div>
+          <div class="corr">
+            <div class="corr-head">
+              <span class="corr-time">09:05</span>
+              <span class="corr-who">本人更正</span>
+            </div>
+            <div class="corr-body"><span class="quote">「接口地址应该用 v2，不是 v1」</span></div>
+            <div class="corr-effect">正在跑的那次已叫停，带着更正接着原会话继续</div>
+          </div>
+        </section>
+      </div>
+
+      <!-- 右栏 -->
+      <div>
+        <div class="side-card">
+          <div class="side-title">花费</div>
+          <div class="cost-row"><span>输入</span><span class="v">2.1 万 tokens</span></div>
+          <div class="cost-row"><span>输出</span><span class="v">4,800 tokens</span></div>
+          <div class="cost-total">
+            <span class="k">本轮费用</span>
+            <span class="v">¥0.42</span>
+          </div>
+        </div>
+
+        <div class="side-card">
+          <div class="side-title">上一次</div>
+          <div class="prev-head">
+            <span class="prev-id">#40</span>
+            <span class="prev-name">昨天</span>
+            <span class="badge badge-done" style="margin-left:auto;">完成</span>
+          </div>
+          <div class="prev-note">早报已生成并发到飞书</div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+</div>
+</body>
+</html>

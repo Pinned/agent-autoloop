@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agent-autoloop 控制台 · 今天</title>
+<style>
+  /* ============ Design Tokens ============ */
+  :root{
+    --bg-app:#F6F4EF;            /* 内容区暖纸灰 */
+    --bg-side:#FBFAF7;           /* 侧边栏 */
+    --card:#FFFFFF;
+    --line:#ECE7DF;
+    --line-soft:#F3EFE8;
+    --ink:#25221E;
+    --ink-2:#6E6862;
+    --ink-3:#A39C93;
+    --brand:#E4672F;             /* 柿橙（点缀） */
+    --brand-strong:#C2511F;      /* AA 级深橙（按钮/文字） */
+    --brand-tint:#FBEAE0;
+    --teal-strong:#1F7A6D;
+    --green:#2E8F63;
+    --green-strong:#20684A;
+    --green-tint:#E5F3EB;
+    --amber-strong:#8F6414;
+    --amber-tint:#F8EFDA;
+    --neutral-chip-bg:#EFEAE2;
+    --neutral-chip-ink:#5F5950;
+    --radius:16px;
+    --shadow-card:0 1px 2px rgba(31,26,20,.05), 0 4px 14px rgba(31,26,20,.045);
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{height:100%;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    font-size:15px;color:var(--ink);
+    background:#E7E3DA;
+    min-height:100vh;display:grid;place-items:center;padding:28px;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+  }
+  ::selection{background:rgba(228,103,47,.22);}
+  a{color:inherit;text-decoration:none;}
+
+  /* ============ 窗口框架 ============ */
+  .window{
+    width:1080px;height:760px;flex:none;
+    background:var(--bg-app);
+    border:1px solid rgba(0,0,0,.08);border-radius:12px;overflow:hidden;
+    display:flex;
+    box-shadow:0 24px 60px rgba(31,26,20,.28), 0 4px 14px rgba(31,26,20,.12);
+  }
+
+  /* ============ 侧边栏 ============ */
+  .sidebar{
+    width:218px;flex:none;
+    background:var(--bg-side);border-right:1px solid var(--line);
+    display:flex;flex-direction:column;
+    padding:0 14px 16px;
+  }
+  .traffic{display:flex;gap:8px;align-items:center;padding:18px 8px 16px;}
+  .traffic i{width:12px;height:12px;border-radius:50%;}
+  .t-red{background:#FF5F57;}.t-yellow{background:#FEBC2E;}.t-green{background:#28C840;}
+  .brand{display:flex;align-items:center;gap:10px;padding:0 8px 20px;}
+  .brand-name{font-size:14.5px;font-weight:700;letter-spacing:-.2px;}
+  .nav{display:flex;flex-direction:column;gap:4px;}
+  .nav a{
+    display:flex;align-items:center;gap:10px;
+    padding:9px 12px;border-radius:10px;
+    font-size:14px;font-weight:550;color:var(--ink-2);
+  }
+  .nav a svg{flex:none;opacity:.9;}
+  .nav a:hover{background:#F1EDE5;color:var(--ink);}
+  .nav a:focus-visible{outline:2px solid var(--brand);outline-offset:2px;}
+  .nav a.active{background:var(--brand-tint);color:var(--brand-strong);font-weight:650;}
+  .side-foot{
+    margin-top:auto;background:#F2EEE6;border-radius:12px;padding:12px 13px;
+  }
+  .conn{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:650;}
+  .conn-sub{font-size:12px;color:var(--ink-2);margin-top:3px;}
+
+  /* ============ 通用小件 ============ */
+  .dot{width:8px;height:8px;border-radius:50%;flex:none;}
+  .dot-live{background:var(--green);animation:pulse-green 2.4s infinite;}
+  .dot-run{width:7px;height:7px;background:var(--brand);animation:pulse 2s infinite;}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(228,103,47,.35);}70%{box-shadow:0 0 0 6px rgba(228,103,47,0);}100%{box-shadow:0 0 0 0 rgba(228,103,47,0);}}
+  @keyframes pulse-green{0%{box-shadow:0 0 0 0 rgba(46,143,99,.30);}70%{box-shadow:0 0 0 6px rgba(46,143,99,0);}100%{box-shadow:0 0 0 0 rgba(46,143,99,0);}}
+  .spinner{
+    width:17px;height:17px;flex:none;border-radius:50%;
+    border:2.5px solid #F3D9C8;border-top-color:var(--brand);
+    animation:spin .9s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .chip{
+    display:inline-flex;align-items:center;gap:5px;flex:none;
+    height:22px;padding:0 9px;border-radius:99px;
+    font-size:11.5px;font-weight:650;white-space:nowrap;
+  }
+  .chip-cc{background:var(--brand-tint);color:var(--brand-strong);}
+  .chip-codex{background:#EAEFF2;color:#4E6473;}
+  .chip-done{background:var(--green-tint);color:var(--green-strong);}
+  code{font-family:var(--mono);font-size:12.5px;background:#F4F0E9;padding:1px 6px;border-radius:6px;color:#4F4943;}
+
+  /* ============ 按钮 ============ */
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;
+    height:36px;padding:0 15px;border-radius:10px;
+    font-family:inherit;font-size:13.5px;font-weight:600;
+    cursor:pointer;border:1px solid transparent;white-space:nowrap;
+    transition:background .15s ease,border-color .15s ease,transform .15s ease;
+  }
+  .btn:focus-visible{outline:2px solid var(--brand);outline-offset:2px;}
+  .btn-primary{background:var(--brand-strong);color:#fff;}
+  .btn-primary:hover{background:#AC4518;}
+  .btn-ghost{background:#fff;border-color:#E3DDD2;color:var(--ink);}
+  .btn-ghost:hover{border-color:#CFC7B9;background:#FBFAF7;}
+  .tag-rec{background:rgba(255,255,255,.24);border-radius:99px;font-size:10.5px;padding:2px 7px;margin-left:8px;font-weight:650;}
+
+  /* ============ 内容区 ============ */
+  .content{
+    flex:1;min-width:0;padding:32px 36px 26px;
+    display:flex;flex-direction:column;overflow:auto;
+  }
+  .greeting{display:flex;align-items:center;justify-content:space-between;gap:20px;}
+  .greeting h1{font-size:26px;font-weight:700;letter-spacing:-.4px;}
+  .greet-sub{margin-top:4px;font-size:13.5px;color:var(--ink-2);}
+  .pills{display:flex;gap:10px;}
+  .pill{
+    display:flex;align-items:center;gap:9px;
+    background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:8px 13px;box-shadow:var(--shadow-card);
+  }
+  .pill b{font-size:18px;font-weight:700;letter-spacing:-.3px;line-height:1;}
+  .pill span{font-size:12.5px;color:var(--ink-2);}
+  .c-run{color:var(--brand-strong);}
+  .c-done{color:var(--green-strong);}
+
+  .sec{margin-top:22px;}
+  .sec-head{display:flex;align-items:center;gap:9px;margin-bottom:9px;}
+  .sec-head h2{font-size:13px;font-weight:700;color:#3F3A34;letter-spacing:.02em;}
+  .marker{width:7px;height:7px;border-radius:50%;background:var(--ink-3);flex:none;}
+  .m-brand{background:var(--brand);}
+  .m-amber{background:#D9A93E;}
+  .m-green{background:var(--green);}
+  .count{
+    font-size:11px;font-weight:650;color:var(--ink-2);
+    background:#EDE8DE;border-radius:99px;padding:1px 8px;
+  }
+  .card{
+    background:var(--card);border:1px solid var(--line);
+    border-radius:var(--radius);box-shadow:var(--shadow-card);
+  }
+
+  /* ============ 等你决定 ============ */
+  .decide{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  .dcard{padding:17px 20px;display:flex;flex-direction:column;gap:8px;}
+  .dcard h3{font-size:17px;font-weight:650;letter-spacing:-.2px;}
+  .dcard p{font-size:14px;line-height:1.62;color:var(--ink-2);}
+  .dactions{display:flex;gap:10px;margin-top:auto;padding-top:7px;flex-wrap:wrap;}
+  .meter-row{display:flex;justify-content:space-between;font-size:12px;color:var(--ink-2);margin-top:1px;}
+  .meter-num{font-weight:700;color:var(--amber-strong);}
+  .meter{height:6px;background:#F1ECE3;border-radius:99px;overflow:hidden;}
+  .meter i{display:block;height:100%;width:88%;border-radius:99px;background:linear-gradient(90deg,#E9B34D,#DD8F2E);}
+
+  /* ============ 正在跑 ============ */
+  .run-card{position:relative;overflow:hidden;padding:15px 20px 19px;}
+  .run-row{display:flex;align-items:center;gap:12px;}
+  .row-id{font-size:14.5px;font-weight:650;letter-spacing:-.1px;white-space:nowrap;}
+  .row-sub{font-size:13px;color:var(--ink-2);white-space:nowrap;}
+  .flex-sp{flex:1;}
+  .link-more{font-size:13px;font-weight:600;color:var(--brand-strong);display:inline-flex;align-items:center;}
+  .link-more:hover{text-decoration:underline;}
+  .chev{font-size:15px;line-height:1;margin-left:2px;transform:translateY(-.5px);}
+  .progress{
+    position:absolute;left:20px;right:20px;bottom:6px;height:3px;
+    border-radius:99px;background:#F3EEE6;overflow:hidden;
+  }
+  .progress i{display:block;height:100%;width:34%;border-radius:99px;background:var(--brand);animation:slide 1.8s ease-in-out infinite;}
+  @keyframes slide{0%{transform:translateX(-110%);}100%{transform:translateX(320%);}}
+
+  /* ============ 列表行 ============ */
+  .list{padding:2px 18px;}
+  .row{display:flex;align-items:center;gap:12px;padding:12px 0;}
+  .list .row + .row{border-top:1px solid var(--line-soft);}
+  .lead{
+    width:28px;height:28px;border-radius:9px;flex:none;
+    display:inline-flex;align-items:center;justify-content:center;
+  }
+  .lead-amber{background:var(--amber-tint);color:var(--amber-strong);}
+  .lead-green{background:var(--green-tint);color:var(--green-strong);}
+
+  @media (prefers-reduced-motion: reduce){
+    *{animation-duration:.01ms !important;animation-iteration-count:1 !important;}
+  }
+</style>
+</head>
+<body>
+  <div class="window">
+
+    <!-- ===== 侧边栏 ===== -->
+    <aside class="sidebar">
+      <div class="traffic" aria-hidden="true"><i class="t-red"></i><i class="t-yellow"></i><i class="t-green"></i></div>
+      <div class="brand">
+        <svg width="30" height="30" viewBox="0 0 30 30" aria-hidden="true">
+          <rect width="30" height="30" rx="9" fill="#E4672F"/>
+          <path d="M8.5 17.5a6.5 6.5 0 0 1 13 0" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
+          <line x1="6.6" y1="17.5" x2="8.5" y2="17.5" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
+          <line x1="21.5" y1="17.5" x2="23.4" y2="17.5" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
+          <g stroke="#fff" stroke-width="2.2" stroke-linecap="round">
+            <line x1="15" y1="7.4" x2="15" y2="9.8"/>
+            <line x1="9.6" y1="9.5" x2="11.3" y2="11.2"/>
+            <line x1="20.4" y1="9.5" x2="18.7" y2="11.2"/>
+          </g>
+        </svg>
+        <span class="brand-name">agent-autoloop</span>
+      </div>
+      <nav class="nav" aria-label="主导航">
+        <a class="active" aria-current="page">
+          <svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="9" cy="9.5" r="3.3"/><path d="M9 2.6v1.8M9 14.6v1.8M2.9 9.5h1.8M13.3 9.5h1.8M4.6 5.1l1.3 1.3M12.1 6.4l1.3-1.3M4.6 13.9l1.3-1.3M12.1 12.6l1.3 1.3"/></svg>
+          <span>今天</span>
+        </a>
+        <a>
+          <svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M6.6 5h8.4M6.6 9h8.4M6.6 13h5.4"/><circle cx="3.1" cy="5" r="1.1" fill="currentColor" stroke="none"/><circle cx="3.1" cy="9" r="1.1" fill="currentColor" stroke="none"/><circle cx="3.1" cy="13" r="1.1" fill="currentColor" stroke="none"/></svg>
+          <span>任务</span>
+        </a>
+        <a>
+          <svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="9" cy="9" r="6.5"/><path d="M9 6.1v5.8M6.1 9h5.8"/></svg>
+          <span>新建</span>
+        </a>
+        <a>
+          <svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 5.1h12M3 12.9h12"/><circle cx="11.6" cy="5.1" r="2" fill="currentColor" stroke="none"/><circle cx="6.4" cy="12.9" r="2" fill="currentColor" stroke="none"/></svg>
+          <span>设置</span>
+        </a>
+      </nav>
+      <div class="side-foot">
+        <div class="conn"><span class="dot dot-live"></span>已连接</div>
+        <div class="conn-sub">运行中 1 · 排队 2</div>
+      </div>
+    </aside>
+
+    <!-- ===== 内容区 ===== -->
+    <main class="content">
+
+      <!-- 问候 / 概览 -->
+      <header class="greeting">
+        <div>
+          <h1>早上好</h1>
+          <p class="greet-sub">11 月 4 日 周三 · 今天 12 轮 · 8.6 万 tokens · ¥2.9</p>
+        </div>
+        <div class="pills">
+          <div class="pill"><b class="c-run">1</b><span>运行中</span></div>
+          <div class="pill"><b>2</b><span>排队</span></div>
+          <div class="pill"><b class="c-done">4</b><span>今天完成</span></div>
+        </div>
+      </header>
+
+      <!-- 等你决定 -->
+      <section class="sec">
+        <div class="sec-head"><span class="marker m-brand"></span><h2>等你决定</h2><span class="count">2</span></div>
+        <div class="decide">
+          <div class="card dcard">
+            <h3>发布还是先修？</h3>
+            <p>早报脚本报错：日报里 API 用量统计是空的，但正文都正常。</p>
+            <div class="dactions">
+              <button class="btn btn-primary">照常发布<span class="tag-rec">推荐</span></button>
+              <button class="btn btn-ghost">先修统计</button>
+              <button class="btn btn-ghost">我来处理</button>
+            </div>
+          </div>
+          <div class="card dcard">
+            <h3>磁盘快满了</h3>
+            <p>本机磁盘剩余 12%，建议清理 node_modules 和旧构建产物。</p>
+            <div class="meter-row"><span>本机磁盘</span><span class="meter-num">剩余 12%</span></div>
+            <div class="meter"><i></i></div>
+            <div class="dactions">
+              <button class="btn btn-ghost">已处理</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 正在跑 -->
+      <section class="sec">
+        <div class="sec-head"><span class="marker m-brand"></span><h2>正在跑</h2><span class="count">1</span></div>
+        <div class="card run-card">
+          <div class="run-row">
+            <span class="spinner" aria-hidden="true"></span>
+            <span class="row-id">#41 每日早报</span>
+            <span class="chip chip-cc">Claude Code</span>
+            <span class="row-sub">运行中 12 分钟 · 第 1 次尝试</span>
+            <span class="flex-sp"></span>
+            <a class="link-more">查看详情<span class="chev">›</span></a>
+          </div>
+          <div class="progress" aria-hidden="true"><i></i></div>
+        </div>
+      </section>
+
+      <!-- 排队 -->
+      <section class="sec">
+        <div class="sec-head"><span class="marker m-amber"></span><h2>排队</h2><span class="count">2</span></div>
+        <div class="card list">
+          <div class="row">
+            <span class="lead lead-amber">
+              <svg width="14" height="14" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="6.4"/><path d="M9 5.4V9l2.5 1.7"/></svg>
+            </span>
+            <span class="row-id">#42 每周清理</span>
+            <span class="row-sub">定时 · 周日 22:00</span>
+            <span class="flex-sp"></span>
+            <span class="chip chip-codex">Codex</span>
+          </div>
+          <div class="row">
+            <span class="lead lead-amber">
+              <svg width="14" height="14" viewBox="0 0 18 18" fill="currentColor"><path d="M10.4 2 4.6 10.3h3.2L7 16l5.9-8.3H9.6L10.4 2z"/></svg>
+            </span>
+            <span class="row-id">#43 网站巡检</span>
+            <span class="row-sub">事件 <code>push.done</code></span>
+            <span class="flex-sp"></span>
+            <span class="chip chip-cc">Claude Code</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 最近完成 -->
+      <section class="sec">
+        <div class="sec-head"><span class="marker m-green"></span><h2>最近完成</h2></div>
+        <div class="card list">
+          <div class="row">
+            <span class="lead lead-green">
+              <svg width="14" height="14" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 9.6 7.6 12.6 13.5 6"/></svg>
+            </span>
+            <span class="row-id">#40 每日早报</span>
+            <span class="row-sub">早报已生成并发到飞书</span>
+            <span class="flex-sp"></span>
+            <span class="chip chip-done">完成</span>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</body>
+</html>
