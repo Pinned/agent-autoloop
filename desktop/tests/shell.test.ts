@@ -86,6 +86,7 @@ test("close stays resident; quit cancellation and concurrent requests cannot byp
   assert.equal(restored, 1);
   const first = lifecycle.requestQuit();
   const duplicate = lifecycle.requestQuit();
+  assert.strictEqual(duplicate, first);
   assert.equal(confirmed, 1);
   answer(false);
   await Promise.all([first, duplicate]);
@@ -98,6 +99,175 @@ test("close stays resident; quit cancellation and concurrent requests cannot byp
   assert.equal(lifecycle.quitting, true);
   assert.equal(lifecycle.close(), true);
 });
+
+test("quit waits for preparation; concurrent requests, close and restore stay safe throughout", async () => {
+  let hidden = 0,
+    restored = 0,
+    exited = 0,
+    confirmed = 0,
+    prepared = 0;
+  let answer!: (value: boolean) => void;
+  let finish!: (value: boolean) => void;
+  let started!: () => void;
+  const preparing = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const lifecycle = createLifecycle({
+    hide: () => hidden++,
+    restore: () => restored++,
+    exit: () => {
+      assert.equal(lifecycle.quitting, true);
+      exited++;
+    },
+    confirm: () => {
+      confirmed++;
+      return new Promise<boolean>((resolve) => {
+        answer = resolve;
+      });
+    },
+    prepareQuit: () => {
+      prepared++;
+      started();
+      return new Promise<boolean>((resolve) => {
+        finish = resolve;
+      });
+    },
+  });
+  const first = lifecycle.requestQuit();
+  assert.strictEqual(lifecycle.requestQuit(), first);
+  assert.equal(confirmed, 1);
+  assert.equal(prepared, 0);
+  assert.equal(lifecycle.quitting, false);
+  assert.equal(lifecycle.close(), false);
+  lifecycle.restore();
+  answer(true);
+  await Promise.resolve();
+  assert.equal(prepared, 1);
+  await preparing;
+  assert.strictEqual(lifecycle.requestQuit(), first);
+  assert.equal(confirmed, 1);
+  assert.equal(prepared, 1);
+  assert.equal(exited, 0);
+  assert.equal(lifecycle.quitting, false);
+  assert.equal(lifecycle.close(), false);
+  lifecycle.restore();
+  assert.equal(hidden, 2);
+  assert.equal(restored, 2);
+  finish(true);
+  await first;
+  assert.equal(exited, 1);
+  assert.equal(lifecycle.quitting, true);
+  assert.equal(lifecycle.close(), true);
+  assert.equal(hidden, 2);
+  await lifecycle.requestQuit();
+  assert.equal(confirmed, 1);
+  assert.equal(prepared, 1);
+  assert.equal(exited, 1);
+});
+
+test("cancelled confirmation skips preparation and releases the pending request for retry", async () => {
+  let confirmed = 0,
+    prepared = 0,
+    exited = 0;
+  const lifecycle = createLifecycle({
+    hide: () => {},
+    restore: () => {},
+    exit: () => exited++,
+    confirm: async () => ++confirmed > 1,
+    prepareQuit: async () => {
+      prepared++;
+      return true;
+    },
+  });
+  const cancelled = lifecycle.requestQuit();
+  assert.strictEqual(lifecycle.requestQuit(), cancelled);
+  await cancelled;
+  assert.equal(prepared, 0);
+  assert.equal(exited, 0);
+  assert.equal(lifecycle.quitting, false);
+  const retry = lifecycle.requestQuit();
+  assert.notStrictEqual(retry, cancelled);
+  await retry;
+  assert.equal(confirmed, 2);
+  assert.equal(prepared, 1);
+  assert.equal(exited, 1);
+  assert.equal(lifecycle.quitting, true);
+});
+
+test("unsuccessful preparation keeps the app resident and allows a confirmed retry", async () => {
+  let confirmed = 0,
+    prepared = 0,
+    exited = 0,
+    hidden = 0,
+    restored = 0;
+  const lifecycle = createLifecycle({
+    hide: () => hidden++,
+    restore: () => restored++,
+    exit: () => exited++,
+    confirm: async () => {
+      confirmed++;
+      return true;
+    },
+    prepareQuit: async () => ++prepared > 1,
+  });
+  const first = lifecycle.requestQuit();
+  await first;
+  assert.equal(confirmed, 1);
+  assert.equal(prepared, 1);
+  assert.equal(exited, 0);
+  assert.equal(lifecycle.quitting, false);
+  assert.equal(lifecycle.close(), false);
+  lifecycle.restore();
+  assert.equal(hidden, 1);
+  assert.equal(restored, 1);
+  const retry = lifecycle.requestQuit();
+  assert.notStrictEqual(retry, first);
+  assert.strictEqual(lifecycle.requestQuit(), retry);
+  await retry;
+  assert.equal(confirmed, 2);
+  assert.equal(prepared, 2);
+  assert.equal(exited, 1);
+  assert.equal(lifecycle.quitting, true);
+});
+
+for (const failure of ["throw", "reject"] as const) {
+  test(`preparation ${failure} does not quit and releases the pending request for retry`, async () => {
+    let confirmed = 0,
+      prepared = 0,
+      exited = 0;
+    const error = new Error("preparation failed");
+    const lifecycle = createLifecycle({
+      hide: () => {},
+      restore: () => {},
+      exit: () => exited++,
+      confirm: async () => {
+        confirmed++;
+        return true;
+      },
+      prepareQuit: () => {
+        prepared++;
+        if (prepared > 1) return Promise.resolve(true);
+        if (failure === "throw") throw error;
+        return Promise.reject(error);
+      },
+    });
+    const first = lifecycle.requestQuit();
+    assert.strictEqual(lifecycle.requestQuit(), first);
+    await assert.rejects(first, (caught) => caught === error);
+    assert.equal(confirmed, 1);
+    assert.equal(prepared, 1);
+    assert.equal(exited, 0);
+    assert.equal(lifecycle.quitting, false);
+    assert.equal(lifecycle.close(), false);
+    const retry = lifecycle.requestQuit();
+    assert.notStrictEqual(retry, first);
+    await retry;
+    assert.equal(confirmed, 2);
+    assert.equal(prepared, 2);
+    assert.equal(exited, 1);
+    assert.equal(lifecycle.quitting, true);
+  });
+}
 
 test("theme storage persists only a validated preference and fails closed on corrupt content", () => {
   const home = mkdtempSync(join(tmpdir(), "autoloop-desktop-pref-"));

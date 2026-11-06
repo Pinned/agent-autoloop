@@ -1,4 +1,10 @@
-export function createLifecycle(actions: { hide(): void; restore(): void; exit(): void; confirm(): Promise<boolean> }) {
+export function createLifecycle(actions: {
+  hide(): void;
+  restore(): void;
+  exit(): void;
+  confirm(): Promise<boolean>;
+  prepareQuit?(): Promise<boolean>;
+}) {
   let quitting = false;
   let pending: Promise<void> | undefined;
   return {
@@ -18,11 +24,11 @@ export function createLifecycle(actions: { hide(): void; restore(): void; exit()
       if (pending) return pending;
       pending = actions
         .confirm()
-        .then((confirmed) => {
-          if (confirmed) {
-            quitting = true;
-            actions.exit();
-          }
+        .then(async (confirmed) => {
+          if (!confirmed) return;
+          if (actions.prepareQuit && (await actions.prepareQuit()) !== true) return;
+          quitting = true;
+          actions.exit();
         })
         .finally(() => {
           pending = undefined;
