@@ -31,6 +31,30 @@ test("isolated smoke verifies second process and uses confirmed normal quit rath
   assert.match(driver, /DESKTOP_SMOKE_CANCEL_RESIDENT/);
 });
 
+test("native runtime is opt-in, isolated and not connected to the renderer", () => {
+  const main = read("../src/main.ts");
+  assert.match(main, /enabled: !app\.isPackaged && !!home && !smoke/);
+  assert.match(main, /join\(prefsHome, "runtime-home"\)/);
+  assert.match(main, /HOME: runtimeHome, USERPROFILE: runtimeHome/);
+  assert.match(main, /mkdtemp\(join\(prefsHome, "runtime resources "\)\)/);
+  assert.match(main, /copySources\(join\(base, "\.\.", "\.\."\), resources\)/);
+  assert.match(main, /entryPath: join\(resources, "bin", "agent-autoloop\.ts"\)/);
+  assert.doesNotMatch(main, /join\(resources, "bin", "cli\.ts"\)/);
+  assert.match(main, /cacheDir: join\(base, "\.\.", "\.cache", "runtime"\), ownCleanup/);
+  assert.match(main, /await import\(resourcesModule\)/);
+  assert.doesNotMatch(main, /from ["'].*host\/(?:runtime|config)["']/);
+  assert.doesNotMatch(read("../dist/main.js"), /Usage: node runtime\.mjs|host\/config\.ts|function checkRuntime/);
+  assert.match(main, /启动运行服务/);
+  assert.match(main, /停止本机运行服务/);
+  assert.match(main, /prepareQuit: async/);
+  assert.match(main, /await controller\.stop\(\)/);
+  assert.match(main, /defaultId: 0/);
+  assert.match(main, /远程队列不会取消/);
+  assert.match(main, /离线持久待同步/);
+  assert.doesNotMatch(main, /restartPolicy|controller\.restart|channels\.runtime/);
+  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 3);
+});
+
 test("built preload is a single CommonJS file requiring only Electron", () => {
   const preload = read("../dist/preload.cjs");
   const requires = [...preload.matchAll(/require\(["']([^"']+)["']\)/g)].map((match) => match[1]);

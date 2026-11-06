@@ -25,7 +25,16 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 const exec = promisify(execFile);
 export const NODE_VERSION = "v24.22.2";
-export const SOURCE_ENTRIES = Object.freeze(["kernel", "host", "protocol", "worker", "plugins", "package.json"]);
+export const SOURCE_ENTRIES = Object.freeze([
+  "kernel",
+  "host",
+  "protocol",
+  "worker",
+  "plugins",
+  "bin",
+  "cli",
+  "package.json",
+]);
 const repository = fileURLToPath(new URL("../../", import.meta.url));
 const defaultCache = fileURLToPath(new URL("../.cache/runtime/", import.meta.url));
 const sha = (data) => createHash("sha256").update(data).digest("hex");
@@ -314,9 +323,77 @@ export async function ensureRuntime(options = {}) {
       throw new Error("Runtime cache locked; retry after current download, or remove stale lock explicitly");
     throw error;
   }
-  let stage;
-  const identityHome = await mkdtemp(join(cache, ".identity home "));
+  // Register ownership before any fallible preparation. Cleanup cannot race ongoing writes.
+  const owned = new Map([["lock", { path: lock, identity: undefined }]]);
+  let preparationDone;
+  const prepared = new Promise((resolvePrepared) => {
+    preparationDone = resolvePrepared;
+  });
+  let cleaning;
+  let failure;
+  const cleanup = () => {
+    if (!cleaning) {
+      cleaning = (async () => {
+        await prepared;
+        const errors = [];
+        for (const name of ["stage", "home", "lock"]) {
+          const resource = owned.get(name);
+          if (!resource) continue;
+          try {
+            await safeDirectory(dirname(resource.path));
+            let current;
+            try {
+              current = await lstat(resource.path);
+            } catch (error) {
+              if (error.code !== "ENOENT") throw error;
+              owned.delete(name);
+              continue;
+            }
+            if (
+              !resource.identity ||
+              current.isSymbolicLink() ||
+              !current.isDirectory() ||
+              current.dev !== resource.identity.dev ||
+              current.ino !== resource.identity.ino
+            )
+              throw new Error("Runtime cleanup ownership mismatch; refusing to remove replaced resource");
+            await rm(resource.path, { recursive: true, force: true });
+            owned.delete(name);
+          } catch (error) {
+            errors.push(error);
+          }
+        }
+        if (errors.length) {
+          const error = new AggregateError(errors, "Runtime cleanup incomplete; ownership retained for retry", {
+            cause: failure,
+          });
+          error.name = "RuntimeCleanupError";
+          error.retryCleanup = cleanup;
+          Object.defineProperty(error, "cleanupPending", {
+            get: () => [...owned.values()].map((resource) => resource.path),
+          });
+          throw error;
+        }
+      })().finally(() => {
+        cleaning = undefined;
+      });
+    }
+    return cleaning;
+  };
+  async function capture(name, path) {
+    const resource = { path, identity: undefined };
+    owned.set(name, resource);
+    resource.identity = await lstat(path);
+  }
+  let stage, identityHome;
   try {
+    try {
+      options.ownCleanup?.(cleanup);
+    } finally {
+      await capture("lock", lock);
+    }
+    identityHome = await mkdtemp(join(cache, ".identity home "));
+    await capture("home", identityHome);
     const install = join(cache, target.root);
     let exists = false;
     try {
@@ -327,6 +404,7 @@ export async function ensureRuntime(options = {}) {
     }
     if (!exists) {
       stage = await mkdtemp(join(cache, ".download-"));
+      await capture("stage", stage);
       const download = options.download ?? downloadOfficial;
       const bytes = Buffer.from(await download(target.url));
       const sums = Buffer.from(await download(target.sumsUrl));
@@ -349,10 +427,12 @@ export async function ensureRuntime(options = {}) {
     const node = join(install, "bin/node");
     const identity = await verifyRuntime(node, target, archiveEntries(bytes, target.root), identityHome);
     return { ...target, node, checksum, identity };
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
-    if (stage) await rm(stage, { recursive: true, force: true });
-    await rm(identityHome, { recursive: true, force: true });
-    await rm(lock, { recursive: true, force: true });
+    preparationDone();
+    await cleanup();
   }
 }
 

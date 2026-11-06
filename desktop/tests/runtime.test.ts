@@ -4,8 +4,11 @@ import { test } from "node:test";
 import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { gzipSync } from "node:zlib";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+const exec = promisify(execFile);
 const runtime = await import("../scripts/runtime.mjs");
 
 function tar(entries: { name: string; type?: string; target?: string; data?: string }[]) {
@@ -204,6 +207,319 @@ test("cache reuse rejects a substituted binary without downloading or executing 
       /binary does not match official archive/,
     );
     await assert.rejects(access(join(dir, `${root}.lock`)));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+async function cleanupFaultCase(scenario: string) {
+  // Isolate module mocks in an official-Node subprocess; production gets no filesystem injection seam.
+  const { stdout } = await exec(
+    process.execPath,
+    [
+      "--experimental-test-module-mocks",
+      "--input-type=module",
+      "-e",
+      `
+import assert from "node:assert/strict";
+import { mock } from "node:test";
+import * as fs from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const dir = await fs.mkdtemp(join(tmpdir(), "runtime cleanup fault "));
+const cache = join(dir, "cache");
+let failIdentity = false;
+let failCapture;
+const failures = new Set();
+const attempts = [];
+const owned = new Map();
+let cleanup;
+let downloads = 0;
+const kind = (path) => String(path).includes(".download-") ? "stage" : String(path).includes(".identity home ") ? "home" : "lock";
+const injected = (what) => Object.assign(new Error("injected " + what), { code: "EACCES" });
+mock.module("node:fs/promises", { namedExports: {
+  ...fs,
+  lstat: async (path, ...args) => {
+    if (failCapture && kind(path) === failCapture &&
+      (String(path).endsWith(".lock") && String(path).includes("node-v") || owned.get(failCapture) === path)) {
+      failCapture = undefined;
+      throw injected("initial identity capture");
+    }
+    return fs.lstat(path, ...args);
+  },
+  mkdtemp: async (prefix, ...args) => {
+    if (failIdentity && prefix.includes(".identity home ")) throw injected("identity preparation");
+    const path = await fs.mkdtemp(prefix, ...args);
+    owned.set(kind(path), path);
+    return path;
+  },
+  rm: async (path, ...args) => {
+    const name = kind(path);
+    attempts.push(name);
+    if (failures.has(name)) throw injected(name + " cleanup");
+    return fs.rm(path, ...args);
+  },
+}});
+const runtime = await import(${JSON.stringify(new URL("../scripts/runtime.mjs", import.meta.url).href)});
+const lock = join(cache, runtime.runtimeTarget().root + ".lock");
+const options = {
+  cacheDir: cache,
+  ownCleanup: (fn) => { cleanup = fn; },
+  download: async () => { downloads++; return Buffer.from("bad"); },
+};
+try {
+${scenario}
+  console.log("fault case passed");
+} finally {
+  await fs.rm(dir, { recursive: true, force: true });
+}
+`,
+    ],
+    { timeout: 20_000, maxBuffer: 1024 * 1024 },
+  );
+  assert.equal(stdout.trim(), "fault case passed");
+}
+
+test("identity preparation failure releases its lock and permits another attempt", async () => {
+  await cleanupFaultCase(`
+  failIdentity = true;
+  await assert.rejects(runtime.ensureRuntime(options), /injected identity preparation/);
+  assert.equal(typeof cleanup, "function");
+  await assert.rejects(fs.access(lock), /ENOENT/);
+  failIdentity = false;
+  await assert.rejects(runtime.ensureRuntime(options), /SHA256/);
+  assert.equal(downloads, 2);
+  await cleanup();
+  `);
+});
+
+test("stage cleanup failure cannot skip identity home or lock; owner retries only the remaining stage", async () => {
+  await cleanupFaultCase(`
+  failures.add("stage");
+  let error;
+  try { await runtime.ensureRuntime(options); } catch (caught) { error = caught; }
+  assert.equal(error.name, "RuntimeCleanupError");
+  assert.match(error.cause.message, /SHA256/);
+  assert.deepEqual(attempts, ["stage", "home", "lock"]);
+  assert.deepEqual(error.cleanupPending, [owned.get("stage")]);
+  await assert.rejects(fs.access(owned.get("home")), /ENOENT/);
+  await assert.rejects(fs.access(lock), /ENOENT/);
+  await assert.rejects(cleanup(), /cleanup/i);
+  failures.clear();
+  await Promise.all([cleanup(), error.retryCleanup(), cleanup()]);
+  assert.deepEqual(attempts, ["stage", "home", "lock", "stage", "stage"]);
+  assert.deepEqual(error.cleanupPending, []);
+  await cleanup();
+  `);
+});
+
+test("CLI cleanup failures preserve all retry evidence and never delete a subsequent owner's lock", async () => {
+  await cleanupFaultCase(`
+  failures.add("stage"); failures.add("home"); failures.add("lock");
+  let error;
+  try { await runtime.ensureRuntime({ ...options, ownCleanup: undefined }); } catch (caught) { error = caught; }
+  assert.equal(error.name, "RuntimeCleanupError");
+  assert.equal(error.errors.length, 3);
+  assert.equal(error.cleanupPending.length, 3);
+  assert.deepEqual(attempts, ["stage", "home", "lock"]);
+  await assert.rejects(error.retryCleanup(), /cleanup/i);
+  failures.clear();
+  await error.retryCleanup();
+  assert.deepEqual(error.cleanupPending, []);
+  await fs.mkdir(lock);
+  await fs.writeFile(join(lock, "foreign"), "keep");
+  await error.retryCleanup();
+  assert.equal(await fs.readFile(join(lock, "foreign"), "utf8"), "keep");
+  `);
+});
+
+test("cleanup rejects replaced owned directories instead of removing another owner's resources", async () => {
+  await cleanupFaultCase(`
+  failures.add("stage"); failures.add("home"); failures.add("lock");
+  let error;
+  try { await runtime.ensureRuntime(options); } catch (caught) { error = caught; }
+  failures.clear();
+  const paths = [owned.get("stage"), owned.get("home"), lock];
+  for (const path of paths) {
+    await fs.rename(path, path + ".original");
+    await fs.mkdir(path);
+    await fs.writeFile(join(path, "foreign"), "keep");
+  }
+  await assert.rejects(cleanup(), /ownership/i);
+  assert.equal(error.cleanupPending.length, 3);
+  for (const path of paths) assert.equal(await fs.readFile(join(path, "foreign"), "utf8"), "keep");
+  for (const path of paths) {
+    await fs.rm(path, { recursive: true });
+    await fs.rename(path + ".original", path);
+  }
+  await cleanup();
+  assert.deepEqual(error.cleanupPending, []);
+  `);
+});
+
+test("registration failure is inside owned cleanup and an existing foreign lock is never registered", async () => {
+  await cleanupFaultCase(`
+  await assert.rejects(runtime.ensureRuntime({ ...options, ownCleanup: () => { throw new Error("owner registration"); } }), /owner registration/);
+  await assert.rejects(fs.access(lock), /ENOENT/);
+  await fs.mkdir(lock);
+  cleanup = undefined;
+  await assert.rejects(runtime.ensureRuntime(options), /cache locked/i);
+  assert.equal(cleanup, undefined);
+  await fs.access(lock);
+  `);
+});
+
+test("owner cleanup waits for in-flight preparation before releasing the lock", async () => {
+  await cleanupFaultCase(`
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let entered;
+  const started = new Promise((resolve) => { entered = resolve; });
+  const operation = runtime.ensureRuntime({ ...options, download: async () => { entered(); await gate; return Buffer.from("bad"); } });
+  const rejected = assert.rejects(operation, /SHA256/);
+  await started;
+  const cleaning = cleanup();
+  await new Promise((resolve) => setImmediate(resolve));
+  await fs.access(lock);
+  assert.deepEqual(attempts, []);
+  release();
+  await Promise.all([rejected, cleaning]);
+  assert.deepEqual(attempts, ["stage", "home", "lock"]);
+  `);
+});
+
+test("controller keeps failed runtime cleanup unknown until a real retry succeeds, without spawning", async () => {
+  await cleanupFaultCase(`
+  const { createRuntimeControl, SAFE_STOP_ERROR } = await import(${JSON.stringify(new URL("../src/runtime-control.ts", import.meta.url).href)});
+  const home = join(dir, "business home");
+  await fs.mkdir(home);
+  await fs.writeFile(join(home, "config.json"), "not JSON: metadata only");
+  let spawned = 0;
+  const control = createRuntimeControl({
+    home, enabled: true,
+    prepare: async (ownCleanup) => {
+      await runtime.ensureRuntime({ ...options, ownCleanup });
+      assert.fail("invalid archive must not prepare a supervisor");
+    },
+    supervisorFactory: () => { spawned++; assert.fail("must not spawn"); },
+  });
+  failures.add("stage"); failures.add("home"); failures.add("lock");
+  const state = await control.start();
+  assert.equal(state.status, "unknown");
+  assert.equal(state.error, SAFE_STOP_ERROR);
+  assert.equal(JSON.stringify(state).includes(cache), false);
+  assert.equal(await control.stop(), false);
+  assert.equal(await control.stop(), false);
+  assert.equal(control.getState().status, "unknown");
+  assert.equal(await fs.readFile(join(home, "config.json"), "utf8"), "not JSON: metadata only");
+  assert.equal(spawned, 0);
+  assert.equal(downloads, 2);
+  assert.equal((await fs.readdir(cache)).length, 3);
+  failures.clear();
+  assert.equal(await control.stop(), true);
+  assert.deepEqual(await fs.readdir(cache), []);
+  assert.equal((await control.start()).status, "failed");
+  assert.equal(downloads, 4);
+  assert.equal(spawned, 0);
+  assert.equal(await control.stop(), true);
+  assert.deepEqual(await fs.readdir(cache), []);
+  `);
+});
+
+for (const resource of ["lock", "home", "stage"]) {
+  test(`initial ${resource} identity capture failure stays unknown without guessing ownership or leaking paths`, async () => {
+    await cleanupFaultCase(`
+    const { createRuntimeControl, SAFE_STOP_ERROR } = await import(${JSON.stringify(new URL("../src/runtime-control.ts", import.meta.url).href)});
+    const home = join(dir, "business home");
+    await fs.mkdir(home);
+    await fs.writeFile(join(home, "config.json"), "metadata only");
+    let error;
+    const control = createRuntimeControl({
+      home, enabled: true,
+      prepare: async (ownCleanup) => {
+        try {
+          await runtime.ensureRuntime({ ...options, ownCleanup });
+        } catch (caught) { error = caught; throw caught; }
+        assert.fail("must not prepare with unknown ownership");
+      },
+      supervisorFactory: () => { assert.fail("must not spawn"); },
+    });
+    failCapture = ${JSON.stringify(resource)};
+    const state = await control.start();
+    assert.equal(failCapture, undefined);
+    assert.equal(state.status, "unknown");
+    assert.equal(state.error, SAFE_STOP_ERROR);
+    assert.equal(JSON.stringify(state).includes(dir), false);
+    assert.equal(error.name, "RuntimeCleanupError");
+    assert.match(error.cause.message, /initial identity capture/);
+    const path = ${resource === "lock" ? "lock" : `owned.get(${JSON.stringify(resource)})`};
+    assert.deepEqual(error.cleanupPending, [path]);
+    assert.equal(downloads, 0);
+    // Restored metadata does not prove the original identity: remain fail-closed for manual inspection.
+    for (let retry = 0; retry < 2; retry++) {
+      await assert.rejects(error.retryCleanup(), /ownership/i);
+      assert.equal(await control.stop(), false);
+      assert.equal(control.getState().status, "unknown");
+      assert.equal(control.getState().error, SAFE_STOP_ERROR);
+      await fs.access(path);
+    }
+    assert.equal(attempts.includes(${JSON.stringify(resource)}), false);
+    await fs.rename(path, path + ".original");
+    await fs.mkdir(path);
+    await fs.writeFile(join(path, "foreign"), "keep");
+    assert.equal(await control.stop(), false);
+    await assert.rejects(error.retryCleanup(), /ownership/i);
+    assert.equal(await fs.readFile(join(path, "foreign"), "utf8"), "keep");
+    await fs.access(path + ".original");
+    assert.deepEqual(error.cleanupPending, [path]);
+    assert.equal((await control.start()).status, "unknown");
+    assert.equal(downloads, 0);
+    `);
+  });
+}
+
+test("source copy preserves the original bin entry, all CLI TS and schema/hash sources without extra trees", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "runtime CLI sources "));
+  try {
+    const source = join(dir, "source");
+    const dest = join(dir, "copied resources with spaces");
+    for (const name of runtime.SOURCE_ENTRIES) {
+      if (name === "package.json") await writeFile(join(source, name), '{"type":"module"}');
+      else await mkdir(join(source, name), { recursive: true });
+    }
+    const files = {
+      "bin/agent-autoloop.ts": await readFile(new URL("../../bin/agent-autoloop.ts", import.meta.url), "utf8"),
+      "cli/main.ts": 'import { command } from "./nested/command.ts"; console.log(command(process.argv[2]));',
+      "cli/mcp.ts": "export const mcp: string = 'fixture';",
+      "cli/spend.ts": "export const spend: number = 0;",
+      "cli/uninstall.ts": "export const uninstall: boolean = false;",
+      "cli/why.ts": "export const why: string = 'fixture';",
+      "cli/nested/command.ts": "export const command = (value: string) => `fixture:${value}`;",
+      "kernel/schema.sql": "CREATE TABLE fixture(id INTEGER);",
+      "kernel/credentials.ts":
+        'import { createHash } from "node:crypto";\nexport const digest = (text: string) => createHash("sha256").update(text).digest("hex");',
+    };
+    // Create required entry files independently of SOURCE_ENTRIES so a missing bin/cli cannot hide in the fixture.
+    for (const [name, contents] of Object.entries(files)) {
+      await mkdir(dirname(join(source, name)), { recursive: true });
+      await writeFile(join(source, name), contents);
+    }
+    const excluded = ["web", "mockups", "prompt", "node_modules", "cli/prompt", "cli/node_modules"];
+    for (const name of excluded) {
+      await mkdir(join(source, name), { recursive: true });
+      await writeFile(join(source, name, "private.ts"), "must not copy");
+    }
+    await runtime.copySources(source, dest);
+    for (const [name, contents] of Object.entries(files)) {
+      assert.equal(await readFile(join(dest, name), "utf8"), contents, `${name} must be copied unchanged`);
+    }
+    for (const name of excluded) await assert.rejects(access(join(dest, name)), /ENOENT/);
+    const { stdout } = await exec(process.execPath, [join(dest, "bin/agent-autoloop.ts"), "up"], {
+      cwd: dest,
+      env: { PATH: "", NODE_OPTIONS: "" },
+      timeout: 10_000,
+    });
+    assert.equal(stdout.trim(), "fixture:up");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
