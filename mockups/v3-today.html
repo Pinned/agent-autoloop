@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>今天 · agent-autoloop 控制台</title>
+<style>
+  :root{
+    --paper-out:#D9D3C4;
+    --bg:#FBF9F3;
+    --bg-side:#F1ECDF;
+    --ink:#2B2823;
+    --ink-2:#6B6558;
+    --ink-3:#7A7263;
+    --line:#E5DECB;
+    --line-soft:#EDE7D6;
+    --accent:#B04E23;
+    --accent-soft:#F3E2D6;
+    --blue:#3D5A7C;
+    --green:#53783F;
+    --green-soft:#E8EDDC;
+    --red:#A8433A;
+    --serif:"Songti SC","STSongti-SC","Noto Serif SC","Source Han Serif SC","SimSun",serif;
+    --sans:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue","Microsoft YaHei",sans-serif;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,"Courier New",monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    background:var(--paper-out);
+    background-image:radial-gradient(1200px 500px at 50% -10%,rgba(255,255,255,.5),rgba(255,255,255,0) 60%);
+    font-family:var(--sans);
+    color:var(--ink);
+    display:flex;align-items:center;justify-content:center;
+    min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* ---------- 窗口骨架 ---------- */
+  .window{
+    width:1080px;height:760px;flex:none;
+    background:var(--bg);
+    border:1px solid rgba(43,40,35,.22);
+    border-radius:12px;overflow:hidden;
+    display:flex;
+    box-shadow:0 30px 70px rgba(43,40,35,.28),0 3px 10px rgba(43,40,35,.14);
+  }
+
+  /* ---------- 侧边栏 ---------- */
+  .side{
+    width:198px;flex:none;
+    background:var(--bg-side);
+    border-right:1px solid var(--line);
+    display:flex;flex-direction:column;
+    padding:20px 14px 16px;
+  }
+  .brand{display:flex;align-items:center;gap:10px;padding:0 6px 18px;border-bottom:1px solid var(--line);margin-bottom:14px}
+  .logo{position:relative;width:22px;height:22px;flex:none}
+  .logo::before{
+    content:"";position:absolute;inset:0;border-radius:50%;
+    border:2px solid var(--ink);
+    border-left-color:transparent;border-bottom-color:transparent;
+    animation:spin 9s linear infinite;
+  }
+  .logo::after{
+    content:"";position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px 0 0 -3px;
+    background:var(--accent);border-radius:50%;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .brand-name{font-family:var(--mono);font-size:13px;font-weight:600;letter-spacing:.01em}
+
+  .nav{display:flex;flex-direction:column;gap:2px}
+  .nav a{
+    display:flex;align-items:center;gap:9px;
+    padding:8px 8px 8px 10px;border-radius:7px;
+    color:var(--ink-2);text-decoration:none;font-size:13px;
+    position:relative;
+  }
+  .nav a svg{width:15px;height:15px;flex:none;opacity:.75}
+  .nav a .count{
+    margin-left:auto;font-family:var(--mono);font-size:10px;
+    padding:1px 6px;border:1px solid var(--line);border-radius:99px;color:var(--ink-3);
+    background:#fff;
+  }
+  .nav a.active{background:#FFFFFF;color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(43,40,35,.05)}
+  .nav a.active::before{
+    content:"";position:absolute;left:-14px;top:8px;bottom:8px;width:2px;
+    background:var(--accent);border-radius:2px;
+  }
+  .nav a.active svg{opacity:1}
+
+  .side-foot{
+    margin-top:auto;
+    padding:12px 8px 4px;border-top:1px solid var(--line);
+  }
+  .conn{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink);font-weight:500}
+  .conn-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px rgba(83,120,63,.15);animation:breath 2.4s ease-in-out infinite}
+  @keyframes breath{50%{box-shadow:0 0 0 6px rgba(83,120,63,0)}}
+  .conn-sub{margin-top:5px;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);padding-left:14px}
+
+  /* ---------- 内容区 ---------- */
+  .main{
+    flex:1;min-width:0;overflow-y:auto;
+    padding:26px 34px 28px 38px;
+  }
+  .main::-webkit-scrollbar{width:8px}
+  .main::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+  .main::-webkit-scrollbar-track{background:transparent}
+
+  .page-head{display:flex;align-items:flex-end;justify-content:space-between}
+  .page-head h1{font-family:var(--serif);font-size:27px;font-weight:700;letter-spacing:.01em;line-height:1.1}
+  .page-date{margin-top:6px;font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.06em}
+
+  /* 数据带 */
+  .statband{
+    display:flex;justify-content:space-between;align-items:center;
+    border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+    margin:16px 0 20px;padding:11px 2px;
+  }
+  .stat-group{display:flex;align-items:center;gap:22px}
+  .stat{display:flex;align-items:baseline;gap:6px}
+  .stat b{font-family:var(--mono);font-size:16px;font-weight:600;color:var(--ink)}
+  .stat span{font-size:10.5px;color:var(--ink-3)}
+  .stat.run b{color:var(--accent)}
+  .stat.run b::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-right:5px;vertical-align:2px;animation:blink 1.6s ease-in-out infinite}
+  @keyframes blink{50%{opacity:.25}}
+  .stat.done b{color:var(--green)}
+  .stat.divider{width:1px;height:16px;background:var(--line);gap:0}
+
+  /* ---------- 时间线 ---------- */
+  .tl{position:relative}
+  .tl::before{
+    content:"";position:absolute;left:81px;top:12px;bottom:10px;width:1px;
+    background:var(--line);
+  }
+  .tl-item{
+    display:grid;grid-template-columns:60px 44px minmax(0,1fr);
+    padding:8px 0;
+  }
+  .tl-time{
+    font-family:var(--mono);font-size:12px;color:var(--ink-2);
+    text-align:right;padding-top:2px;letter-spacing:.02em;
+  }
+  .tl-item[data-hot] .tl-time{color:var(--accent);font-weight:600}
+  .tl-node{position:relative}
+  .tl-node .dot{
+    position:absolute;left:50%;top:5px;margin-left:-5px;
+    width:9px;height:9px;border-radius:50%;
+  }
+  [data-kind="event"] .dot{background:var(--bg);border:2px solid #A79E8B}
+  [data-kind="rule"]  .dot{background:var(--bg);border:2px solid var(--blue)}
+  [data-kind="run"]   .dot{background:var(--accent);animation:pulse 2s ease-out infinite}
+  [data-kind="user"]  .dot{background:var(--blue);border-radius:2px;transform:rotate(45deg)}
+  [data-kind="card"]  .dot{background:var(--bg);border:2px solid var(--accent);width:11px;height:11px;margin-left:-6px}
+  [data-kind="done"]  .dot{background:var(--green)}
+  @keyframes pulse{
+    0%{box-shadow:0 0 0 0 rgba(176,78,35,.28)}
+    70%{box-shadow:0 0 0 7px rgba(176,78,35,0)}
+    100%{box-shadow:0 0 0 0 rgba(176,78,35,0)}
+  }
+
+  .tl-body{padding-left:14px;min-width:0;max-width:600px}
+  .tl-kicker{
+    font-family:var(--mono);font-size:10px;color:var(--ink-3);
+    letter-spacing:.14em;margin-bottom:4px;
+  }
+  [data-kind="run"]  .tl-kicker{color:var(--accent)}
+  [data-kind="user"] .tl-kicker{color:var(--blue)}
+  [data-kind="done"] .tl-kicker{color:var(--green)}
+  .tl-title{font-size:13.5px;font-weight:600;line-height:1.5}
+  .tl-title .mono{font-family:var(--mono);font-weight:600}
+  .tl-title a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--accent)}
+  .tl-note{margin-top:3px;font-size:12px;color:var(--ink-2);line-height:1.6}
+  .tl-quote{
+    margin-top:7px;padding:8px 12px;
+    border-left:2px solid var(--blue);background:rgba(61,90,124,.06);
+    border-radius:0 7px 7px 0;
+    font-family:var(--serif);font-size:13.5px;line-height:1.6;
+  }
+
+  /* 决策 / 提醒卡片 */
+  .dcard{
+    margin-top:8px;background:#FFFFFF;
+    border:1px solid var(--line);border-radius:10px;
+    padding:13px 16px 14px;
+    box-shadow:0 1px 0 rgba(43,40,35,.04);
+  }
+  .dcard h3{font-family:var(--serif);font-size:15.5px;font-weight:700;line-height:1.3}
+  .dcard p{margin-top:6px;font-size:12.5px;color:var(--ink-2);line-height:1.65}
+  .dcard-actions{display:flex;gap:8px;margin-top:11px;flex-wrap:wrap}
+
+  .btn{
+    display:inline-flex;align-items:center;gap:6px;
+    font-family:var(--sans);font-size:12px;font-weight:500;
+    border-radius:7px;padding:6px 13px;cursor:pointer;
+    border:1px solid transparent;line-height:1.4;
+  }
+  .btn-primary{background:var(--ink);color:#FBF9F3;border-color:var(--ink)}
+  .btn-primary .rec{
+    font-size:9.5px;font-weight:600;color:#FBF9F3;
+    background:var(--accent);border-radius:4px;padding:1px 5px;letter-spacing:.08em;
+  }
+  .btn-ghost{background:transparent;color:var(--ink);border-color:#CFC7B4}
+  .btn-sm{padding:4px 11px}
+
+  .disk-row{display:flex;align-items:center;gap:10px;margin-top:9px}
+  .disk-bar{flex:1;height:5px;background:var(--line-soft);border-radius:3px;overflow:hidden}
+  .disk-bar i{display:block;height:100%;width:12%;background:var(--accent);border-radius:3px}
+  .disk-pct{font-family:var(--mono);font-size:11px;color:var(--accent);font-weight:600}
+
+  /* ---------- 队列 ---------- */
+  .queue{margin-top:26px}
+  .queue-head{display:flex;align-items:baseline;gap:10px;padding-bottom:9px;border-bottom:1px solid var(--line)}
+  .queue-head h2{font-family:var(--serif);font-size:15px;font-weight:700}
+  .queue-head span{font-size:11px;color:var(--ink-3)}
+  .q-row{
+    display:grid;grid-template-columns:40px 1fr auto auto;align-items:center;gap:12px;
+    padding:9px 2px;border-bottom:1px solid var(--line-soft);
+  }
+  .q-no{font-family:var(--mono);font-size:11.5px;color:var(--ink-3)}
+  .q-name{font-size:12.5px;font-weight:600}
+  .q-when{font-family:var(--mono);font-size:11px;color:var(--ink-2)}
+  .q-agent{
+    font-family:var(--mono);font-size:10.5px;color:var(--ink-2);
+    border:1px solid var(--line);border-radius:99px;padding:2px 9px;background:#fff;
+  }
+</style>
+</head>
+<body>
+<div class="window">
+
+  <aside class="side">
+    <div class="brand">
+      <div class="logo"></div>
+      <div class="brand-name">agent-autoloop</div>
+    </div>
+    <nav class="nav">
+      <a class="active" href="v3-today.html">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6.2"/><circle cx="8" cy="8" r="1.4" fill="currentColor" stroke="none"/></svg>
+        今天
+      </a>
+      <a href="#">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2.5 4.5h11M2.5 8h7M2.5 11.5h9"/></svg>
+        任务
+        <span class="count">3</span>
+      </a>
+      <a href="#">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>
+        新建
+      </a>
+      <a href="#">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 5h12M2 11h12"/><circle cx="5.5" cy="5" r="1.6" fill="#F1ECDF"/><circle cx="10.5" cy="11" r="1.6" fill="#F1ECDF"/></svg>
+        设置
+      </a>
+    </nav>
+    <div class="side-foot">
+      <div class="conn"><span class="conn-dot"></span>已连接</div>
+      <div class="conn-sub">运行中 1 · 排队 2</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="page-head">
+      <div>
+        <h1>今天</h1>
+        <div class="page-date">2026-11-04 · 周三</div>
+      </div>
+    </header>
+
+    <div class="statband">
+      <div class="stat-group">
+        <div class="stat"><b>12</b><span>轮 · 今天</span></div>
+        <div class="stat"><b>8.6万</b><span>tokens</span></div>
+        <div class="stat"><b>¥2.9</b><span>花费</span></div>
+      </div>
+      <div class="stat-group">
+        <div class="stat run"><b>1</b><span>运行中</span></div>
+        <div class="stat"><b>2</b><span>排队</span></div>
+        <div class="stat done"><b>4</b><span>今天完成</span></div>
+      </div>
+    </div>
+
+    <div class="tl">
+      <div class="tl-item" data-kind="event">
+        <div class="tl-time">09:00</div>
+        <div class="tl-node"><span class="dot"></span></div>
+        <div class="tl-body">
+          <div class="tl-kicker">事件进来 · 来源 飞书</div>
+          <div class="tl-title">feedback.new「反馈 <span class="mono">#47</span>」</div>
+        </div>
+      </div>
+
+      <div class="tl-item" data-kind="rule">
+        <div class="tl-time">09:01</div>
+        <div class="tl-node"><span class="dot"></span></div>
+        <div class="tl-body">
+          <div class="tl-kicker">规则接手</div>
+          <div class="tl-title">规则「每日早报」接手，派给 Claude Code</div>
+        </div>
+      </div>
+
+      <div class="tl-item" data-kind="run" data-hot>
+        <div class="tl-time">09:02</div>
+        <div class="tl-node"><span class="dot"></span></div>
+        <div class="tl-body">
+          <div class="tl-kicker">任务 · 运行中</div>
+          <div class="tl-title">任务 <a href="v3-run.html"><span class="mono">#41</span> 开始跑</a> · 第 1 次尝试</div>
+          <div class="tl-note">运行中 12 分钟</div>
+        </div>
+      </div>
+
+      <div class="tl-item" data-kind="user">
+        <div class="tl-time">09:05</div>
+        <div class="tl-node"><span class="dot"></span></div>
+        <div class="tl-body">
+          <div class="tl-kicker">本人 · 更正</div>
+          <div class="tl-quote">「接口地址应该用 v2，不是 v1」</div>
+          <div class="tl-note">正在跑的那次已叫停，带着更正接着原会话继续</div>
+        </div>
+      </div>
+
+      <div class="tl-item" data-kind="card">
+        <div class="tl-time">09:20</div>
+        <div class="tl-node"><span class="dot"></span></div>
+        <div class="tl-body">
+          <div class="tl-kicker">卡片 · 需要你决定</div>
+          <div class="dcard">
+            <h3>发布还是先修？</h3>
+            <p>早报脚本报错：日报里 API 用量统计是空的，但正文都正常。</p>
+            <div class="dcard-actions">
+              <button class="btn btn-primary">照常发布<span class="rec">推荐</span></button>
+              <button class="btn btn-ghost">先修统计</button>
+              <button class="btn btn-ghost">我来处理</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tl-item" data-kind="card">
+        <div class="tl-time">09:40</div>
+        <div class="tl-node"><span class="dot"></span></div>
+        <div class="tl-body">
+          <div class="tl-kicker">卡片 · 提醒</div>
+          <div class="dcard">
+            <h3>磁盘快满了</h3>
+            <div class="disk-row">
+              <div class="disk-bar"><i></i></div>
+              <div class="disk-pct">12%</div>
+            </div>
+            <p>本机磁盘剩余 12%，建议清理 node_modules 和旧构建产物。</p>
+            <div class="dcard-actions">
+              <button class="btn btn-ghost btn-sm">已处理</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tl-item" data-kind="done">
+        <div class="tl-time">09:45</div>
+        <div class="tl-node"><span class="dot"></span></div>
+        <div class="tl-body">
+          <div class="tl-kicker">任务 #40 · 完成</div>
+          <div class="tl-title">早报已生成并发到飞书</div>
+        </div>
+      </div>
+    </div>
+
+    <section class="queue">
+      <div class="queue-head">
+        <h2>队列中</h2>
+        <span>尚未触发，不进入今天的时间线</span>
+      </div>
+      <div class="q-row">
+        <div class="q-no">#42</div>
+        <div class="q-name">每周清理</div>
+        <div class="q-when">定时 周日 22:00</div>
+        <div class="q-agent">Codex</div>
+      </div>
+      <div class="q-row">
+        <div class="q-no">#43</div>
+        <div class="q-name">网站巡检</div>
+        <div class="q-when">事件 push.done</div>
+        <div class="q-agent">Claude Code</div>
+      </div>
+    </section>
+  </main>
+
+</div>
+</body>
+</html>
