@@ -195,7 +195,10 @@ test("one machine, one command: an event, a question, an answer, the work done",
   assert.match(resolved.stdout, /结案了/);
   assert.equal((await state()).recentCards.find((c: any) => c.id === Number(id)).result, "不试了");
   assert.equal(cli("resolve", id).status, 1, "a result has to be written");
-  assert.equal((await fetch(`${url}/`)).status, 404);
+  // The console is the one page served; what's going on is still read through the doors behind it.
+  const page = await fetch(`${url}/`);
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get("content-type") ?? "", /text\/html/);
 });
 
 test("the user's Agents are shown how to set it up, when this is the install in its usual place, and nothing of theirs is touched", () => {

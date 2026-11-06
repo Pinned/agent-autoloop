@@ -15,7 +15,7 @@ export class RulesError extends Error {
 const ACCESS = ["read", "edit", "full"];
 const TELLS = ["always", "needed", "never"];
 const ID = /^[a-z][a-z0-9-]*$/;
-const TYPE_PATTERN = /^(\*|[a-z][a-z0-9_.-]{0,63}(\.\*)?)$/;
+export const TYPE_PATTERN = /^(\*|[a-z][a-z0-9_.-]{0,63}(\.\*)?)$/;
 const ASK_FIRST = ["删数据", "停服", "花钱", "对外发消息", "改产品方向", "新建或轮换密钥", "修改权限"];
 const NOT_EMPTY = "不能为空";
 const ID_WORDS = "只能用小写字母、数字和 -";

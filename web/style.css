@@ -1,0 +1,324 @@
+/* The console on one machine: quiet, readable, nothing that blinks. */
+
+:root {
+  --ink: #1f2430;
+  --faint: #6b7280;
+  --line: #e2e5ea;
+  --paper: #f7f8fa;
+  --card: #ffffff;
+  --good: #0a7d43;
+  --busy: #9a5b00;
+  --bad: #b3261e;
+  --accent: #2456c8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--paper);
+  font:
+    15px/1.6 system-ui,
+    "PingFang SC",
+    "Microsoft YaHei",
+    sans-serif;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 24px;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+
+header h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.conn {
+  font-size: 13px;
+  color: var(--faint);
+}
+.conn[data-state="on"] {
+  color: var(--good);
+}
+.conn[data-state="off"] {
+  color: var(--bad);
+}
+
+header input {
+  margin-left: auto;
+  width: 280px;
+}
+
+nav {
+  padding: 8px 24px 0;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  padding: 8px 16px;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--faint);
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+
+.tab.active {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 20px 24px 64px;
+}
+
+h2 {
+  font-size: 16px;
+  margin: 28px 0 10px;
+}
+
+.overview {
+  color: var(--faint);
+  font-size: 13px;
+}
+
+.hint {
+  color: var(--faint);
+  font-size: 13px;
+}
+
+.cards {
+  display: grid;
+  gap: 12px;
+}
+.recent {
+  display: grid;
+  gap: 8px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+
+.card.open {
+  border-left-color: var(--busy);
+}
+.card:not(.open) {
+  border-left-color: var(--line);
+  opacity: 0.75;
+}
+.card h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+.card p {
+  margin: 4px 0;
+}
+.card .decision {
+  color: var(--good);
+}
+.card .meta {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0 4px;
+}
+.options input {
+  flex: 1;
+  min-width: 160px;
+}
+
+table.runs {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+table.runs th,
+table.runs td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  font-size: 14px;
+  vertical-align: top;
+}
+table.runs th {
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 600;
+}
+table.runs tr.run {
+  cursor: pointer;
+}
+table.runs tr.run:hover {
+  background: #f0f3f8;
+}
+table.runs tr.detail-row td {
+  border-bottom: 1px solid var(--line);
+  padding: 0;
+}
+table.runs tr.detail-row > td > .detail {
+  padding: 8px 12px 12px;
+}
+table.runs tr:last-child td {
+  border-bottom: none;
+}
+
+.state {
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+.state.queued {
+  background: #eef0f3;
+  color: var(--faint);
+}
+.state.claimed {
+  background: #e8f1fb;
+  color: var(--accent);
+}
+.state.unknown {
+  background: #fbf3e8;
+  color: var(--busy);
+}
+.state.done,
+.state.nothing {
+  background: #e9f5ee;
+  color: var(--good);
+}
+.state.failed {
+  background: #fbe9e7;
+  color: var(--bad);
+}
+
+.detail ul {
+  margin: 0 0 6px;
+  padding-left: 20px;
+  color: var(--faint);
+  font-size: 13px;
+}
+.detail .meta {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+form {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px 20px;
+  display: grid;
+  gap: 14px;
+  max-width: 640px;
+}
+form label,
+.entry label.field {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--faint);
+}
+.entry label.field > span {
+  font-size: 13px;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: var(--ink);
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+button {
+  font: inherit;
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+button.primary:hover {
+  opacity: 0.9;
+  color: #fff;
+}
+button.remove {
+  color: var(--bad);
+}
+button.remove:hover {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+.entry {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin-bottom: 12px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.entry .field.full,
+.entry textarea,
+.entry .remove {
+  grid-column: 1 / -1;
+}
+
+.more {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+}
+
+.result {
+  white-space: pre-wrap;
+  font-size: 14px;
+}
+.result.error {
+  color: var(--bad);
+}
+
+.hidden {
+  display: none !important;
+}

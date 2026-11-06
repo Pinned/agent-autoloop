@@ -51,6 +51,16 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 
 In an interactive terminal, just type the option number. In a non-interactive terminal, run `agent-autoloop answer 1 2` to pick green. Then `agent-autoloop status` shows that the agent resumed its conversation and finished, along with rounds, tokens, and cost for today and the past seven days ([how they are counted](skills/agent-autoloop/SKILL.md#看情况回答)).
 
+## The local console
+
+If you'd rather not memorize commands, there's a web page. While the hub is running, open `http://127.0.0.1:3350` in a browser (the port is `hub.listen` in `~/.agent-autoloop/config.json`) and paste your owner key into the top-right corner — it's the `owner` entry in that same file, or run `agent-autoloop key new owner console` to make a fresh one.
+
+- **Tasks**: every run and every card waiting on you, updated live; answer a card by clicking an option or typing a sentence, and stop a run that's still going.
+- **New task**: pick a type and a one-line title; the event goes out from this machine and rules route it to the right project directory and Agent.
+- **Entries**: configure which type goes to which Agent, in which directory, with what prompt. Saving replaces only the local task entries; everything else in rules.json is kept as it is.
+
+The page is reachable only from this machine; no port needs to face the outside.
+
 ## How a piece of work flows
 
 The numbers match the diagram above:
