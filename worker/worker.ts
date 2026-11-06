@@ -59,11 +59,13 @@ type Entry = {
   pid?: number;
   launchedAt?: number;
   finishedAt?: number;
+  completedCode?: number;
   told?: string;
   stopping?: number;
   why?: "cancel" | "timeout" | "finished";
   result?: Result;
 };
+export type DrainSummary = { pending: number };
 export type WorkerHub = Pick<Hub, "work" | "started" | "result">;
 export type WorkerOptions = {
   hub: WorkerHub;
@@ -74,6 +76,7 @@ export type WorkerOptions = {
   unreachable?: string[];
   wait?: number;
   now?: () => number;
+  stopGrace?: number;
 };
 
 function save(entry: Entry) {
@@ -155,7 +158,14 @@ export function createWorker({
   unreachable,
   wait = WAIT,
   now = Date.now,
+  stopGrace = STOP_GRACE,
 }: WorkerOptions) {
+  let closing = false;
+  let inFlight: Promise<boolean> | undefined;
+  let draining: Promise<DrainSummary> | undefined;
+  let closingTick: Promise<boolean> | undefined;
+  let running: Promise<void> | undefined;
+  let wake: (() => void) | undefined;
   let claim = randomUUID();
   let unreachableSince: number | null = null;
   let told = false;
@@ -173,9 +183,14 @@ export function createWorker({
 
   /** Starts a turn of the agent: a process that outlives this one, leaving its output and exit code in files. */
   function launch(entry: Entry, adapter: Adapter, prompt: string) {
+    if (closing) {
+      if (entry.turn === 0) endWith(entry, { outcome: "cancelled", summary: "已停止" });
+      return;
+    }
     entry.turn += 1;
     entry.launchedAt = now();
     delete entry.finishedAt;
+    delete entry.completedCode;
     delete entry.pid;
     delete entry.stopping;
     delete entry.why;
@@ -248,14 +263,21 @@ export function createWorker({
     };
     // Kept before anything slow: a worker stopped from here on still has the job.
     save(entry);
+    if (closing) return endWith(entry, { outcome: "cancelled", summary: "已停止" });
     try {
       writeFileSync(path.join(dir, "context.json"), JSON.stringify(job.context, null, 2), { mode: 0o600 });
       const adapter = await adapterFor(job.agent.use);
+      if (closing) return endWith(entry, { outcome: "cancelled", summary: "已停止" });
       entry.prompt = promptFor(job, path.join(dir, "context.json"));
       save(entry);
       launch(entry, adapter, entry.prompt);
     } catch (error) {
-      endWith(entry, { outcome: "failed", error: String((error as Error).message ?? error).slice(0, 500) });
+      endWith(
+        entry,
+        closing
+          ? { outcome: "cancelled", summary: "已停止" }
+          : { outcome: "failed", error: String((error as Error).message ?? error).slice(0, 500) },
+      );
     }
   }
 
@@ -281,13 +303,16 @@ export function createWorker({
   /** A turn has ended. What it said is a result, or a reason to ask it again without redoing anything. */
   function conclude(entry: Entry, adapter: Adapter, code: number | null) {
     // One ended because its turn was over but it wouldn't exit said what it had to say first.
-    const seen = read(entry, adapter, entry.finishedAt ? 0 : code);
+    const seen = read(entry, adapter, entry.finishedAt ? 0 : (entry.completedCode ?? code));
     entry.usage = addUsage(entry.usage, seen.usage);
     const session = seen.session ?? (entry.turn > 0 && adapter.link ? entry.session : undefined);
     if (seen.session) entry.session = seen.session;
     const usage = entry.usage && { usage: entry.usage };
     const known = session && { session };
-    if (entry.why === "cancel") return endWith(entry, { outcome: "cancelled", summary: "已停止", ...known, ...usage });
+    if (entry.why === "cancel") {
+      if (entry.repairs) return discardReceipt(entry, adapter, "接单程序已停止，未继续补回执");
+      return endWith(entry, { outcome: "cancelled", summary: "已停止", ...known, ...usage });
+    }
     if (entry.why === "timeout") {
       const minutes = entry.job.agent.timeout ?? TIMEOUT_MINUTES;
       const error = `超过 ${minutes} 分钟还没结束，已停止`;
@@ -298,7 +323,7 @@ export function createWorker({
       const error = seen.error || "没留下结果";
       if (entry.repairs) return discardReceipt(entry, adapter, error);
       // The conversation may not be there to go on in, or something else has it open: this go carries on in a new one.
-      if (entry.resume && !entry.triedFresh && entry.repairs === 0) {
+      if (!closing && entry.resume && !entry.triedFresh && entry.repairs === 0) {
         log(`run ${entry.run}: couldn't go on in ${entry.resume} (${error}); starting a new session`);
         entry.triedFresh = true;
         entry.resume = null;
@@ -316,7 +341,7 @@ export function createWorker({
     if (entry.repairs && !problem && result.outcome === "failed") return discardReceipt(entry, adapter, result.error!);
     if (!problem) return endWith(entry, result);
     // Its work is done and only the receipt is wrong: it writes the receipt again, and does nothing again.
-    if (adapter.link && entry.repairs < REPAIRS && seen.session) {
+    if (!closing && adapter.link && entry.repairs < REPAIRS && seen.session) {
       log(`run ${entry.run}: receipt not readable (${problem}); asking again`);
       entry.repairs += 1;
       entry.resume = seen.session;
@@ -330,14 +355,44 @@ export function createWorker({
     discardReceipt(entry, adapter, problem);
   }
 
+  function closeEntry(entry: Entry) {
+    if (entry.turn === 0) {
+      if (!entry.result) endWith(entry, { outcome: "cancelled", summary: "已停止" });
+      return;
+    }
+    // A published exit can coexist with surviving children. Never hand in a live group.
+    const live = groupAlive(entry);
+    const { exit } = files(entry);
+    if (entry.stopping === undefined && existsSync(exit)) {
+      entry.completedCode = Number(readFileSync(exit, "utf8").trim());
+      save(entry);
+    }
+    if (live)
+      stop(entry, entry.result || entry.finishedAt || entry.completedCode !== undefined ? "finished" : "cancel");
+  }
+
   /** Looks at a run in hand: still going, to be stopped, or ended. */
   async function check(entry: Entry) {
+    if (closing || entry.result) closeEntry(entry);
+    if (entry.stopping !== undefined && groupAlive(entry)) {
+      if (now() - entry.stopping > stopGrace) signal(entry, "SIGKILL");
+      return;
+    }
     if (entry.result) return;
     let adapter: Adapter;
     try {
       adapter = await adapterFor(entry.job.agent.use);
     } catch (error) {
-      return endWith(entry, { outcome: "failed", error: String((error as Error).message).slice(0, 500) });
+      return endWith(
+        entry,
+        entry.why === "cancel"
+          ? { outcome: "cancelled", summary: "已停止" }
+          : { outcome: "failed", error: String((error as Error).message).slice(0, 500) },
+      );
+    }
+    if (closing) {
+      closeEntry(entry);
+      if (entry.result) return;
     }
     if (entry.turn === 0) {
       // The worker stopped while starting it, before anything was launched.
@@ -354,7 +409,7 @@ export function createWorker({
     const { exit } = files(entry);
     if (entry.stopping !== undefined) {
       if (groupAlive(entry)) {
-        if (now() - entry.stopping > STOP_GRACE) signal(entry, "SIGKILL");
+        if (now() - entry.stopping > stopGrace) signal(entry, "SIGKILL");
         return;
       }
       return conclude(entry, adapter, existsSync(exit) ? Number(readFileSync(exit, "utf8").trim()) : null);
@@ -390,7 +445,7 @@ export function createWorker({
   }
 
   function stop(entry: Entry, why: "cancel" | "timeout" | "finished") {
-    if (entry.stopping !== undefined || entry.result) return;
+    if (entry.stopping !== undefined) return;
     entry.stopping = now();
     entry.why = why;
     save(entry);
@@ -400,7 +455,7 @@ export function createWorker({
 
   /** Hands in what has ended. One the hub can't take now waits for next time; one it refuses is dropped and said so. */
   async function settle(entry: Entry) {
-    if (!entry.result) return;
+    if (!entry.result || groupAlive(entry)) return;
     try {
       const answer = await hub.result(entry.run, entry.token, entry.result);
       for (const item of answer?.rejected ?? []) log(`run ${entry.run}: not applied: ${JSON.stringify(item)}`);
@@ -441,9 +496,10 @@ export function createWorker({
   }
 
   /** One round: look at what's in hand, hand in what's ended, come for more. Whether the hub could be reached. */
-  async function tick() {
+  async function tickOnce() {
     for (const entry of entries()) await check(entry);
     for (const entry of entries()) await settle(entry);
+    if (closing) return true;
     const held = entries();
     let reachable = true;
     try {
@@ -469,6 +525,34 @@ export function createWorker({
     return reachable;
   }
 
+  function tick(): Promise<boolean> {
+    if (closing) return (closingTick ??= drain().then(() => true));
+    return (inFlight ??= Promise.resolve()
+      .then(tickOnce)
+      .finally(() => {
+        inFlight = undefined;
+      }));
+  }
+
+  function drain(): Promise<DrainSummary> {
+    if (draining) return draining;
+    closing = true;
+    wake?.();
+    draining = (async () => {
+      await inFlight;
+      // Stop every group first so grace periods overlap, before awaiting any adapter or hub.
+      for (const entry of entries()) closeEntry(entry);
+      const unfinished = () => entries().some((entry) => !entry.result || groupAlive(entry));
+      while (unfinished()) {
+        for (const entry of entries()) await check(entry);
+        if (unfinished()) await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      for (const entry of entries()) await settle(entry);
+      return { pending: entries().filter((entry) => entry.result).length };
+    })();
+    return draining;
+  }
+
   /** Output of finished runs is kept a while for looking into, then goes. */
   function tidy(moment = now()) {
     for (const id of readdirSync(RUNS)) {
@@ -478,13 +562,30 @@ export function createWorker({
     }
   }
 
-  async function run(signalled: AbortSignal) {
-    log(`worker ${name} started`);
-    tidy();
-    while (!signalled.aborted) {
-      if (!(await tick())) await new Promise((resolve) => setTimeout(resolve, PAUSE));
-    }
+  function run(signalled: AbortSignal): Promise<void> {
+    return (running ??= (async () => {
+      log(`worker ${name} started`);
+      tidy();
+      while (!signalled.aborted && !closing) {
+        if (!(await tick()) && !closing && !signalled.aborted) {
+          await new Promise<void>((resolve) => {
+            const done = () => {
+              clearTimeout(timer);
+              signalled.removeEventListener("abort", done);
+              wake = undefined;
+              resolve();
+            };
+            const timer = setTimeout(done, PAUSE);
+            wake = done;
+            signalled.addEventListener("abort", done, { once: true });
+          });
+        }
+      }
+      if (closing) await drain();
+    })().finally(() => {
+      running = undefined;
+    }));
   }
 
-  return { tick, run, entries, tidy };
+  return { tick, run, drain, entries, tidy };
 }

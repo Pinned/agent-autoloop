@@ -6,12 +6,13 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 const dir = mkdtempSync(join(tmpdir(), "autoloop-ci-scope-"));
 writeFileSync(join(dir, "git"), '#!/bin/sh\nprintf "%s\\n" "$CHANGED_FILES"\n', { mode: 0o700 });
 after(() => rmSync(dir, { recursive: true, force: true }));
 function scope(files: string[], event = "pull_request") {
-  return execFileSync("sh", [new URL("../scripts/ci-scope.sh", import.meta.url).pathname], {
+  return execFileSync("sh", [fileURLToPath(new URL("../scripts/ci-scope.sh", import.meta.url))], {
     env: {
       ...process.env,
       PATH: `${dir}:${process.env.PATH}`,

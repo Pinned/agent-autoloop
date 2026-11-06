@@ -13,6 +13,8 @@
 // A shell replacing itself with the final move must not lose its identity before the exit file is published.
 // A failed or timed-out receipt repair must preserve the original business outcome; cancellation must reap a child
 // ignoring SIGTERM even after restart; adding usage must not turn a missing price into a reported zero.
+// Drain must not lose a delayed claim, launch turn zero or repairs, overwrite completed work, leave live process-group
+// children, lose offline results, duplicate concurrent ticks/settlements, or deadlock with the run loop.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -552,4 +554,297 @@ test("the hub gone for ten minutes is told once, tried a few times if telling fa
   clock += 11 * 60_000;
   for (let i = 0; i < 8; i++) await f.tick();
   assert.equal(readFileSync(attempts, "utf8").trim().split("\n").length, 5);
+});
+
+function heldJob(given: ReturnType<typeof job>, turn = 0, extra: object = {}) {
+  const dir = join(home, "worker", "runs", `${given.run}-1`);
+  mkdirSync(dir, { recursive: true });
+  const entry = {
+    run: given.run,
+    token: given.token,
+    attempt: 1,
+    job: given,
+    dir,
+    prompt: "",
+    turn,
+    session: given.session ?? "test-session",
+    resume: given.session,
+    repairs: 0,
+    triedFresh: false,
+    ...extra,
+  };
+  writeFileSync(join(dir, "entry.json"), JSON.stringify(entry));
+  return entry;
+}
+
+async function waitFor(done: () => boolean) {
+  const end = Date.now() + 5000;
+  while (!done()) {
+    assert.ok(Date.now() < end, "timed out waiting without ticking");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+test("drain waits for a delayed claim, persists cancellation without launching, and is singleflight", async () => {
+  const hub = fakeHub();
+  const marker = join(folder, "drain-must-not-launch");
+  const given = job({ command: ["/bin/sh", "-c", `touch '${marker}'; echo 好了`] });
+  let deliver!: (answer: any) => void;
+  hub.work = async (query) => {
+    hub.claims.push(query);
+    return new Promise((resolve) => {
+      deliver = resolve;
+    });
+  };
+  const w = worker(hub);
+  const tick = w.tick();
+  await waitFor(() => !!deliver);
+  assert.equal(w.tick(), tick, "concurrent ticks share the same claim");
+  const drain = w.drain();
+  assert.equal(w.drain(), drain, "closing is synchronous and drain returns the same promise");
+  const closingTick = w.tick();
+  let ended = false;
+  void drain.then(() => {
+    ended = true;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(ended, false, "the in-flight claim must not be aborted or abandoned");
+  let persisted = false;
+  const result = hub.result;
+  hub.result = async (run, token, body) => {
+    const entry = w.entries().find((entry) => entry.run === run)!;
+    persisted = entry.turn === 0 && entry.result?.outcome === "cancelled";
+    return result(run, token, body);
+  };
+  deliver({ job: given, cancel: [] });
+  await tick;
+  assert.deepEqual(await drain, { pending: 0 });
+  await closingTick;
+  assert.equal(persisted, true);
+  assert.equal(existsSync(marker), false);
+  assert.equal(hub.results.length, 1);
+  assert.equal(hub.claims.length, 1);
+  await w.tick();
+  assert.equal(hub.results.length, 1);
+  assert.equal(hub.claims.length, 1);
+});
+
+test("drain persists turn-zero cancellation offline and restart submits it without launching", async () => {
+  const hub = fakeHub();
+  hub.failResults = 1;
+  const given = job({ use: "nosuchagent" });
+  const entry = heldJob(given);
+  const w = worker(hub);
+  assert.deepEqual(await w.drain(), { pending: 1 });
+  const saved = JSON.parse(readFileSync(join(entry.dir, "entry.json"), "utf8"));
+  assert.equal(saved.turn, 0);
+  assert.equal(saved.result.outcome, "cancelled", "even a missing adapter cannot block cancellation");
+  assert.equal(hub.claims.length, 0);
+  const again = worker(hub);
+  await again.tick();
+  assert.equal(hub.results.length, 1);
+  assert.equal(hub.results[0].outcome, "cancelled");
+  assert.equal(existsSync(join(entry.dir, "stdout-1.log")), false);
+  assert.equal(again.entries().length, 0);
+});
+
+for (const stubborn of [false, true]) {
+  test(`drain stops the whole running group ${stubborn ? "with KILL after TERM is ignored" : "with TERM"} before settling`, async () => {
+    const hub = fakeHub();
+    const ready = join(folder, `drain-ready-${stubborn}`);
+    const terminated = join(folder, `drain-term-${stubborn}`);
+    const script = said(
+      `drain-child-${stubborn}.cjs`,
+      `
+      const fs = require('node:fs');
+      process.on('SIGTERM', () => { fs.writeFileSync(${JSON.stringify(terminated)}, 'TERM'); ${stubborn ? "" : "process.exit(0);"} });
+      fs.writeFileSync(${JSON.stringify(ready)}, String(process.pid));
+      setInterval(() => {}, 1000);
+    `,
+    );
+    hub.jobs.push(job({ command: [process.execPath, script] }));
+    const w = worker(hub, { stopGrace: 100 });
+    await w.tick();
+    await waitFor(() => existsSync(ready));
+    const entry = w.entries()[0];
+    const child = Number(readFileSync(ready, "utf8"));
+    const live = () =>
+      execFileSync("ps", ["-ax", "-o", "pid=", "-o", "stat="], { encoding: "utf8" })
+        .trim()
+        .split("\n")
+        .some((line) => {
+          const [pid, state] = line.trim().split(/\s+/);
+          return Number(pid) === child && !state.startsWith("Z");
+        });
+    const original = hub.result;
+    hub.result = async (run, token, body) => {
+      assert.equal(live(), false, "no settlement while any group child is alive");
+      const saved = JSON.parse(readFileSync(join(entry.dir, "entry.json"), "utf8"));
+      assert.equal(saved.why, "cancel");
+      assert.equal(typeof saved.stopping, "number");
+      return original(run, token, body);
+    };
+    try {
+      const drain = w.drain();
+      await waitFor(() => existsSync(terminated));
+      if (stubborn && live()) assert.equal(hub.results.length, 0);
+      assert.deepEqual(await drain, { pending: 0 });
+      assert.equal(live(), false);
+      assert.equal(hub.results[0].outcome, "cancelled");
+    } finally {
+      try {
+        process.kill(-entry.pid!, "SIGKILL");
+      } catch {}
+      rmSync(entry.dir, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const ending of ["done", "repair", "fresh", "running-repair"] as const) {
+  test(`drain preserves ${ending} result and never launches a repair or fresh session`, async () => {
+    const hub = fakeHub();
+    const given = job({ use: "scripted", session: "old" });
+    const entry = heldJob(given, ending === "running-repair" ? 2 : 1, {
+      pid: 999999,
+      ...(ending === "running-repair" && { repairs: 1 }),
+    });
+    const output =
+      ending === "repair" || ending === "running-repair"
+        ? `session=old\n业务已经完成\n${FENCE}agent-autoloop\n{ bad\n${FENCE}\n`
+        : "session=old\n业务已经完成\n";
+    writeFileSync(join(entry.dir, "stdout-1.log"), output);
+    if (ending !== "running-repair") writeFileSync(join(entry.dir, "exit-1"), ending === "fresh" ? "1" : "0");
+    const w = worker(hub);
+    assert.deepEqual(await w.drain(), { pending: 0 });
+    assert.equal(hub.results.length, 1);
+    assert.equal(hub.results[0].outcome, ending === "fresh" ? "failed" : "done");
+    if (ending !== "fresh") assert.equal(hub.results[0].summary, "业务已经完成");
+    if (ending === "repair" || ending === "running-repair") assert.match(hub.results[0].notice[0].title, /回执读不懂/);
+    assert.equal(existsSync(join(entry.dir, ending === "running-repair" ? "stdout-3.log" : "stdout-2.log")), false);
+  });
+}
+
+test("drain stops an in-flight receipt repair without changing the completed business outcome", async () => {
+  const hub = fakeHub();
+  const ready = join(folder, "drain-repair-started");
+  const wrong = said(
+    "drain-repair-original",
+    `session=original\n业务已经完成\n${FENCE}agent-autoloop\n{ bad\n${FENCE}\n`,
+  );
+  hub.jobs.push(
+    job({ use: "scripted", command: [`if [ -n "$1" ]; then touch '${ready}'; sleep 30; else cat '${wrong}'; fi`] }),
+  );
+  const w = worker(hub, { stopGrace: 100 });
+  await until(w, () => existsSync(ready));
+  const entry = w.entries()[0];
+  try {
+    assert.equal(entry.repairs, 1);
+    await w.drain();
+    assert.equal(hub.results[0].outcome, "done");
+    assert.equal(hub.results[0].summary, "业务已经完成");
+    assert.equal(existsSync(join(entry.dir, "stdout-3.log")), false);
+  } finally {
+    try {
+      process.kill(-entry.pid!, "SIGKILL");
+    } catch {}
+    rmSync(entry.dir, { recursive: true, force: true });
+  }
+});
+
+for (const restart of [false, true]) {
+  for (const outcome of ["done", "failed"] as const) {
+    test(`drain cleans natural background children after persisted ${outcome}, ${restart ? "after restart" : "in the same worker"}`, async () => {
+      const hub = fakeHub();
+      hub.failResults = 100;
+      const ready = join(folder, `drain-background-${restart}-${outcome}`);
+      const terminated = `${ready}-term`;
+      const script = said(
+        `drain-background-${restart}-${outcome}.cjs`,
+        `
+        const fs = require('node:fs');
+        process.on('SIGTERM', () => { fs.writeFileSync(${JSON.stringify(terminated)}, 'TERM'); });
+        fs.writeFileSync(${JSON.stringify(ready)}, String(process.pid));
+        setInterval(() => {}, 1000);
+      `,
+      );
+      // This shell naturally exits while its background child remains in the wrapper's process group.
+      hub.jobs.push(
+        job({
+          command: [
+            "/bin/sh",
+            "-c",
+            `'${process.execPath}' '${script}' >/dev/null 2>&1 & while [ ! -f '${ready}' ]; do sleep 0.01; done; echo '${outcome === "done" ? "已完成的业务" : "没跑成：业务失败"}'`,
+          ],
+        }),
+      );
+      const w = worker(hub, { stopGrace: 100 });
+      await w.tick();
+      await waitFor(() => existsSync(ready));
+      const entry = w.entries()[0];
+      const child = Number(readFileSync(ready, "utf8"));
+      const live = () =>
+        execFileSync("ps", ["-ax", "-o", "pid=", "-o", "stat="], { encoding: "utf8" })
+          .trim()
+          .split("\n")
+          .some((line) => {
+            const [pid, state] = line.trim().split(/\s+/);
+            return Number(pid) === child && !state.startsWith("Z");
+          });
+      try {
+        await waitFor(() => existsSync(join(entry.dir, "exit-1")));
+        await w.tick();
+        const saved = w.entries()[0];
+        assert.equal(saved.result?.outcome, outcome, "normal tick has determined and persisted the business result");
+        assert.equal(live(), true, "the completed wrapper has a surviving background child");
+        hub.failResults = 0;
+        const original = hub.result;
+        hub.result = async (run, token, body) => {
+          assert.equal(live(), false, "result certainty does not permit settlement while the group is alive");
+          return original(run, token, body);
+        };
+        const drainingWorker = restart ? worker(hub, { stopGrace: 100 }) : w;
+        assert.deepEqual(await drainingWorker.drain(), { pending: 0 });
+        assert.equal(live(), false);
+        assert.equal(existsSync(terminated), true, "the surviving child received TERM before KILL");
+        assert.equal(hub.results.length, 1);
+        assert.equal(hub.results[0].outcome, outcome);
+        if (outcome === "done") assert.equal(hub.results[0].summary, "已完成的业务");
+        else assert.equal(hub.results[0].error, "业务失败");
+        assert.equal(existsSync(join(entry.dir, "entry.json")), false);
+      } finally {
+        try {
+          process.kill(-entry.pid!, "SIGKILL");
+        } catch {}
+        rmSync(entry.dir, { recursive: true, force: true });
+      }
+    });
+  }
+}
+
+test("concurrent ticks settle once and drain and run finish without deadlock", async () => {
+  const hub = fakeHub();
+  const given = job();
+  heldJob(given, 1, { result: { outcome: "done", summary: "完成的不能取消" } });
+  let deliver!: () => void;
+  const original = hub.result;
+  let calls = 0;
+  hub.result = async (run, token, body) => {
+    calls += 1;
+    await new Promise<void>((resolve) => {
+      deliver = resolve;
+    });
+    return original(run, token, body);
+  };
+  const w = worker(hub);
+  const running = w.run(new AbortController().signal);
+  await waitFor(() => !!deliver);
+  const tick = w.tick();
+  assert.equal(w.tick(), tick);
+  const drain = w.drain();
+  assert.equal(w.drain(), drain);
+  deliver();
+  await Promise.all([tick, running, drain]);
+  assert.equal(calls, 1);
+  assert.equal(hub.results[0].outcome, "done");
+  assert.equal(hub.claims.length, 0, "closing during settle must not claim afterwards");
 });
