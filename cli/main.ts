@@ -47,7 +47,9 @@ const HELP = `Agent 自动化中台
   agent-autoloop update                  更新到最新版
   agent-autoloop uninstall [--yes]       卸载程序并保留数据；--yes 跳过确认
   agent-autoloop --version               版本和当前提交
-  agent-autoloop up                      启动（平时由系统服务调用）
+  agent-autoloop up [--stop-mode legacy|drain]
+                                    启动（平时由系统服务调用）；默认 legacy 保持原停止行为
+                                    drain 停止本机 Agent 并排空、持久保留待同步结果，不取消远程队列
   agent-autoloop service install|remove  系统服务
 
 配置和数据在 ${HOME}。规则在 ${RULES_FILE}，改了自动生效。`;
@@ -558,7 +560,17 @@ const commands: Record<string, () => unknown> = {
   add: () => addPlugin(args),
   init: () => init(args),
   join: () => join(args),
-  up: async () => (await import("../host/up.ts")).up(),
+  up: async () => {
+    // Validate before importing the host: invalid input must not initialize or start anything.
+    const stopMode = args.length === 0 ? "legacy" : args[1];
+    if (
+      (args.length !== 0 && (args.length !== 2 || args[0] !== "--stop-mode")) ||
+      (stopMode !== "legacy" && stopMode !== "drain")
+    ) {
+      return fail("用法：agent-autoloop up [--stop-mode legacy|drain]（默认 legacy）");
+    }
+    return (await import("../host/up.ts")).up({ stopMode });
+  },
   try: tryIt,
   status,
   why: () => why(args),

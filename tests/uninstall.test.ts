@@ -11,6 +11,7 @@ import {
   cpSync,
   existsSync,
   lstatSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -104,6 +105,147 @@ function linksAreGone(it: Install) {
   assert.ok(!isThere(skillLink(it)));
 }
 
+function serviceFile(it: Install) {
+  const file =
+    process.platform === "darwin"
+      ? join(it.person, "Library", "LaunchAgents", "agent-autoloop.plist")
+      : join(it.person, ".config", "systemd", "user", "agent-autoloop.service");
+  mkdirSync(join(file, ".."), { recursive: true });
+  writeFileSync(file, `<string>${it.program}</string>`);
+  return file;
+}
+
+function resourcesRemain(it: Install) {
+  assert.ok(existsSync(it.app));
+  assert.ok(isThere(join(it.person, ".local", "bin", "agent-autoloop")));
+  assert.ok(isThere(join(it.elsewhere, "agent-autoloop")));
+  assert.ok(isThere(skillLink(it)));
+}
+
+async function ignoredTermOwner(it: Install) {
+  const file = join(it.person, "lock-owner.mjs");
+  writeFileSync(
+    file,
+    `import { acquireRunLock } from ${JSON.stringify(join(it.app, "host/runlock.ts"))};
+const lock = acquireRunLock();
+process.on('SIGTERM', () => {});
+process.send({ready:true});
+setInterval(() => {}, 1000);`,
+  );
+  const child = spawn(process.execPath, [file], { env: it.env, stdio: ["ignore", "ignore", "pipe", "ipc"] });
+  children.push(child);
+  await new Promise<void>((resolve, reject) => {
+    child.once("message", () => resolve());
+    child.once("exit", (code) => reject(new Error(`Lock owner exited ${code}`)));
+    child.once("error", reject);
+  });
+  return child;
+}
+
+test("unknown numeric metadata refuses uninstall before any service or resource removal", () => {
+  const it = install();
+  const service = serviceFile(it);
+  writeFileSync(join(it.hub, "up.pid"), "123456789\n");
+  const done = it.run(["uninstall", "--yes"]);
+  assert.equal(done.status, 1);
+  assert.match(done.stderr, /人工核验/);
+  assert.ok(!existsSync(it.called), "no service hooks before identity preflight");
+  assert.ok(existsSync(service));
+  resourcesRemain(it);
+  assert.equal(readFileSync(join(it.hub, "up.pid"), "utf8"), "123456789\n");
+});
+
+for (const content of [
+  "123456789x\n",
+  '{"pid":123456789',
+  "not-json\n",
+  "0\n",
+  "{}",
+  "",
+  "null",
+  "[]",
+  '{"pid":0,"startedAt":"stale","token":"stale"}',
+  '{"pid":1.5,"startedAt":"stale","token":"stale"}',
+  '{"pid":1,"startedAt":"","token":"stale"}',
+  '{"pid":1,"startedAt":"stale"}',
+]) {
+  test(`malformed metadata ${JSON.stringify(content)} refuses uninstall without deleting anything`, () => {
+    const it = install();
+    const service = serviceFile(it);
+    writeFileSync(join(it.hub, "up.pid"), content);
+    const done = it.run(["uninstall", "--yes"]);
+    assert.equal(done.status, 1);
+    assert.match(done.stderr, /人工核验/);
+    assert.ok(!existsSync(it.called));
+    assert.ok(existsSync(service));
+    resourcesRemain(it);
+    assert.equal(readFileSync(join(it.hub, "up.pid"), "utf8"), content);
+  });
+}
+
+for (const kind of ["symlink", "dangling symlink", "directory", "hardlink"] as const) {
+  test(`unsafe metadata ${kind} refuses uninstall before service hooks or deletion`, () => {
+    const it = install();
+    const service = serviceFile(it);
+    const file = join(it.hub, "up.pid");
+    const target = join(it.person, "metadata-target");
+    if (kind === "directory") mkdirSync(file);
+    else {
+      if (kind === "symlink" || kind === "hardlink")
+        writeFileSync(target, JSON.stringify({ pid: process.pid, startedAt: "stale", token: "stale" }));
+      if (kind === "hardlink") linkSync(target, file);
+      else symlinkSync(target, file);
+    }
+    const done = it.run(["uninstall", "--yes"]);
+    assert.equal(done.status, 1);
+    assert.match(done.stderr, /人工核验/);
+    assert.ok(!existsSync(it.called));
+    assert.ok(existsSync(service));
+    resourcesRemain(it);
+    assert.ok(isThere(file));
+    if (kind === "hardlink") assert.equal(lstatSync(file).ino, lstatSync(target).ino);
+    else if (kind !== "directory") assert.equal(readlinkSync(file), target);
+  });
+}
+
+test("held lock with unverifiable identity refuses uninstall before service removal", async () => {
+  const it = install();
+  const service = serviceFile(it);
+  await ignoredTermOwner(it);
+  writeFileSync(join(it.hub, "up.pid"), JSON.stringify({ pid: 123456789, startedAt: "unknown", token: "unknown" }));
+  const metadata = readFileSync(join(it.hub, "up.pid"), "utf8");
+  const done = it.run(["uninstall", "--yes"]);
+  assert.equal(done.status, 1);
+  assert.match(done.stderr, /人工核验/);
+  assert.ok(!existsSync(it.called));
+  assert.ok(existsSync(service));
+  resourcesRemain(it);
+  assert.equal(readFileSync(join(it.hub, "up.pid"), "utf8"), metadata);
+});
+
+test("a verified owner ignoring TERM times out without removing app or links or claiming success", async () => {
+  const it = install();
+  await ignoredTermOwner(it);
+  const metadata = readFileSync(join(it.hub, "up.pid"), "utf8");
+  const preload = join(it.person, "fast-wait.mjs");
+  writeFileSync(preload, "Atomics.wait = () => 'timed-out';");
+  const done = it.run(["uninstall", "--yes"], { NODE_OPTIONS: `--import=${preload}` });
+  assert.equal(done.status, 1);
+  assert.match(done.stderr, /停止超时/);
+  assert.doesNotMatch(done.stdout, /卸载好了/);
+  resourcesRemain(it);
+  assert.equal(readFileSync(join(it.hub, "up.pid"), "utf8"), metadata);
+});
+
+test("unheld stale JSON metadata does not block safe uninstall", () => {
+  const it = install();
+  writeFileSync(join(it.hub, "up.pid"), JSON.stringify({ pid: process.pid, startedAt: "stale", token: "stale" }));
+  const done = it.run(["uninstall", "--yes"]);
+  assert.equal(done.status, 0, done.stderr);
+  assert.ok(!existsSync(it.app));
+  linksAreGone(it);
+});
+
 test("the install it makes is what it takes away: service stopped, links gone, all data always kept", () => {
   const it = install();
   assert.ok(lstatSync(skillLink(it)).isSymbolicLink(), "init linked the Skill");
@@ -170,11 +312,30 @@ test("at a terminal only confirming removes the program, and every answer preser
 
 test("a hub started by hand is stopped too; a process that only has the old number isn't", async () => {
   const it = install();
-  const asIfUp = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "agent-autoloop", "up"], {
-    stdio: "ignore",
+  const launch = join(it.person, "held-child.mjs");
+  const configFile = join(it.hub, "config.json");
+  const config = JSON.parse(readFileSync(configFile, "utf8"));
+  delete config.worker;
+  config.channels = {};
+  writeFileSync(configFile, JSON.stringify(config));
+  writeFileSync(
+    launch,
+    `import { registerHooks } from 'node:module';
+registerHooks({ load(url, context, next) {
+  if (url.endsWith('/host/http.ts')) return { format: 'module', shortCircuit: true, source: \"import { EventEmitter } from 'node:events'; export function serve() { const server = new EventEmitter(); server.close = (done) => { server.emit('close'); done?.(); }; server.closeAllConnections = () => {}; setImmediate(() => server.emit('listening')); return server; }\" };
+  return next(url, context);
+} });
+const { up } = await import(${JSON.stringify(join(it.app, "host/up.ts"))});
+await up();
+setInterval(() => {}, 1000);
+`,
+  );
+  const asIfUp = spawn(process.execPath, [launch], {
+    env: it.env,
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
   });
   children.push(asIfUp);
-  writeFileSync(join(it.hub, "up.pid"), String(asIfUp.pid));
+  await new Promise<void>((resolve) => asIfUp.once("message", () => resolve()));
   const stopped = new Promise((resolve) => asIfUp.on("exit", resolve));
   assert.equal(it.run(["uninstall", "--yes"]).status, 0);
   await stopped;
@@ -183,9 +344,28 @@ test("a hub started by hand is stopped too; a process that only has the old numb
   const someoneElse = spawn("/bin/sleep", ["30"], { stdio: "ignore" });
   children.push(someoneElse);
   writeFileSync(join(other.hub, "up.pid"), String(someoneElse.pid));
-  assert.equal(other.run(["uninstall", "--yes"]).status, 0);
+  const refused = other.run(["uninstall", "--yes"]);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /人工核验/);
+  assert.ok(existsSync(other.app));
+  assert.ok(isThere(join(other.person, ".local", "bin", "agent-autoloop")));
+  assert.equal(readFileSync(join(other.hub, "up.pid"), "utf8"), String(someoneElse.pid));
   assert.equal(someoneElse.exitCode, null);
   assert.equal(someoneElse.signalCode, null);
+
+  const disguised = install();
+  const fake = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000); // agent-autoloop up"], {
+    stdio: "ignore",
+  });
+  children.push(fake);
+  writeFileSync(join(disguised.hub, "up.pid"), String(fake.pid));
+  const rejected = disguised.run(["uninstall", "--yes"]);
+  assert.equal(rejected.status, 1);
+  assert.match(rejected.stderr, /人工核验/);
+  assert.ok(existsSync(disguised.app));
+  assert.equal(readFileSync(join(disguised.hub, "up.pid"), "utf8"), String(fake.pid));
+  assert.equal(fake.exitCode, null);
+  assert.equal(fake.signalCode, null);
 });
 
 test("AGENT_AUTOLOOP_HOME can name anything: a folder this program didn't make, or the user's home, isn't deleted", () => {
