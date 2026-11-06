@@ -1,10 +1,22 @@
 // Keeping it running: launchd on a Mac, systemd on Linux. Both start it at login and restart it if it stops.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { HOME } from "./home.ts";
+import { isRunLockHeld, readRunIdentity } from "./runlock.ts";
 
 const PROGRAM = path.join(import.meta.dirname, "..", "bin", "agent-autoloop.ts");
 /** Another install on this machine (another AGENT_AUTOLOOP_HOME) has a service of its own. */
@@ -89,29 +101,68 @@ export function removeService() {
   }
 }
 
-/** The process that left its number in up.pid, if it still is that process: the number may be someone else's by now. */
+/** Only a live lock plus verified birth identity can authorize signals. ps argv/title and legacy digits cannot. */
 export function runningUp() {
+  return isRunLockHeld() ? (readRunIdentity()?.pid ?? null) : null;
+}
+
+/** Returns a verified live PID or null for a free lock; unknown state throws instead of masquerading as stopped. */
+export function assertRunKnown(): number | null {
+  if (isRunLockHeld()) {
+    const identity = readRunIdentity();
+    if (!identity) throw new Error("运行锁仍被占用，但无法核验进程身份：请人工核验，未自动停止或卸载。");
+    return identity.pid;
+  }
   const file = path.join(HOME, "up.pid");
-  if (!existsSync(file)) return null;
-  const pid = readFileSync(file, "utf8").trim();
-  let command = "";
+  const unknown = "进程记录损坏、属于旧版或无法安全读取，运行状态未知：请人工核验，未自动停止或卸载，也未清除记录。";
   try {
-    command = execFileSync("ps", ["-p", pid, "-o", "command="], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-  } catch {}
-  return /agent-autoloop(\.ts)? up\b/.test(command) ? Number(pid) : null;
+    const stat = lstatSync(file, { throwIfNoEntry: false });
+    if (!stat) return null;
+    if (!stat.isFile() || stat.nlink !== 1) throw new Error(unknown);
+    const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    let value: unknown;
+    try {
+      const opened = fstatSync(fd);
+      if (!opened.isFile() || opened.nlink !== 1 || opened.dev !== stat.dev || opened.ino !== stat.ino) {
+        throw new Error(unknown);
+      }
+      value = JSON.parse(readFileSync(fd, "utf8"));
+    } finally {
+      closeSync(fd);
+    }
+    // Match runlock's metadata shape, not its live birth check: a valid stale identity is safe only with a free lock.
+    if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(unknown);
+    const identity = value as Partial<import("./runlock.ts").RunIdentity>;
+    if (
+      !Number.isSafeInteger(identity.pid) ||
+      identity.pid! <= 0 ||
+      typeof identity.startedAt !== "string" ||
+      !identity.startedAt ||
+      typeof identity.token !== "string" ||
+      !identity.token
+    )
+      throw new Error(unknown);
+  } catch {
+    throw new Error(unknown);
+  }
+  return null;
 }
 
 /** Stopping a service returns before its process is gone, and one started by hand has no service to stop it. */
 export function stopUp() {
-  const pid = runningUp();
+  const pid = assertRunKnown();
   if (pid === null) return;
   try {
     process.kill(pid, "SIGTERM");
   } catch {}
-  for (let tries = 0; tries < 50 && runningUp() !== null; tries++) pause(100);
+  for (let tries = 0; tries < 50 && isRunLockHeld(); tries++) pause(100);
+  const timeout = "停止超时，运行状态仍未确认已停止：请人工核验，未继续删除程序或链接。";
+  if (isRunLockHeld()) throw new Error(timeout);
+  try {
+    if (assertRunKnown() !== null) throw new Error(timeout);
+  } catch {
+    throw new Error(timeout);
+  }
 }
 
 export function serviceRunning() {

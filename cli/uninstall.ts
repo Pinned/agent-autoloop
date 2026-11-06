@@ -4,7 +4,7 @@ import { existsSync, lstatSync, realpathSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { HOME } from "../host/home.ts";
-import { removeService, stopUp } from "../host/service.ts";
+import { assertRunKnown, removeService, stopUp } from "../host/service.ts";
 
 const ROOT = path.join(import.meta.dirname, "..");
 
@@ -37,6 +37,7 @@ export async function uninstall(yes: boolean, ask: ((question: string) => Promis
       return;
     }
   }
+  assertRunKnown();
   removeService();
   stopUp();
   removeLinks();
