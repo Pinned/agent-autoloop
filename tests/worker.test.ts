@@ -17,12 +17,29 @@
 // children, lose offline results, duplicate concurrent ticks/settlements, or deadlock with the run loop.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
-import { setup } from "./helpers.ts";
+import { after, test as nodeTest, type TestContext } from "node:test";
 
-const home = setup("worker");
+const home = mkdtempSync(join(tmpdir(), "agent-autoloop-worker-"));
+process.env.AGENT_AUTOLOOP_HOME = home;
+process.env.AGENT_AUTOLOOP_RULES = join(import.meta.dirname, "rules.fixture.json");
+let preserveHome = false;
+after(() => {
+  if (preserveHome) console.error(`controlled turn failed; HOME retained in place at ${home}`);
+  else rmSync(home, { recursive: true, force: true });
+});
+// A failed controlled scenario may leave an unverified group. Later tests must not touch its entries or resources.
+function test(name: string, run: (context: TestContext) => void | Promise<void>) {
+  return nodeTest(name, async (context) => {
+    if (preserveHome) {
+      context.skip("previous controlled turn failed; retained HOME must not be reused");
+      return;
+    }
+    await run(context);
+  });
+}
 const folder = join(home, "project");
 mkdirSync(folder);
 process.env.AGENT_AUTOLOOP_SECRET_X = "must-not-leak";
@@ -353,16 +370,230 @@ test("cancellation waits for a child ignoring SIGTERM, including after worker re
   }
 });
 
-test("a run over its time is stopped and comes back failed", async () => {
+/** Only these two clock scenarios use a controlled, TERM-resistant process. */
+async function controlledTurn(
+  name: string,
+  exercise: (scene: {
+    hub: ReturnType<typeof fakeHub>;
+    given: ReturnType<typeof job>;
+    w: ReturnType<typeof worker>;
+    entry: () => ReturnType<ReturnType<typeof worker>["entries"]>[number];
+    advance: (moment: number) => void;
+    release: () => void;
+    terminated: () => boolean;
+    groupLive: () => boolean;
+    phase: (name: string) => void;
+  }) => Promise<void>,
+) {
+  const dir = join(folder, `controlled-${name}`);
+  mkdirSync(dir);
+  const ready = join(dir, "ready.json");
+  const released = join(dir, "release");
+  const term = join(dir, "term");
+  const script = join(dir, "agent.cjs");
+  // The child publishes its kernel-reported birth and group, not just an argv nonce.
+  writeFileSync(
+    script,
+    `const fs = require('node:fs');
+const { execFileSync } = require('node:child_process');
+process.on('SIGTERM', () => fs.writeFileSync(${JSON.stringify(term)}, 'TERM'));
+const identity = execFileSync('/bin/ps', ['-p', String(process.pid), '-o', 'pid=', '-o', 'ppid=', '-o', 'pgid=', '-o', 'lstart='], { encoding: 'utf8', timeout: 2000 }).trim();
+fs.writeFileSync(${JSON.stringify(`${ready}.tmp`)}, JSON.stringify({ pid: process.pid, identity }));
+fs.renameSync(${JSON.stringify(`${ready}.tmp`)}, ${JSON.stringify(ready)});
+let printed = false;
+setInterval(() => {
+  if (!printed && fs.existsSync(${JSON.stringify(released)})) {
+    printed = true;
+    fs.writeSync(1, 'session=s-h\\nTURN-OVER\\n挂住之前说的\\n');
+  }
+}, 10);
+`,
+  );
   const hub = fakeHub();
+  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+  const given = job({ use: "scripted", command: [`exec ${quote(process.execPath)} ${quote(script)}`], timeout: 5 });
+  hub.jobs.push(given);
   let clock = Date.now();
-  hub.jobs.push(job({ command: ["/bin/sh", "-c", "sleep 30"], timeout: 5 }));
   const w = worker(hub, { now: () => clock });
-  await w.tick();
-  clock += 6 * 60_000;
-  await until(w, () => hub.results.length === 1);
-  assert.equal(hub.results[0].outcome, "failed");
-  assert.match(hub.results[0].error, /超过 5 分钟/);
+  const entry = () => w.entries().find((entry) => entry.run === given.run)!;
+  type Identity = { pid: number; ppid: number; pgid: number; birth: string; state: string; command: string };
+  const processes = (): Identity[] =>
+    execFileSync(
+      "/bin/ps",
+      ["-ax", "-o", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "lstart=", "-o", "stat=", "-o", "command="],
+      { encoding: "utf8", timeout: 2000 },
+    )
+      .trim()
+      .split("\n")
+      .map((line) => {
+        const parts = line.trim().split(/\s+/);
+        return {
+          pid: Number(parts[0]),
+          ppid: Number(parts[1]),
+          pgid: Number(parts[2]),
+          birth: parts.slice(3, 8).join(" "),
+          state: parts[8],
+          command: parts.slice(9).join(" "),
+        };
+      });
+  let group: number | undefined;
+  let identities: Identity[] = [];
+  let owned = false;
+  let stage = "launch";
+  let expired = false;
+  const deadline = Date.now() + 15_000;
+  // This is a scenario waiting/check budget, not a hard preemption deadline for a blocked tick.
+  // Expiry only sets a flag; cleanup starts after the awaited tick returns, never via Promise.race.
+  const watchdog = setTimeout(() => {
+    expired = true;
+  }, 15_000);
+  const checked = {
+    async tick() {
+      assert.ok(!expired && Date.now() <= deadline, `scenario watchdog: ${stage}`);
+      const answer = await w.tick();
+      assert.ok(!expired && Date.now() <= deadline, `scenario watchdog after tick: ${stage}`);
+      return answer;
+    },
+  };
+  const groupLive = () => processes().some((row) => row.pgid === group && !row.state.startsWith("Z"));
+  try {
+    await checked.tick();
+    const launched = entry();
+    assert.ok(launched?.pid);
+    group = launched.pid;
+    const marker = `agent-autoloop-run:${given.run}:${given.attempt}:${launched.turn}`;
+    identities = processes().filter((row) => row.pgid === group);
+    const wrapper = identities.find((row) => row.pid === group);
+    assert.ok(wrapper, "the worker's group leader is present");
+    assert.ok(wrapper.command.includes(marker), "the worker's persisted identity matches the group leader");
+    assert.equal(wrapper.ppid, process.pid);
+    const result = hub.result;
+    hub.result = async (run, token, body) => {
+      assert.equal(groupLive(), false, "no result may be submitted while any group member is alive");
+      assert.equal(run, given.run);
+      assert.equal(token, given.token);
+      return result(run, token, body);
+    };
+    stage = "ready";
+    await until(checked, () => existsSync(ready));
+    const child = JSON.parse(readFileSync(ready, "utf8"));
+    const rows = processes();
+    const liveChild = rows.find((row) => row.pid === child.pid)!;
+    assert.ok(liveChild);
+    assert.equal(liveChild.pgid, group);
+    assert.equal(
+      `${liveChild.pid} ${liveChild.ppid} ${liveChild.pgid} ${liveChild.birth}`,
+      child.identity.replace(/\s+/g, " "),
+    );
+    let ancestor = liveChild;
+    while (ancestor.pid !== group) {
+      const parent = rows.find((row) => row.pid === ancestor.ppid);
+      assert.ok(parent && parent.pgid === group, "the ready child descends from the verified worker wrapper");
+      ancestor = parent;
+    }
+    assert.equal(ancestor.birth, wrapper.birth);
+    assert.ok(ancestor.command.includes(marker));
+    identities = rows.filter((row) => row.pgid === group);
+    owned = true;
+    await exercise({
+      hub,
+      given,
+      w: { ...w, tick: checked.tick },
+      entry,
+      advance: (moment) => {
+        clock = moment;
+      },
+      release: () => writeFileSync(released, "release"),
+      terminated: () => existsSync(term),
+      groupLive,
+      phase: (name) => {
+        stage = name;
+      },
+    });
+    assert.equal(groupLive(), false, "success must not need a cleanup signal");
+  } catch (failure) {
+    preserveHome = true;
+    const failures: unknown[] = [failure];
+    let saved: ReturnType<typeof entry> | undefined;
+    try {
+      saved = entry();
+      group ??= saved?.pid;
+    } catch (error) {
+      failures.push(error);
+    }
+    console.error(
+      "controlled turn failure",
+      JSON.stringify({ stage, clock, entry: saved, group, identities, error: String(failure) }),
+    );
+    try {
+      const rows = processes();
+      const live = rows.filter((row) => row.pgid === group && !row.state.startsWith("Z"));
+      console.error("controlled turn live group", JSON.stringify(live));
+      if (live.length) {
+        assert.ok(
+          owned &&
+            identities.length &&
+            live.every((row) =>
+              identities.some((known) => known.pid === row.pid && known.birth === row.birth && known.pgid === row.pgid),
+            ),
+          "cleanup blocked: live group identity changed or was never authorized",
+        );
+        process.kill(-group!, "SIGKILL");
+        // Cleanup gets its own real waiting budget; failure to verify death still retains the original HOME.
+        await until({ tick: async () => true }, () => !groupLive(), 15);
+      }
+    } catch (error) {
+      failures.push(error);
+    }
+    console.error(`controlled turn evidence and resources retained in place at ${home}`);
+    if (failures.length > 1)
+      throw new AggregateError(failures, "controlled turn failed; diagnosis or safe cleanup also failed");
+    throw failure;
+  } finally {
+    clearTimeout(watchdog);
+  }
+}
+
+test("a run over its time is stopped and comes back failed", async (t) => {
+  await controlledTurn("timeout", async ({ hub, given, w, entry, advance, terminated, groupLive, phase }) => {
+    phase("timeout boundary");
+    const launchedAt = entry().launchedAt!;
+    const session = entry().session;
+    assert.equal(typeof launchedAt, "number");
+    advance(launchedAt + 5 * 60_000);
+    await w.tick();
+    assert.equal(entry().stopping, undefined, "exactly five minutes is not over the limit");
+    advance(launchedAt + 5 * 60_000 + 1);
+    await w.tick();
+    const stopping = entry().stopping!;
+    assert.equal(stopping, launchedAt + 5 * 60_000 + 1);
+    assert.equal(entry().why, "timeout");
+    await until(w, terminated);
+    phase("frozen clock control");
+    for (let i = 0; i < 3; i++) await w.tick();
+    assert.equal(groupLive(), true, "a frozen stopping clock cannot upgrade TERM to KILL");
+    assert.equal(hub.results.length, 0);
+    t.diagnostic("control: TERM received; frozen clock leaves the group alive and submits no result");
+    phase("stop grace boundary");
+    advance(stopping + 10_000);
+    await w.tick();
+    assert.equal(groupLive(), true, "exactly ten seconds must not upgrade");
+    assert.equal(hub.results.length, 0);
+    phase("stop grace exceeded");
+    advance(stopping + 10_001);
+    await until(w, () => hub.results.length === 1);
+    assert.equal(groupLive(), false);
+    assert.deepEqual(hub.results[0], {
+      run: given.run,
+      token: given.token,
+      outcome: "failed",
+      error: "超过 5 分钟还没结束，已停止",
+      session,
+    });
+    assert.equal(w.entries().length, 0);
+    await w.tick();
+    assert.equal(hub.results.length, 1);
+  });
 });
 
 test("no more than capacity at once; a claim stays until its job has arrived", async () => {
@@ -504,22 +735,57 @@ test("the session is told to the hub while it runs, with its link", async () => 
   assert.ok(hub.starts.some((s) => s.session === "s-9" && s.link === "app://s-9"));
 });
 
-test("a turn that is over but doesn't exit is ended after a while, and its answer counts", async () => {
-  const hub = fakeHub();
-  let clock = Date.now();
-  hub.jobs.push(job({ use: "scripted", command: ["printf 'session=s-h\\nTURN-OVER\\n挂住之前说的\\n'; sleep 30"] }));
-  const w = worker(hub, { now: () => clock });
-  await w.tick();
-  for (let i = 0; i < 10 && !w.entries()[0]?.finishedAt; i++) {
+test("a turn that is over but doesn't exit is ended after a while, and its answer counts", async (t) => {
+  await controlledTurn("finished", async ({ hub, given, w, entry, advance, release, terminated, groupLive, phase }) => {
+    phase("withheld output control");
+    for (let i = 0; i < 10; i++) await w.tick();
+    assert.equal(entry().finishedAt, undefined, "sampling cannot observe a completion not yet released");
+    assert.equal(entry().stopping, undefined);
+    assert.equal(hub.results.length, 0);
+    t.diagnostic("control: ready plus ten ticks before output release has no persisted finishedAt");
+    phase("completion persistence barrier");
+    release();
+    await until(w, () => entry()?.finishedAt !== undefined);
+    const finishedAt = entry().finishedAt!;
+    assert.equal(finishedAt, entry().launchedAt);
+    assert.ok(
+      hub.starts.some((start) => start.run === given.run && start.session === "s-h" && start.link === "app://s-h"),
+    );
+    phase("finished grace boundary");
+    advance(finishedAt + 30_000);
     await w.tick();
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  assert.ok(w.entries()[0].finishedAt, "it saw the turn was over");
-  await w.tick();
-  assert.equal(hub.results.length, 0, "it gets a while to exit by itself");
-  clock += 31_000;
-  await until(w, () => hub.results.length === 1);
-  assert.equal(hub.results[0].summary, "挂住之前说的");
+    assert.equal(entry().stopping, undefined, "exactly thirty seconds is still its exit grace");
+    assert.equal(hub.results.length, 0);
+    assert.equal(groupLive(), true);
+    phase("finished grace exceeded");
+    advance(finishedAt + 31_000);
+    await w.tick();
+    const stopping = entry().stopping!;
+    assert.equal(stopping, finishedAt + 31_000);
+    assert.equal(entry().why, "finished");
+    await until(w, terminated);
+    assert.equal(hub.results.length, 0, "receiving TERM is not a cleared group");
+    phase("stop grace boundary");
+    advance(stopping + 10_000);
+    await w.tick();
+    assert.equal(groupLive(), true, "exactly ten seconds must not upgrade");
+    assert.equal(hub.results.length, 0);
+    phase("stop grace exceeded");
+    advance(stopping + 10_001);
+    await until(w, () => hub.results.length === 1);
+    assert.equal(groupLive(), false);
+    assert.deepEqual(hub.results[0], {
+      run: given.run,
+      token: given.token,
+      outcome: "done",
+      summary: "挂住之前说的",
+      session: "s-h",
+      usage: { input: 1, output: 1 },
+    });
+    assert.equal(w.entries().length, 0);
+    await w.tick();
+    assert.equal(hub.results.length, 1);
+  });
 });
 
 test("the hub gone for ten minutes is told once, tried a few times if telling fails, and told again after it came back and went again", async () => {
