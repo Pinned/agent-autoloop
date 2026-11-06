@@ -1,0 +1,59 @@
+// Prevent a sandbox preload with unresolved local imports, remote renderer content and accidental demo/business execution.
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
+
+test("independent desktop package has build, test, typecheck, start and no runtime dependencies", () => {
+  const pkg = JSON.parse(read("../package.json"));
+  assert.equal(pkg.main, "dist/main.js");
+  assert.equal(pkg.type, "module");
+  assert.equal(pkg.dependencies, undefined);
+  for (const script of ["build", "test", "typecheck", "start"]) assert.equal(typeof pkg.scripts[script], "string");
+  for (const name of ["electron", "typescript", "esbuild"]) assert.ok(pkg.devDependencies[name]);
+});
+
+test("app lock is acquired after userData isolation and second instance restores the window", () => {
+  const main = read("../src/main.ts");
+  assert.match(main, /requestSingleInstanceLock\(\)/);
+  assert.ok(main.indexOf('app.setPath("userData"') < main.indexOf("requestSingleInstanceLock()"));
+  assert.match(main, /app\.on\("second-instance"/);
+});
+
+test("isolated smoke verifies second process and uses confirmed normal quit rather than forced success", () => {
+  const main = read("../src/main.ts");
+  const driver = read("../scripts/smoke.mjs");
+  assert.match(main, /DESKTOP_SMOKE_SECOND_RESTORED/);
+  assert.match(main, /DESKTOP_SMOKE_CANCEL_RESIDENT/);
+  assert.doesNotMatch(main, /app\.exit\(0\)/);
+  assert.match(driver, /DESKTOP_SMOKE_SECOND_EXIT/);
+  assert.match(driver, /DESKTOP_SMOKE_CANCEL_RESIDENT/);
+});
+
+test("built preload is a single CommonJS file requiring only Electron", () => {
+  const preload = read("../dist/preload.cjs");
+  const requires = [...preload.matchAll(/require\(["']([^"']+)["']\)/g)].map((match) => match[1]);
+  assert.deepEqual(requires, ["electron"]);
+  assert.doesNotMatch(preload, /\bimport\s|node:|\.\.\//);
+  assert.match(preload, /exposeInMainWorld/);
+  assert.doesNotMatch(preload, /exposeInMainWorld\(["'](?:ipcRenderer|require)/);
+});
+
+test("fixed renderer has restrictive CSP and no simulated business or network connection", () => {
+  const html = read("../dist/renderer/index.html");
+  assert.match(html, /default-src 'none'/);
+  assert.match(html, /connect-src 'none'/);
+  assert.match(html, /script-src 'self'/);
+  assert.doesNotMatch(html, /https?:|unsafe-inline|unsafe-eval/);
+  const renderer = read("../dist/renderer/app.js");
+  assert.doesNotMatch(
+    renderer,
+    /\bfetch\(|WebSocket|localStorage|sessionStorage|ipcRenderer|demo-state|setInterval|Notification/,
+  );
+  assert.match(renderer, /今天/);
+  assert.match(renderer, /任务/);
+  assert.match(renderer, /自动化/);
+  assert.match(renderer, /执行机/);
+  assert.match(renderer, /设置/);
+});

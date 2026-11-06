@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'none'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <title>agent-autoloop · 指挥台</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <header class="titlebar">
+      <span>agent-autoloop <span class="muted">/ 指挥台</span></span
+      ><button id="hide-window" aria-label="收起窗口，驻留托盘">收起窗口</button>
+    </header>
+    <div class="release-note">桌面壳 · 运行服务尚未接入，不会执行任务或发送通知</div>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="logo" aria-hidden="true"></span>
+          <div>autoloop<small>工作有进展，决策找你</small></div>
+        </div>
+        <div class="nav-label">工作空间</div>
+        <nav aria-label="主导航" id="navigation"></nav>
+        <div class="sidebar-footer">
+          <span class="connection">服务未接入</span>
+          <p>当前仅提供桌面窗口与主题设置</p>
+        </div>
+      </aside>
+      <main id="main" tabindex="-1" aria-labelledby="page-title"></main>
+    </div>
+    <footer class="statusbar"><span>本地桌面壳 · 无业务连接</span><button id="quit-app">退出应用…</button></footer>
+    <div id="error" class="error" role="alert" hidden></div>
+    <noscript>此桌面界面需要启用 JavaScript。</noscript>
+  </body>
+</html>

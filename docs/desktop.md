@@ -2,6 +2,30 @@
 
 桌面版正在分步开发，**尚未交付可用于真实业务的 App**。已确认的交互基准是 [`mockups/app-prototype/`](../mockups/app-prototype/README.md)；另外保留 v1/v2/v3 两页视觉候选，最终采用 v1，并支持深色、浅色和跟随系统。
 
+## 当前可运行范围
+
+`desktop/` 已有开发用 Electron 窗口：五页导航、深色/浅色/跟随系统、关窗菜单栏驻留和退出确认。业务页面仍为明确的待接入状态，不会领取任务或连接现有 CLI 服务；这不是已交付的业务 App。
+
+开发时先在仓库根目录安装独立依赖，再运行隔离的窗口检查：
+
+```bash
+npm --prefix desktop ci
+npm --prefix desktop run typecheck
+npm --prefix desktop test
+npm --prefix desktop run runtime:check
+npm --prefix desktop run smoke
+```
+
+`runtime:check` 会下载固定版本的官方 Node 24.22.2，按官方 HTTPS 清单比对 SHA256，然后在含空格的临时资源目录和隔离 HOME 中验证原始 TS、SQLite 自定义函数、事实持久化和动态插件。没有进行签名验签；macOS arm64 已实机验证，其他架构不能仅凭目标配置称为验证通过。Linux 目标仅供 CI 验证，不代表提供 Linux 桌面安装包。
+
+macOS 窗口检查使用自动创建并清理的临时数据目录，不发送通知。手动启动也必须指定临时目录：
+
+```bash
+DESKTOP_HOME="$(mktemp -d)" npm --prefix desktop start
+```
+
+手动退出后可自行清理该临时目录。开发壳不会读取或迁移 `~/.agent-autoloop`；未提供安装包、真实业务连接或任务安全退出能力。
+
 ## 产品边界
 
 - Electron App 自己管理中台和执行机运行进程，支持“中台 + 本机执行机”和“纯执行机”，不是遥控另外安装的系统服务。
