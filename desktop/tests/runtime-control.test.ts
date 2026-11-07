@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
-import { createRuntimeControl } from "../src/runtime-control.ts";
+import { createRuntimeControl, SERVICE_ERROR } from "../src/runtime-control.ts";
 import { createLifecycle } from "../src/lifecycle.ts";
 import type { Supervisor, SupervisorState } from "../src/supervisor.ts";
 
@@ -14,10 +14,14 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-const state = (status: SupervisorState["status"], pendingSync: number | null = null): SupervisorState => ({
+const state = (
+  status: SupervisorState["status"],
+  pendingSync: number | null = null,
+  role: SupervisorState["role"] = null,
+): SupervisorState => ({
   status,
   pendingSync,
-  role: null,
+  role,
   restartAttempt: 0,
   error: null,
 });
@@ -122,6 +126,31 @@ test("stop during preparation waits, prevents late spawn and rejects starts whil
   assert.equal(f.starts(), 0);
   assert.equal(cleaned, 1);
   assert.equal(control.isIdle(), true);
+});
+
+test("role follows the supervisor, survives a safe stop and resets on a new launch; errors carry fixed codes", async (t) => {
+  const f = await fixture(t);
+  const control = createRuntimeControl({
+    home: f.home,
+    enabled: true,
+    prepare: async () => ({ nodePath: "/node", entryPath: "/cli", home: f.home }),
+    supervisorFactory: () => f.supervisor,
+  });
+  await control.start();
+  f.setState(state("running", null, "hub-worker"));
+  assert.equal(control.getState().role, "hub-worker");
+  assert.equal(control.getState().error, null);
+  f.setState({ ...state("running", null, "worker"), error: { code: "runtime", message: "secret detail" } });
+  assert.deepEqual(control.getState().error, { code: "service", message: SERVICE_ERROR });
+  f.setState(state("stopped", 2, "hub-worker"));
+  assert.equal(await control.stop(), true);
+  assert.equal(control.getState().role, "hub-worker");
+  assert.equal(control.getState().pendingSync, 2);
+  assert.equal(control.getState().error, null);
+  await control.start();
+  f.setState(state("running", null, "worker"));
+  assert.equal(control.getState().role, "worker");
+  assert.doesNotMatch(JSON.stringify(control.getState()), /secret detail/);
 });
 
 test("failed preparation cleans registered resources and emits only fixed safe errors", async (t) => {

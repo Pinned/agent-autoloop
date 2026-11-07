@@ -12,6 +12,12 @@ import { createRuntimeControl, SAFE_STOP_ERROR, type RuntimeControlState } from 
 import { createSetupControl } from "./setup-control.ts";
 import { createSetupRunner } from "./setup-runner.ts";
 import {
+  desktopRuntimeFailure,
+  desktopRuntimeSnapshotOf,
+  desktopRuntimeStatusText,
+  type DesktopRuntimeResponse,
+} from "../../host/desktop-run-contract.ts";
+import {
   desktopSetupFailure,
   parseDesktopSetupRequest,
   type DesktopSetupOperation,
@@ -145,21 +151,10 @@ if (ownsAppLock)
         canSetup: () => controller.isIdle() && ["stopped", "unconfigured"].includes(controller.getState().status),
         run: (request) => setupRunner.run(request),
       });
-      const statusLabel = (state: RuntimeControlState) => {
-        const labels: Record<RuntimeControlState["status"], string> = {
-          stopped: "本机运行服务未启动",
-          starting: "正在准备或启动本机运行服务",
-          running: "本机运行服务运行中",
-          draining: "正在停止本机 Agent 并排空",
-          failed: "本机运行服务失败",
-          unknown: "本机运行服务状态未确认",
-          unconfigured: "隔离运行目录未配置，请先完成设置（不会自动初始化）",
+      const statusLabel = (state: RuntimeControlState) =>
+        desktopRuntimeStatusText(state, {
           unavailable: smoke ? "纯壳验证，运行服务未启动" : "打包运行资源尚未提供，无法启动运行服务",
-        };
-        return state.status === "stopped" && (state.pendingSync ?? 0) > 0
-          ? `本机已停止；${state.pendingSync} 条结果离线持久待同步`
-          : labels[state.status];
-      };
+        });
       let nativeOperation = false;
       let nativeStopping = false;
       const showSafeError = (message: string) =>
@@ -170,41 +165,62 @@ if (ownsAppLock)
           buttons: ["知道了"],
           noLink: true,
         });
-      async function runtimeAction(action: "start" | "stop") {
-        if (quit.quitting || nativeStopping || (action === "start" && nativeOperation)) return;
-        if (action === "start") nativeOperation = true;
-        else nativeStopping = true;
+      // The single gated entry both the tray/menu actions and the renderer IPC share.
+      // Admission failures answer ok:false; the outcome of a performed run lives in the snapshot's error field.
+      async function performStart(): Promise<DesktopRuntimeResponse> {
+        if (quit.quitting || nativeStopping || nativeOperation) return desktopRuntimeFailure("busy");
+        if (setup.blocked) return desktopRuntimeFailure("unknown");
+        nativeOperation = true;
         refreshMenus();
         try {
-          if (action === "start") {
-            const state = await setup.runStart(
-              () => controller.start(),
-              () => controller.getState(),
-            );
-            if (state.error) await showSafeError(state.error);
-            else if (state.status === "unconfigured")
-              await dialog.showMessageBox(window, {
-                type: "info",
-                title: "运行服务未配置",
-                message: statusLabel(state),
-                detail: "仅使用开发临时目录中的 runtime-home；不会读取真实配置或密钥，也不会自动初始化。",
-                buttons: ["知道了"],
-                noLink: true,
-              });
-          } else if (!(await setup.runStop(() => controller.stop()))) await showSafeError(SAFE_STOP_ERROR);
+          const state = await setup.runStart(
+            () => controller.start(),
+            () => controller.getState(),
+          );
+          return { version: 1, ok: true, state: desktopRuntimeSnapshotOf(state) };
         } catch {
-          await showSafeError(action === "stop" ? SAFE_STOP_ERROR : "无法启动本机运行服务，请检查后手动重试。");
+          return desktopRuntimeFailure("unknown");
         } finally {
-          if (action === "start") nativeOperation = false;
-          else nativeStopping = false;
+          nativeOperation = false;
           refreshMenus();
         }
+      }
+      async function performStop(): Promise<DesktopRuntimeResponse> {
+        if (quit.quitting || nativeStopping) return desktopRuntimeFailure("busy");
+        nativeStopping = true;
+        refreshMenus();
+        try {
+          await setup.runStop(() => controller.stop());
+          // An unsafe stop is a run outcome, not an admission failure: the snapshot carries it.
+          return { version: 1, ok: true, state: desktopRuntimeSnapshotOf(controller.getState()) };
+        } catch {
+          return desktopRuntimeFailure("unknown");
+        } finally {
+          nativeStopping = false;
+          refreshMenus();
+        }
+      }
+      async function runtimeAction(action: "start" | "stop") {
+        const response = action === "start" ? await performStart() : await performStop();
+        if (response.ok) {
+          if (response.state.error) await showSafeError(response.state.error.message);
+          else if (action === "start" && response.state.status === "unconfigured")
+            await dialog.showMessageBox(window, {
+              type: "info",
+              title: "运行服务未配置",
+              message: statusLabel(response.state),
+              detail: "仅使用开发临时目录中的 runtime-home；不会读取真实配置或密钥，也不会自动初始化。",
+              buttons: ["知道了"],
+              noLink: true,
+            });
+        } else if (response.error.code === "unknown")
+          await showSafeError(action === "stop" ? SAFE_STOP_ERROR : "无法启动本机运行服务，请检查后手动重试。");
       }
       function refreshMenus() {
         const state = controller.getState();
         const operations = (): Electron.MenuItemConstructorOptions[] => [
           { label: statusLabel(state), enabled: false },
-          ...(state.error ? [{ label: state.error, enabled: false }] : []),
+          ...(state.error ? [{ label: state.error.message, enabled: false }] : []),
           {
             label: "启动运行服务",
             enabled:
@@ -251,7 +267,11 @@ if (ownsAppLock)
           );
         }
       }
-      controller.subscribe(refreshMenus);
+      controller.subscribe((state) => {
+        refreshMenus();
+        if (window && !window.isDestroyed())
+          window.webContents.send(channels.runtimeEvent, desktopRuntimeSnapshotOf(state));
+      });
       nativeTheme.themeSource = loadTheme(prefsHome);
       session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
       session.defaultSession.setPermissionCheckHandler(() => false);
@@ -403,6 +423,22 @@ if (ownsAppLock)
         assertSender(event, window.webContents, page);
         return setupRequest("join", args);
       });
+      // Runtime control mirrors the tray: same gate, same admission, same safe-stop semantics. Never a forced kill.
+      ipcMain.handle(channels.runtimeGet, (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        if (args.length !== 0) throw new Error("invalid-request");
+        return { version: 1, ok: true, state: desktopRuntimeSnapshotOf(controller.getState()) };
+      });
+      ipcMain.handle(channels.runtimeStart, async (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        if (args.length !== 0) throw new Error("invalid-request");
+        return performStart();
+      });
+      ipcMain.handle(channels.runtimeStop, async (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        if (args.length !== 0) throw new Error("invalid-request");
+        return performStop();
+      });
       await window.loadFile(pagePath);
       window.show();
       if (smoke) {
@@ -415,7 +451,12 @@ if (ownsAppLock)
         const pages = [];
         for (const button of document.querySelectorAll('[data-page]')) { button.click(); pages.push(document.querySelector('h1').textContent); }
         await window.desktop.setTheme('system');
-        return { theme, dark, invalidRejected, pages, nodeAbsent: typeof require === 'undefined' && typeof process === 'undefined', bridge: Object.keys(window.desktop).sort() };
+        const runtime = await window.desktop.runtimeGet();
+        let runtimeEventSeen = false;
+        const unsubscribe = window.desktop.onRuntimeEvent((event) => { runtimeEventSeen = true; });
+        unsubscribe();
+        unsubscribe();
+        return { theme, dark, invalidRejected, pages, runtime, runtimeEventSeen, nodeAbsent: typeof require === 'undefined' && typeof process === 'undefined', bridge: Object.keys(window.desktop).sort() };
       })()`);
           const shots = join(base, "..", ".cache", "smoke");
           mkdirSync(shots, { recursive: true });
@@ -437,6 +478,12 @@ if (ownsAppLock)
             !result.invalidRejected ||
             result.dark.effective !== "dark" ||
             result.pages.join(",") !== "今天,任务,自动化,执行机,设置" ||
+            !result.runtime ||
+            result.runtime.ok !== true ||
+            result.runtime.state.status !== "unavailable" ||
+            result.runtimeEventSeen !== false ||
+            result.bridge.join(",") !==
+              "checkBuiltinAgents,getTheme,initHub,joinWorker,onRuntimeEvent,runtimeGet,runtimeStart,runtimeStop,setTheme,setupStatus,window" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||

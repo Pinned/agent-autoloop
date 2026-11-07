@@ -9,5 +9,17 @@ const bridge = Object.freeze<DesktopBridge>({
   checkBuiltinAgents: () => ipcRenderer.invoke("desktop:setup:check"),
   initHub: () => ipcRenderer.invoke("desktop:setup:init"),
   joinWorker: (input) => ipcRenderer.invoke("desktop:setup:join", input),
+  runtimeGet: () => ipcRenderer.invoke("desktop:runtime:get"),
+  runtimeStart: () => ipcRenderer.invoke("desktop:runtime:start"),
+  runtimeStop: () => ipcRenderer.invoke("desktop:runtime:stop"),
+  onRuntimeEvent: (listener) => {
+    const receiving = (_event: unknown, payload: unknown) => {
+      listener(payload as never);
+    };
+    ipcRenderer.on("desktop:runtime:event", receiving);
+    return () => {
+      ipcRenderer.removeListener("desktop:runtime:event", receiving);
+    };
+  },
 });
 contextBridge.exposeInMainWorld("desktop", bridge);

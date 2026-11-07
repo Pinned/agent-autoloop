@@ -532,7 +532,7 @@ test("controller keeps failed runtime cleanup unknown until a real retry succeed
   failures.add("stage"); failures.add("home"); failures.add("lock");
   const state = await control.start();
   assert.equal(state.status, "unknown");
-  assert.equal(state.error, SAFE_STOP_ERROR);
+  assert.deepEqual(state.error, { code: "safe-stop", message: SAFE_STOP_ERROR });
   assert.equal(JSON.stringify(state).includes(cache), false);
   assert.equal(await control.stop(), false);
   assert.equal(await control.stop(), false);
@@ -574,7 +574,7 @@ for (const resource of ["lock", "home", "stage"]) {
     const state = await control.start();
     assert.equal(failCapture, undefined);
     assert.equal(state.status, "unknown");
-    assert.equal(state.error, SAFE_STOP_ERROR);
+    assert.deepEqual(state.error, { code: "safe-stop", message: SAFE_STOP_ERROR });
     assert.equal(JSON.stringify(state).includes(dir), false);
     assert.equal(error.name, "RuntimeCleanupError");
     assert.match(error.cause.message, /initial identity capture/);
@@ -586,7 +586,7 @@ for (const resource of ["lock", "home", "stage"]) {
       await assert.rejects(error.retryCleanup(), /ownership/i);
       assert.equal(await control.stop(), false);
       assert.equal(control.getState().status, "unknown");
-      assert.equal(control.getState().error, SAFE_STOP_ERROR);
+      assert.deepEqual(control.getState().error, { code: "safe-stop", message: SAFE_STOP_ERROR });
       await fs.access(path);
     }
     assert.equal(attempts.includes(${JSON.stringify(resource)}), false);

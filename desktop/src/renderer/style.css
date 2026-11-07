@@ -421,6 +421,57 @@ main {
 .setup-status:empty {
   display: none;
 }
+.run-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+.run-badge {
+  display: inline-flex;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 10px;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.run-badge[data-status="starting"],
+.run-badge[data-status="running"],
+.run-badge[data-status="draining"],
+.run-badge[data-status="failed"],
+.run-badge[data-status="unknown"] {
+  border-color: var(--blue);
+  background: var(--accent-bg);
+  color: var(--blue);
+}
+.run-role,
+.run-admission {
+  font-size: 12px;
+  margin-top: 10px;
+}
+.run-admission {
+  color: var(--muted);
+}
+.run-error {
+  padding: 12px;
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--blue);
+  background: var(--accent-bg);
+  font-size: 12px;
+}
+.run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+.run-note {
+  font-size: 11px;
+  color: var(--faint);
+  margin-top: 12px;
+}
 @media (max-width: 650px) {
   .setup-choices {
     grid-template-columns: 1fr;
