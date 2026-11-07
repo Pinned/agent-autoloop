@@ -10,6 +10,8 @@ import { loadTheme, saveTheme } from "./preferences.ts";
 import { createSupervisor } from "./supervisor.ts";
 import { createRuntimeControl, SAFE_STOP_ERROR, type RuntimeControlState } from "./runtime-control.ts";
 import { createTodaySource } from "./state-source.ts";
+import { createTaskSource } from "./task-source.ts";
+import { parseDesktopTaskInput } from "../../host/desktop-task-contract.ts";
 import { createSetupControl } from "./setup-control.ts";
 import { createSetupRunner } from "./setup-runner.ts";
 import {
@@ -154,6 +156,8 @@ if (ownsAppLock)
       });
       // The today page reads the local hub over loopback while it runs; never while it does not.
       const todaySource = createTodaySource({ home: runtimeHome, getState: () => controller.getState() });
+      // Task creation is the write side of the same owner data plane, through the hub's own door.
+      const taskSource = createTaskSource({ home: runtimeHome, getState: () => controller.getState() });
       const statusLabel = (state: RuntimeControlState) =>
         desktopRuntimeStatusText(state, {
           unavailable: smoke ? "纯壳验证，运行服务未启动" : "打包运行资源尚未提供，无法启动运行服务",
@@ -448,6 +452,19 @@ if (ownsAppLock)
         if (args.length !== 0) throw new Error("invalid-request");
         return todaySource.read();
       });
+      // The entries the new-task panel offers; never while the local hub is not running.
+      ipcMain.handle(channels.taskEntries, async (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        if (args.length !== 0) throw new Error("invalid-request");
+        return taskSource.entries();
+      });
+      // One task at a time through the hub's door; the input is validated before any request.
+      ipcMain.handle(channels.taskCreate, async (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        if (args.length !== 1) throw new Error("invalid-request");
+        const input = parseDesktopTaskInput(args[0]);
+        return taskSource.create(input);
+      });
       await window.loadFile(pagePath);
       window.show();
       if (smoke) {
@@ -462,11 +479,14 @@ if (ownsAppLock)
         await window.desktop.setTheme('system');
         const runtime = await window.desktop.runtimeGet();
         const today = await window.desktop.todayState();
+        const taskEntries = await window.desktop.taskEntries();
+        let invalidTaskRejected = false;
+        try { await window.desktop.taskCreate({ type: 'Task', summary: 'x', detail: '' }); } catch { invalidTaskRejected = true; }
         let runtimeEventSeen = false;
         const unsubscribe = window.desktop.onRuntimeEvent((event) => { runtimeEventSeen = true; });
         unsubscribe();
         unsubscribe();
-        return { theme, dark, invalidRejected, pages, runtime, today, runtimeEventSeen, nodeAbsent: typeof require === 'undefined' && typeof process === 'undefined', bridge: Object.keys(window.desktop).sort() };
+        return { theme, dark, invalidRejected, pages, runtime, today, taskEntries, invalidTaskRejected, runtimeEventSeen, nodeAbsent: typeof require === 'undefined' && typeof process === 'undefined', bridge: Object.keys(window.desktop).sort() };
       })()`);
           const shots = join(base, "..", ".cache", "smoke");
           mkdirSync(shots, { recursive: true });
@@ -494,9 +514,13 @@ if (ownsAppLock)
             !result.today ||
             result.today.ok !== true ||
             result.today.state.kind !== "unavailable" ||
+            !result.taskEntries ||
+            result.taskEntries.ok !== false ||
+            result.taskEntries.error.code !== "unavailable" ||
+            result.invalidTaskRejected !== true ||
             result.runtimeEventSeen !== false ||
             result.bridge.join(",") !==
-              "checkBuiltinAgents,getTheme,initHub,joinWorker,onRuntimeEvent,runtimeGet,runtimeStart,runtimeStop,setTheme,setupStatus,todayState,window" ||
+              "checkBuiltinAgents,getTheme,initHub,joinWorker,onRuntimeEvent,runtimeGet,runtimeStart,runtimeStop,setTheme,setupStatus,taskCreate,taskEntries,todayState,window" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||

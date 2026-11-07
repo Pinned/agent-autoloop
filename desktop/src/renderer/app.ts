@@ -3,6 +3,8 @@ import { createRendererSetup } from "./setup-controller.ts";
 import { mountSetupView } from "./setup-view.ts";
 import { createRendererToday } from "./today-controller.ts";
 import { mountTodayView } from "./today-view.ts";
+import { createRendererTask } from "./task-controller.ts";
+import { mountTaskDialog } from "./task-view.ts";
 import { createRendererRun } from "./run-controller.ts";
 import { mountRunCard } from "./run-view.ts";
 declare global {
@@ -72,6 +74,14 @@ let todayView: ReturnType<typeof mountTodayView> | undefined;
 const today = createRendererToday(window.desktop, () => {
   if (currentPage === "today") todayView?.update();
 });
+// The new-task dialog is app-level: one <dialog>, one entry list, one submission at a time.
+const taskPanel = mountTaskDialog(
+  createRendererTask(window.desktop, () => taskPanel.update()),
+  () => today.refresh(),
+);
+function openTaskDialog() {
+  taskPanel.open();
+}
 const run = createRendererRun(
   window.desktop,
   () => ({ setupLocked: setup.state.kind === "unknown-locked", setupBusy: setup.busy }),
@@ -151,6 +161,14 @@ function render(id: string, focus = true) {
     });
   } else if (id === "today") {
     // Today shows real local-hub data or a fixed not-running line; never placeholder numbers.
+    const actions = document.createElement("div");
+    actions.className = "page-actions";
+    const button = document.createElement("button");
+    button.textContent = "＋ 新建任务";
+    button.type = "button";
+    button.addEventListener("click", openTaskDialog);
+    actions.append(button);
+    main.querySelector(".page-head")!.after(actions);
     const host = document.createElement("div");
     main.append(host);
     todayView = mountTodayView(host, today, () => render("workers"));
@@ -187,7 +205,9 @@ function render(id: string, focus = true) {
     button.type = "button";
     button.addEventListener("click", openSetup);
     section.append(title, description, button);
-    main.querySelector(".page-head")!.after(section);
+    // On today the entry panel is secondary to the live data; on settings it stays up top.
+    if (id === "today") main.append(section);
+    else main.querySelector(".page-head")!.after(section);
   }
   if (focus) main.focus();
 }
@@ -196,6 +216,7 @@ navigation.innerHTML = pages
   .join("");
 for (const button of navigation.querySelectorAll<HTMLButtonElement>("button"))
   button.addEventListener("click", () => render(button.dataset.page!));
+document.querySelector("#new-task")!.addEventListener("click", openTaskDialog);
 document.querySelector("#hide-window")!.addEventListener("click", () => {
   window.desktop.window("hide").catch(report);
 });
