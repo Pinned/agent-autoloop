@@ -2,28 +2,46 @@
 // a retry starts a new conversation instead of going on, an error or a turn that never finished counts as an answer, a
 // program's warning is taken for its answer, the session isn't picked out, a command line's placeholder isn't filled in,
 // a configured launcher replaces the program without keeping the adapter's flags, or a background Codex run assumes it
-// inherited an application's browser connection.
+// inherited an application's browser connection. Lookup must not depend on installed agents or user shell configuration,
+// evaluate supplied shell syntax, or send an explicit executable path through a login shell.
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { test } from "node:test";
 import { setup } from "./helpers.ts";
 
-process.env.PATH = `/nonexistent:${process.env.PATH}`;
-const { findProgram } = await import("../worker/agents.ts");
-// Command construction must also run on CI machines without Codex installed.
-const shell = process.env.SHELL;
-const lookup = join(setup("adapters"), "lookup.sh");
+// Set every discovery input before the first application import; never fall back to this machine's agents.
+const directory = setup("adapters");
+const home = join(directory, "home");
+const bin = join(directory, "bin");
+mkdirSync(home);
+mkdirSync(bin);
+process.env.HOME = home;
+process.env.PATH = bin;
+for (const key of ["ENV", "BASH_ENV", "ZDOTDIR"]) delete process.env[key];
+const lookup = join(directory, "lookup.sh");
+const lookupLog = join(directory, "lookup.log");
+process.env.ADAPTER_LOOKUP_LOG = lookupLog;
+writeFileSync(lookupLog, "");
 writeFileSync(
   lookup,
-  '#!/bin/sh\ncase "$2" in\n*codex*) printf "%s\\n" /test/codex ;;\n*launcher*) printf "%s\\n" /test/wrapper ;;\nesac\n',
+  `#!/bin/sh
+printf '%s\\n' "$#" "$@" >> "$ADAPTER_LOOKUP_LOG"
+[ "$#" -eq 4 ] || exit 91
+[ "$1" = '-lc' ] || exit 92
+[ "$2" = 'command -v -- "$1"' ] || exit 93
+[ "$3" = 'agent-autoloop-lookup' ] || exit 94
+case "$4" in
+claude) printf '%s\\n' /test/claude ;;
+codex) printf '%s\\n' /test/codex ;;
+launcher) printf '%s\\n' /test/wrapper ;;
+*) exit 1 ;;
+esac
+`,
   { mode: 0o755 },
 );
 process.env.SHELL = lookup;
-findProgram("codex");
-findProgram("launcher");
-if (shell === undefined) delete process.env.SHELL;
-else process.env.SHELL = shell;
+const { findProgram } = await import("../worker/agents.ts");
 type Adapter = import("../worker/agents.ts").Adapter;
 const claude: Adapter = (await import("../plugins/claude/agent.ts")).default;
 const codex: Adapter = (await import("../plugins/codex/agent.ts")).default;
@@ -43,17 +61,12 @@ const has = (argv: string[], ...parts: string[]) => {
   return at >= 0 && parts.every((part, i) => argv[at + i] === part);
 };
 
-// The program itself is looked up once: these only care about what follows it.
-const stubbed = (adapter: Adapter, t: object) => {
-  try {
-    return adapter.command({ ...turn, ...t });
-  } catch {
-    return null;
-  }
-};
+// Do not swallow discovery failures or skip command construction on machines without agents.
+const stubbed = (adapter: Adapter, t: object) => adapter.command({ ...turn, ...t });
 
-test("Claude Code: access, new and going on, model", { skip: !stubbed(claude, {}) }, () => {
+test("Claude Code: access, new and going on, model", () => {
   const argv = stubbed(claude, {})!;
+  assert.equal(argv[0], "/test/claude");
   assert.ok(has(argv, "-p", "做这件事"));
   assert.ok(has(argv, "--session-id", "new-id"));
   assert.ok(has(argv, "--permission-mode", "acceptEdits"));
@@ -98,8 +111,9 @@ test("Claude Code: reading its result", () => {
   assert.equal(claude.link!("s"), "claude://resume?session=s");
 });
 
-test("Codex: access, new and going on", { skip: !stubbed(codex, {}) }, () => {
+test("Codex: access, new and going on", () => {
   const argv = stubbed(codex, {})!;
+  assert.equal(argv[0], "/test/codex");
   assert.deepEqual(argv.slice(1, 4), ["exec", "--json", "--skip-git-repo-check"]);
   assert.ok(argv.at(-1)!.endsWith("做这件事"));
   assert.ok(argv.includes('sandbox_mode="workspace-write"'));
@@ -186,6 +200,108 @@ test("a configured launcher replaces the program, and the flags stay the adapter
   assert.ok(again.includes('sandbox_mode="workspace-write"'));
 });
 
+test("explicit executable paths bypass shell lookup, including spaces and relative paths", () => {
+  const program = join(directory, "explicit fake program");
+  writeFileSync(program, "#!/bin/sh\nexit 97\n", { mode: 0o755 });
+  const before = readFileSync(lookupLog, "utf8");
+  assert.equal(findProgram(program), program);
+  assert.equal(findProgram(relative(process.cwd(), program)), program);
+  const missing = join(directory, "missing fake program");
+  assert.throws(() => findProgram(missing), /找不到/);
+  assert.equal(readFileSync(lookupLog, "utf8"), before, "explicit paths must never invoke a login shell");
+});
+
+test("explicit paths reject directories without a shell", () => {
+  const folder = join(directory, "not a program directory");
+  mkdirSync(folder);
+  const before = readFileSync(lookupLog, "utf8");
+  assert.throws(() => findProgram(folder), /找不到/);
+  assert.equal(readFileSync(lookupLog, "utf8"), before);
+});
+
+test("explicit paths require execute permission on platforms that enforce it", () => {
+  const nonexec = join(directory, "not executable");
+  writeFileSync(nonexec, "#!/bin/sh\nexit 97\n", { mode: 0o644 });
+  const before = readFileSync(lookupLog, "utf8");
+  if (process.platform === "win32") assert.equal(findProgram(nonexec), nonexec);
+  else assert.throws(() => findProgram(nonexec), /找不到/);
+  assert.equal(readFileSync(lookupLog, "utf8"), before);
+});
+
+test("fish login lookup uses fish argv, preserving full names and the login PATH contract", () => {
+  // This is a contract fixture, not an installed fish or a user's configured shell.
+  const fish = join(directory, "fish");
+  const fishLog = join(directory, "fish.log");
+  process.env.ADAPTER_FISH_LOG = fishLog;
+  writeFileSync(fishLog, "");
+  writeFileSync(
+    fish,
+    `#!/bin/sh
+printf '%s\\n' "$#" "$@" >> "$ADAPTER_FISH_LOG"
+[ "$#" -eq 4 ] || exit 91
+[ "$1" = '-lc' ] || exit 92
+[ "$2" = 'command --search -- "$argv[2]"' ] || exit 93
+[ "$3" = 'agent-autoloop-lookup' ] || exit 94
+case "$4" in
+'fish program with spaces') printf '%s\\n' /test/fish-program ;;
+*) exit 1 ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+  const supplied = "fish-not-installed; printf injected > injected";
+  process.env.SHELL = fish;
+  try {
+    assert.equal(findProgram("fish program with spaces"), "/test/fish-program");
+    assert.throws(() => findProgram(supplied), /找不到/);
+    assert.deepEqual(
+      readFileSync(fishLog, "utf8").trim().split("\n"),
+      ["fish program with spaces", supplied].flatMap((name) => [
+        "4",
+        "-lc",
+        'command --search -- "$argv[2]"',
+        "agent-autoloop-lookup",
+        name,
+      ]),
+    );
+  } finally {
+    process.env.SHELL = lookup;
+  }
+});
+
+test("program lookup never evaluates supplied shell syntax and preserves paths with spaces", () => {
+  // A real shell for the injection check, but no -l and no user startup files.
+  const cleanShell = join(directory, "clean-shell.sh");
+  process.env.ADAPTER_LOOKUP_DIRECTORY = directory;
+  writeFileSync(cleanShell, '#!/bin/sh\ncd "$ADAPTER_LOOKUP_DIRECTORY" || exit 95\nexec /bin/sh -c "$2" "$3" "$4"\n', {
+    mode: 0o755,
+  });
+  process.env.SHELL = cleanShell;
+  try {
+    const marker = join(directory, "injected");
+    // No slash: exercise argv safety for bare names rather than the explicit-path fast path.
+    const supplied = "not-installed; printf injected > injected";
+    assert.throws(() => findProgram(supplied), /找不到/);
+    assert.ok(!existsSync(marker));
+    const program = join(bin, "a fake program");
+    writeFileSync(program, "#!/bin/sh\nexit 97\n", { mode: 0o755 });
+    assert.equal(findProgram("a fake program"), program);
+  } finally {
+    process.env.SHELL = lookup;
+  }
+});
+
 test("a program that isn't there says so", () => {
   assert.throws(() => findProgram("surely-not-installed-anywhere"), /找不到 surely-not-installed-anywhere/);
+  assert.throws(() => findProgram("claude-not-installed"), /找不到 claude-not-installed/);
+});
+
+test("the fake lookup receives exactly the shell contract and the complete program name", () => {
+  const lines = readFileSync(lookupLog, "utf8").trim().split("\n");
+  assert.deepEqual(
+    lines,
+    ["claude", "codex", "launcher", "nowhere-at-all", "surely-not-installed-anywhere", "claude-not-installed"].flatMap(
+      (name) => ["4", "-lc", 'command -v -- "$1"', "agent-autoloop-lookup", name],
+    ),
+  );
 });

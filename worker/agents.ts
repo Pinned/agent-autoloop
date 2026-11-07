@@ -3,7 +3,7 @@
 // then the ones that ship. Anything with a print mode needs no file at all: `use: "command"` with a command line in
 // rules.json.
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { accessSync, constants, existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { loadPlugin } from "../host/plugins.ts";
 import type { Usage } from "../protocol/validate.ts";
@@ -50,11 +50,26 @@ const found = new Map<string, string | null>();
 
 /** Where a program is: on the login shell's PATH (launchd and systemd start with a bare one), or in one of these. */
 export function findProgram(name: string, elsewhere: () => string[] = () => []) {
+  // An explicit path needs no shell PATH or login configuration; resolve relative paths from the caller's cwd.
+  if (name.includes(path.sep)) {
+    const program = path.resolve(name);
+    try {
+      if (statSync(program).isFile()) {
+        // Windows does not enforce POSIX execute bits; still require an accessible regular file.
+        accessSync(program, process.platform === "win32" ? constants.F_OK : constants.X_OK);
+        return program;
+      }
+    } catch {}
+    throw new Error(`找不到 ${name}：先装好并登录`);
+  }
   if (!found.has(name)) {
     const shell = process.env.SHELL ?? "/bin/sh";
     let onPath: string | null = null;
     try {
-      const printed = execFileSync(shell, ["-lc", `command -v ${name}`], {
+      // Keep the program name in argv, never in shell source. fish puts both trailing arguments in $argv;
+      // POSIX-style shells use the sentinel as $0 and the name as $1. Both retain the login shell's PATH.
+      const query = path.basename(shell) === "fish" ? 'command --search -- "$argv[2]"' : 'command -v -- "$1"';
+      const printed = execFileSync(shell, ["-lc", query, "agent-autoloop-lookup", name], {
         encoding: "utf8",
         timeout: 15_000,
         stdio: ["ignore", "pipe", "ignore"],
