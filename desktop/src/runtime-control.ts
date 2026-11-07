@@ -1,16 +1,26 @@
 import { lstat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Supervisor, SupervisorOptions, SupervisorState, SupervisorStatus } from "./supervisor.ts";
+import {
+  DESKTOP_RUNTIME_ERROR_MESSAGES,
+  type DesktopRuntimeErrorCode,
+  type DesktopRuntimeRole,
+} from "../../host/desktop-run-contract.ts";
 
 export type RuntimeControlState = {
   status: SupervisorStatus | "unconfigured" | "unavailable";
+  /** The role of the last supervised run; kept after a safe stop so views can show what was running. */
+  role: DesktopRuntimeRole | null;
   pendingSync: number | null;
-  error: string | null;
+  error: { code: DesktopRuntimeErrorCode; message: string } | null;
 };
-export const SAFE_STOP_ERROR =
-  "无法确认本机运行服务已安全停止或临时资源已清理。应用未退出；未强制终止进程，请检查后重试停止。";
-const PREPARE_ERROR = "运行资源准备失败，请检查后手动重试。";
-const SERVICE_ERROR = "本机运行服务异常，请检查后手动停止或重试。";
+// Kept as exported names for main-thread dialogs and tests; the contract table is the single source.
+export const SAFE_STOP_ERROR = DESKTOP_RUNTIME_ERROR_MESSAGES["safe-stop"];
+export const PREPARE_ERROR = DESKTOP_RUNTIME_ERROR_MESSAGES.prepare;
+export const SERVICE_ERROR = DESKTOP_RUNTIME_ERROR_MESSAGES.service;
+const safeStopError = () => ({ code: "safe-stop" as const, message: SAFE_STOP_ERROR });
+const prepareError = () => ({ code: "prepare" as const, message: PREPARE_ERROR });
+const serviceError = () => ({ code: "service" as const, message: SERVICE_ERROR });
 
 /** Only checks metadata in the isolated business home; never reads config contents or initializes setup. */
 async function configured(home: string): Promise<boolean> {
@@ -38,6 +48,7 @@ export function createRuntimeControl(options: {
 }) {
   let state: RuntimeControlState = {
     status: options.enabled ? "stopped" : "unavailable",
+    role: null,
     pendingSync: null,
     error: null,
   };
@@ -62,7 +73,12 @@ export function createRuntimeControl(options: {
     }
   }
   function observe(next: SupervisorState) {
-    update({ status: next.status, pendingSync: next.pendingSync, error: next.error ? SERVICE_ERROR : null });
+    update({
+      status: next.status,
+      role: next.role,
+      pendingSync: next.pendingSync,
+      error: next.error ? serviceError() : null,
+    });
   }
   async function cleanup(): Promise<boolean> {
     while (cleanups.length) {
@@ -70,7 +86,7 @@ export function createRuntimeControl(options: {
         await cleanups[cleanups.length - 1]();
         cleanups.pop();
       } catch {
-        update({ ...state, status: "unknown", error: SAFE_STOP_ERROR });
+        update({ ...state, status: "unknown", error: safeStopError() });
         return false;
       }
     }
@@ -82,7 +98,8 @@ export function createRuntimeControl(options: {
       return snapshot();
     }
     if (requested !== intent || stopRequested) return snapshot();
-    update({ status: "starting", pendingSync: null, error: null });
+    // A new launch invalidates the previous run's role; the supervisor reports the fresh one.
+    update({ ...state, status: "starting", role: null, pendingSync: null, error: null });
     try {
       preparing = Promise.resolve().then(() =>
         options.prepare((owned) => {
@@ -96,8 +113,8 @@ export function createRuntimeControl(options: {
       const next = await supervisor.start();
       if (requested === intent) observe(next);
     } catch {
-      if (supervisor) update({ ...state, status: "unknown", error: SERVICE_ERROR });
-      else if (await cleanup()) update({ ...state, status: "failed", error: PREPARE_ERROR });
+      if (supervisor) update({ ...state, status: "unknown", error: serviceError() });
+      else if (await cleanup()) update({ ...state, status: "failed", error: prepareError() });
     } finally {
       preparing = undefined;
     }
@@ -138,7 +155,7 @@ export function createRuntimeControl(options: {
             const result = await supervisor.stop();
             observe(result);
             if (result.status !== "stopped") {
-              update({ ...state, status: "unknown", error: SAFE_STOP_ERROR });
+              update({ ...state, status: "unknown", error: safeStopError() });
               return false;
             }
           }
@@ -151,7 +168,7 @@ export function createRuntimeControl(options: {
           update({ ...state, status: options.enabled ? "stopped" : "unavailable", error: null });
           return true;
         } catch {
-          update({ ...state, status: "unknown", error: SAFE_STOP_ERROR });
+          update({ ...state, status: "unknown", error: safeStopError() });
           return false;
         }
       })();

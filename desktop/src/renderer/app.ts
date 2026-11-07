@@ -1,6 +1,8 @@
 import type { DesktopBridge, Theme, ThemeState } from "../policy.ts";
 import { createRendererSetup } from "./setup-controller.ts";
 import { mountSetupView } from "./setup-view.ts";
+import { createRendererRun } from "./run-controller.ts";
+import { mountRunCard } from "./run-view.ts";
 declare global {
   interface Window {
     desktop: DesktopBridge;
@@ -12,7 +14,7 @@ const pages = [
     title: "今天",
     description: "把需要你关心的进展和决策放在一起。",
     empty: "还没有可展示的工作进展",
-    detail: "此页面尚未读取进展数据。本机运行状态与启停请查看应用菜单或托盘；这里不展示模拟进展。",
+    detail: "此页面尚未读取进展数据。本机运行状态与启停请前往执行机页；这里不展示模拟进展。",
     icon: "today",
   },
   {
@@ -35,8 +37,8 @@ const pages = [
     id: "workers",
     title: "执行机",
     description: "了解哪些设备可以接活，以及它们的真实状态。",
-    empty: "执行机服务尚未接入",
-    detail: "此页面尚未读取设备或 Agent 状态。本机运行状态与启停请查看应用菜单或托盘。",
+    empty: "远程执行机列表尚未接入",
+    detail: "远程执行机列表、任务分配数与心跳数据尚未接入；此处不显示模拟设备或示例数字。",
     icon: "workers",
   },
   {
@@ -62,6 +64,15 @@ const main = document.querySelector<HTMLElement>("#main")!;
 const navigation = document.querySelector<HTMLElement>("#navigation")!;
 let currentPage = "today";
 let setupView: ReturnType<typeof mountSetupView> | undefined;
+let runCard: ReturnType<typeof mountRunCard> | undefined;
+// App-level singleton: page switches never destroy the controller or its event subscription.
+const run = createRendererRun(
+  window.desktop,
+  () => ({ setupLocked: setup.state.kind === "unknown-locked", setupBusy: setup.busy }),
+  () => {
+    if (currentPage === "workers") runCard?.update();
+  },
+);
 const setup = createRendererSetup(window.desktop, () => {
   if (setup.state.kind === "unknown-locked") {
     const error = document.querySelector<HTMLElement>("#error")!;
@@ -69,6 +80,8 @@ const setup = createRendererSetup(window.desktop, () => {
     error.hidden = false;
   }
   for (const button of navigation.querySelectorAll<HTMLButtonElement>("button")) button.disabled = setup.submitting;
+  // A finished configuration is exactly when the local runtime becomes startable.
+  if (setup.state.kind === "configured") run.refresh();
   setupView?.render();
 });
 function openSetup() {
@@ -97,6 +110,8 @@ function render(id: string, focus = true) {
     setupView.dispose();
     setupView = undefined;
   }
+  // The card's DOM dies with the page; the controller and its subscription live on.
+  runCard = undefined;
   currentPage = id;
   main.setAttribute("aria-labelledby", "page-title");
   const page = pages.find((item) => item.id === id)!;
@@ -129,6 +144,16 @@ function render(id: string, focus = true) {
       "beforeend",
       `<div class="notice"><span class="connection">待接入</span><span>当前没有业务数据，不代表任务数量为零或设备离线。</span></div><section class="empty"><div class="empty-icon">${icon(page.icon)}</div><h2>${page.empty}</h2><p>${page.detail}</p><span class="empty-foot">不展示演示任务；页面数据接入将在后续迭代提供</span></section>`,
     );
+  }
+  if (id === "workers") {
+    // The local runtime card sits above the remote-worker placeholder; only real states, no mock devices.
+    const host = document.createElement("div");
+    main.querySelector(".notice")!.after(host);
+    runCard = mountRunCard(host, run, openSetup, {
+      setupBusy: () => setup.busy,
+      setupLocked: () => setup.state.kind === "unknown-locked",
+    });
+    run.init();
   }
   if (id === "today" || id === "settings") {
     const section = document.createElement("section");
