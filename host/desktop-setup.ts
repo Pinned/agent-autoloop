@@ -167,6 +167,21 @@ export function readDesktopSetupStatus(home: string): DesktopSetupStatus {
   }
 }
 
+/**
+ * The hub port, overridable only through an explicit environment variable — the same knob the CLI
+ * offers as `init --port`. A wrong value refuses the operation instead of silently falling back to
+ * 3350: a listener on a guessed port is worse than a clear failure. Loopback itself stays fixed.
+ */
+export const DESKTOP_SETUP_PORT_VARIABLE = "DESKTOP_SETUP_PORT";
+
+export function desktopSetupPort(env: Record<string, string | undefined> = process.env): string | null {
+  const given = env[DESKTOP_SETUP_PORT_VARIABLE];
+  if (given === undefined) return "3350";
+  if (!/^\d{1,5}$/.test(given)) return null;
+  const port = Number(given);
+  return port >= 1024 && port <= 65535 ? given : null;
+}
+
 export type DesktopSetupDependencies = {
   home: string;
   discovery: SetupDiscovery;
@@ -226,18 +241,21 @@ export function createDesktopSetupDriver(dependencies: DesktopSetupDependencies)
     try {
       // Modification is authorized only while actually holding the interprocess run lock.
       const status = readDesktopSetupStatus(dependencies.home);
+      const port = desktopSetupPort();
       const refusal: DesktopSetupErrorCode | null =
-        status.configuration === "configured"
-          ? "already-configured"
-          : status.configuration === "incomplete"
-            ? "incomplete-setup"
-            : status.configuration === "invalid"
-              ? "invalid-config"
-              : null;
+        port === null
+          ? "invalid-config"
+          : status.configuration === "configured"
+            ? "already-configured"
+            : status.configuration === "incomplete"
+              ? "incomplete-setup"
+              : status.configuration === "invalid"
+                ? "invalid-config"
+                : null;
       if (refusal) response = desktopSetupFailure(operation, refusal);
       else {
         if (request.operation === "init")
-          await dependencies.init({ allowNoAgent: true, port: "3350" }, dependencies.discovery);
+          await dependencies.init({ allowNoAgent: true, port: port ?? undefined }, dependencies.discovery);
         else await dependencies.join(request.input);
         const after = readDesktopSetupStatus(dependencies.home);
         const role = request.operation === "init" ? "hub-worker" : "worker";

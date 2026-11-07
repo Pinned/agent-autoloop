@@ -319,19 +319,42 @@ export class RuntimeUnavailableError extends Error {
   }
 }
 
+// A killed process can leave the lock directory behind, which would otherwise poison every later
+// start. Only age can prove a holder is gone: the downloader's own timeouts bound a live hold to a
+// few minutes, so a lock untouched for fifteen minutes belongs to nobody.
+const RUNTIME_LOCK_STALE_MS = 15 * 60 * 1000;
+const RUNTIME_LOCK_BUSY = "Runtime cache locked; retry after the current holder finishes";
+
+async function acquireRuntimeLock(lock) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await mkdir(lock, { mode: 0o700 });
+      return;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+    }
+    let stat;
+    try {
+      stat = await lstat(lock);
+    } catch (error) {
+      // Released between the two calls; try to take it once more.
+      if (error.code === "ENOENT") continue;
+      throw error;
+    }
+    // Anything that is not a plain directory is not ours to judge or remove.
+    if (!stat.isDirectory() || Date.now() - stat.mtimeMs < RUNTIME_LOCK_STALE_MS) throw new Error(RUNTIME_LOCK_BUSY);
+    await rm(lock, { recursive: true, force: true });
+  }
+  throw new Error(RUNTIME_LOCK_BUSY);
+}
+
 // cachedOnly validates an existing install through the same lock, identity and cleanup path; never downloads.
 export async function ensureRuntime(options = {}) {
   const target = runtimeTarget(options.platform, options.arch);
   const cache = await safeDirectory(options.cacheDir ?? defaultCache, true);
   await chmod(cache, 0o700);
   const lock = join(cache, `${target.root}.lock`);
-  try {
-    await mkdir(lock, { mode: 0o700 });
-  } catch (error) {
-    if (error.code === "EEXIST")
-      throw new Error("Runtime cache locked; retry after current download, or remove stale lock explicitly");
-    throw error;
-  }
+  await acquireRuntimeLock(lock);
   // Register ownership before any fallible preparation. Cleanup cannot race ongoing writes.
   const owned = new Map([["lock", { path: lock, identity: undefined }]]);
   let preparationDone;

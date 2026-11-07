@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile, access } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, symlink, writeFile, access, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -257,6 +257,72 @@ for (const missing of ["cache", "install"]) {
     }
   });
 }
+
+// A killed holder leaves the lock behind; only age can prove nobody is coming back.
+test("a stale lock is taken over by age; a fresh one is refused untouched", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "runtime stale lock "));
+  try {
+    const fresh = join(dir, "fresh");
+    await mkdir(fresh);
+    const freshLock = join(fresh, `${root}.lock`);
+    await mkdir(freshLock);
+    await writeFile(join(freshLock, "holder"), "live");
+    await assert.rejects(
+      runtime.ensureRuntime({ cacheDir: fresh, platform: "darwin", arch: "arm64", cachedOnly: true }),
+      /Runtime cache locked/,
+    );
+    assert.equal(await readFile(join(freshLock, "holder"), "utf8"), "live");
+    assert.deepEqual(await readdir(fresh), [`${root}.lock`]);
+
+    const ancient = new Date(Date.now() - 16 * 60 * 1000);
+    const stale = join(dir, "stale");
+    await mkdir(stale);
+    const staleLock = join(stale, `${root}.lock`);
+    await mkdir(staleLock);
+    await utimes(staleLock, ancient, ancient);
+    // Reaching the missing-install refusal proves the takeover passed the lock; the release is real.
+    await assert.rejects(
+      runtime.ensureRuntime({ cacheDir: stale, platform: "darwin", arch: "arm64", cachedOnly: true }),
+      (error: Error & { code?: string }) => error.code === "RUNTIME_UNAVAILABLE",
+    );
+    assert.deepEqual(await readdir(stale), []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a lock that is not a plain directory is never taken over or removed", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "runtime foreign lock "));
+  try {
+    const ancient = new Date(Date.now() - 16 * 60 * 1000);
+
+    const filed = join(dir, "filed");
+    await mkdir(filed);
+    const fileLock = join(filed, `${root}.lock`);
+    await writeFile(fileLock, "not a directory");
+    await utimes(fileLock, ancient, ancient);
+    await assert.rejects(
+      runtime.ensureRuntime({ cacheDir: filed, platform: "darwin", arch: "arm64", cachedOnly: true }),
+      /Runtime cache locked/,
+    );
+    assert.equal(await readFile(fileLock, "utf8"), "not a directory");
+
+    const linked = join(dir, "linked");
+    await mkdir(join(linked, "sibling"), { recursive: true });
+    const linkLock = join(linked, `${root}.lock`);
+    await symlink(join(linked, "sibling"), linkLock);
+    await utimes(linkLock, ancient, ancient);
+    await assert.rejects(
+      runtime.ensureRuntime({ cacheDir: linked, platform: "darwin", arch: "arm64", cachedOnly: true }),
+      /Runtime cache locked/,
+    );
+    // The symlink itself survived; the takeover never followed or removed it.
+    assert.equal(await realpath(linkLock), await realpath(join(linked, "sibling")));
+    assert.deepEqual(await readdir(linked), [`${root}.lock`, "sibling"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 for (const damage of ["missing archive", "checksum", "binary", "install symlink"]) {
   test(`cached-only rejects ${damage} without downloading, fallback or deleting the install`, async () => {

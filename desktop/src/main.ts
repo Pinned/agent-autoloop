@@ -17,6 +17,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { assertSender, channels, isolatedHome, parseTheme, parseWindowAction, webPreferences } from "./policy.ts";
 import { createLifecycle } from "./lifecycle.ts";
+import {
+  parseLifecycleEnv,
+  runLifecycleHubDrive,
+  runLifecycleWorkerDrive,
+  type LifecycleDrive,
+  type LifecycleDrivePort,
+} from "./lifecycle-drive.ts";
 import { loadTheme, saveTheme } from "./preferences.ts";
 import { createSupervisor } from "./supervisor.ts";
 import { createRuntimeControl, SAFE_STOP_ERROR, type RuntimeControlState } from "./runtime-control.ts";
@@ -57,6 +64,17 @@ try {
 }
 
 const smoke = !app.isPackaged && !!home && process.env.DESKTOP_SMOKE === "1";
+// The business lifecycle drive reuses the very bridge the UI uses; a wrong environment fails here.
+const drive = (() => {
+  try {
+    return parseLifecycleEnv(process.env, { isPackaged: app.isPackaged, hasHome: !!home, smoke });
+  } catch (error) {
+    console.error(String(error));
+    app.exit(1);
+    return { mode: "off" } as LifecycleDrive;
+  }
+})();
+const lifecycle = drive.mode !== "off";
 const base = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(base, "renderer", "index.html");
 const page = pathToFileURL(pagePath).href;
@@ -187,7 +205,7 @@ if (ownsAppLock)
       watcher.subscribe((glance) => {
         refreshMenus();
         for (const draft of notifier.push(glance)) {
-          if (smoke || window.isDestroyed() || window.isFocused()) break;
+          if (smoke || lifecycle || window.isDestroyed() || window.isFocused()) break;
           const notification = new Notification(draft);
           notification.on("click", () => showPage("today"));
           notification.show();
@@ -385,6 +403,8 @@ if (ownsAppLock)
         confirm: async () => {
           restore();
           if (smoke) return smokeAnswer;
+          // The lifecycle drive quits only on its own verified stages; no human answers dialogs here.
+          if (lifecycle) return true;
           const result = await dialog.showMessageBox(window, {
             type: "question",
             title: "退出 agent-autoloop？",
@@ -553,6 +573,27 @@ if (ownsAppLock)
       });
       await window.loadFile(pagePath);
       window.show();
+      if (lifecycle) {
+        // The drive scripts run in the same renderer a user's clicks drive, so the checked path
+        // is the shipped one. No new IPC, no preload change, no renderer knowledge of the drive.
+        const port: LifecycleDrivePort = {
+          evaluate: (script) => window.webContents.executeJavaScript(script),
+          requestQuit: () => requestQuit(),
+          // A failed drive must never masquerade as success: report, best-effort safe stop, exit non-zero.
+          abort: (message) => {
+            console.error(`业务生命周期冒烟失败：${message}`);
+            void setup
+              .prepareQuit(() => controller.stop())
+              .catch(() => false)
+              .finally(() => app.exit(1));
+          },
+        };
+        const running =
+          drive.mode === "hub"
+            ? runLifecycleHubDrive(port, drive.ruleCwd)
+            : runLifecycleWorkerDrive(port, drive.join, drive.quitSentinel);
+        void running.catch((error) => port.abort(String(error)));
+      }
       if (smoke) {
         try {
           const result = await window.webContents.executeJavaScript(`(async () => {

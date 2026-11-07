@@ -38,7 +38,7 @@ test("input validation mirrors the hub door's limits", () => {
 
 test("the ingest ack is projected down to three safe fields", () => {
   const ack = {
-    event: "ui-0815",
+    event: 815,
     duplicate: false,
     routed: ["dev-值班", "daily-report"],
     // The hub never sends these, but the projection must not leak them even if it did.
@@ -46,15 +46,18 @@ test("the ingest ack is projected down to three safe fields", () => {
     link: "http://127.0.0.1:3350/c/card-secret",
   };
   const projected = projectDesktopTaskResult(ack);
-  assert.deepEqual(projected, { event: "ui-0815", duplicate: false, routed: ["dev-值班", "daily-report"] });
+  assert.deepEqual(projected, { event: 815, duplicate: false, routed: ["dev-值班", "daily-report"] });
   assert.ok(!JSON.stringify(projected).includes("secret"));
   for (const bad of [
     null,
     {},
+    { event: "ui-0815", duplicate: false, routed: [] },
     { event: "", duplicate: false, routed: [] },
-    { event: "x", duplicate: "false", routed: [] },
-    { event: "x", duplicate: false, routed: "rule" },
-    { event: "x", duplicate: false, routed: new Array(65).fill("r") },
+    { event: -1, duplicate: false, routed: [] },
+    { event: 1.5, duplicate: false, routed: [] },
+    { event: 815, duplicate: "false", routed: [] },
+    { event: 815, duplicate: false, routed: "rule" },
+    { event: 815, duplicate: false, routed: new Array(65).fill("r") },
   ]) {
     assert.throws(() => projectDesktopTaskResult(bad));
   }
@@ -91,14 +94,15 @@ test("entry projection keeps only what a chooser needs", () => {
 });
 
 test("create responses round-trip and fixed messages are verbatim", () => {
+  // The kernel's ingest ack carries the event id as a number; a string here would be refused.
   const ok = desktopTaskCreateOf({
     version: 1,
     ok: true,
-    result: projectDesktopTaskResult({ event: "e", duplicate: false, routed: [] }),
+    result: projectDesktopTaskResult({ event: 3, duplicate: false, routed: [] }),
   });
   const okAgain = parseDesktopTaskCreateResponse(JSON.parse(JSON.stringify(ok)));
   if (!okAgain.ok) throw new Error("expected ok");
-  assert.equal(okAgain.result.event, "e");
+  assert.equal(okAgain.result.event, 3);
   for (const code of ["unavailable", "no-hub", "error"] as const) {
     const fixed = desktopTaskCreateOf({ version: 1, ok: false, error: { code, message: DESKTOP_TASK_MESSAGES[code] } });
     const parsed = parseDesktopTaskCreateResponse(JSON.parse(JSON.stringify(fixed)));
@@ -120,8 +124,10 @@ test("forged messages, versions and unknown fields are rejected", () => {
     { version: 1, ok: false, error: { code: "error", message: "自造文案" } },
     { version: 2, ok: false, error: { code: "error", message: DESKTOP_TASK_MESSAGES.error } },
     { version: 1, ok: false, error: { code: "strange", message: DESKTOP_TASK_MESSAGES.error } },
-    { version: 1, ok: true, result: { event: "e", duplicate: false, routed: [], extra: 1 } },
-    { version: 1, ok: true, result: { event: "e", duplicate: false } },
+    { version: 1, ok: true, result: { event: 3, duplicate: false, routed: [], extra: 1 } },
+    { version: 1, ok: true, result: { event: 3, duplicate: false } },
+    { version: 1, ok: true, result: { event: "e", duplicate: false, routed: [] } },
+    { version: 1, ok: true, result: { event: -1, duplicate: false, routed: [] } },
     { version: 1, ok: false, error: { code: "error", message: DESKTOP_TASK_MESSAGES.error }, extra: 1 },
   ]) {
     assert.throws(() => parseDesktopTaskCreateResponse(poison));
@@ -166,10 +172,10 @@ test("projection never evaluates poisoned fields it does not select", () => {
     get secret() {
       throw new Error("no");
     },
-    event: "e",
+    event: 3,
     duplicate: true,
     routed: [],
   };
   assert.deepEqual(projectDesktopTaskEntries(page), { entries: [{ name: "x", types: ["t.v"], to: "c" }] });
-  assert.deepEqual(projectDesktopTaskResult(ack), { event: "e", duplicate: true, routed: [] });
+  assert.deepEqual(projectDesktopTaskResult(ack), { event: 3, duplicate: true, routed: [] });
 });

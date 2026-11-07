@@ -1,9 +1,9 @@
 // The contract for creating a task from the desktop app. The hub's door for hand-made events is
 // POST /v1/ui/tasks: it takes {type, summary, detail}, answers with the ingest ack
-// {event, duplicate, routed} and refuses anything no local entry takes. This file mirrors that
-// door's rules on both sides of the bridge: the main process projects the hub's answers down to
-// exactly these shapes, and the renderer accepts nothing that does not parse strictly.
-// No credentials, paths or links ever cross this contract.
+// {event, duplicate, routed} — event is the kernel's numeric event id — and refuses anything no
+// local entry takes. This file mirrors that door's rules on both sides of the bridge: the main
+// process projects the hub's answers down to exactly these shapes, and the renderer accepts
+// nothing that does not parse strictly. No credentials, paths or links ever cross this contract.
 
 const OBJECT = Object.prototype;
 // TextEncoder, not Buffer.byteLength: this contract also runs inside the sandboxed renderer.
@@ -21,7 +21,7 @@ export const DESKTOP_TASK_RESPONSE_MAX_BYTES = 64 * 1024;
 export const DESKTOP_TASK_VERSION = 1 as const;
 
 export type DesktopTaskInput = { type: string; summary: string; detail: string };
-export type DesktopTaskResult = { event: string; duplicate: boolean; routed: string[] };
+export type DesktopTaskResult = { event: number; duplicate: boolean; routed: string[] };
 export type DesktopTaskEntry = { name: string; types: string[]; to: string };
 export type DesktopTaskEntries = { entries: DesktopTaskEntry[] };
 export type DesktopTaskCode = "invalid" | "unavailable" | "no-hub" | "error";
@@ -93,7 +93,8 @@ export function parseDesktopTaskInput(value: unknown): DesktopTaskInput {
 export function projectDesktopTaskResult(value: unknown): DesktopTaskResult {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("不是对象");
   const given = value as Record<string, unknown>;
-  const event = text(given.event, 200);
+  // The kernel's event id is a row id: a number. A string here is a shape change, not a variant.
+  const event = count(given.event);
   const duplicate = given.duplicate;
   if (typeof duplicate !== "boolean") throw new Error("duplicate 不对");
   const routed = given.routed;
@@ -151,7 +152,7 @@ export function parseDesktopTaskCreateResponse(value: unknown): DesktopTaskCreat
       version: DESKTOP_TASK_VERSION,
       ok: true,
       result: {
-        event: text(result.event, 200),
+        event: count(result.event),
         duplicate: result.duplicate,
         routed: routed.map((name) => text(name, 200)),
       },

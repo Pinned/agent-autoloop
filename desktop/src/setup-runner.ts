@@ -83,6 +83,9 @@ export function createSetupRunner(options: {
         TMP: resources.environmentHome,
         TEMP: resources.environmentHome,
         AGENT_AUTOLOOP_HOME: resources.home,
+        // The hub port override (the CLI's `init --port` equivalent) is the one environment knob
+        // the main process passes through; the entry point validates it and fails closed on junk.
+        ...(process.env.DESKTOP_SETUP_PORT !== undefined && { DESKTOP_SETUP_PORT: process.env.DESKTOP_SETUP_PORT }),
       };
       // A rejected process runner provides no completed ownership proof. Never clean on that path.
       transferred = true;
