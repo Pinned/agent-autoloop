@@ -4,6 +4,11 @@ import { isAbsolute, relative, sep } from "node:path";
 import type { DesktopJoinInput, DesktopSetupResponse } from "../../host/desktop-setup-contract.ts";
 import type { DesktopRuntimeEvent, DesktopRuntimeResponse } from "../../host/desktop-run-contract.ts";
 import type { DesktopTodayResponse } from "../../host/desktop-state-contract.ts";
+import type {
+  DesktopTaskCreateResponse,
+  DesktopTaskEntriesResponse,
+  DesktopTaskInput,
+} from "../../host/desktop-task-contract.ts";
 
 export const channels = Object.freeze({
   themeGet: "desktop:theme:get",
@@ -17,6 +22,8 @@ export const channels = Object.freeze({
   runtimeStart: "desktop:runtime:start",
   runtimeStop: "desktop:runtime:stop",
   todayState: "desktop:state:today",
+  taskEntries: "desktop:task:entries",
+  taskCreate: "desktop:task:create",
   // Main-to-renderer push only; the renderer never invokes this channel.
   runtimeEvent: "desktop:runtime:event",
 });
@@ -39,6 +46,10 @@ export interface DesktopBridge {
   runtimeStop(): Promise<DesktopRuntimeResponse>;
   /** Read-only today-page data from the local hub while it runs. */
   todayState(): Promise<DesktopTodayResponse>;
+  /** The real rule entries the new-task panel offers, from the local hub while it runs. */
+  taskEntries(): Promise<DesktopTaskEntriesResponse>;
+  /** Create one task through the hub's own door; the input is checked again in main. */
+  taskCreate(input: DesktopTaskInput): Promise<DesktopTaskCreateResponse>;
   /** Subscribe to main-pushed runtime state; the returned function unsubscribes. */
   onRuntimeEvent(listener: (event: DesktopRuntimeEvent) => void): () => void;
 }

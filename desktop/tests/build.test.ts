@@ -52,7 +52,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(main, /远程队列不会取消/);
   assert.match(main, /离线持久待同步/);
   assert.doesNotMatch(main, /restartPolicy|controller\.restart/);
-  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 11);
+  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 13);
   for (const name of [
     "setupStatus",
     "setupCheck",
@@ -62,6 +62,8 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
     "runtimeStart",
     "runtimeStop",
     "todayState",
+    "taskEntries",
+    "taskCreate",
   ]) {
     assert.match(
       main,
@@ -101,6 +103,8 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
     "runtimeStop",
     "setTheme",
     "setupStatus",
+    "taskCreate",
+    "taskEntries",
     "todayState",
     "window",
   ]);
@@ -165,6 +169,40 @@ test("the today source only ever fetches a validated loopback endpoint with the 
   assert.doesNotMatch(source, /from ["'].*host\/config\.ts/);
   assert.match(main, /createTodaySource\(\{ home: runtimeHome, getState: \(\) => controller\.getState\(\) \}\)/);
   assert.match(main, /ipcMain\.handle\(channels\.todayState, async \(event, \.\.\.args: unknown\[\]\) => \{/);
+});
+
+test("the task source only ever fetches the two fixed hub task routes with the owner credential", () => {
+  const source = read("../src/task-source.ts");
+  const main = read("../src/main.ts");
+  // Endpoint parsing and the bounded config read are reused from the today source, not duplicated.
+  assert.match(source, /from ["']\.\/state-source\.ts["']/);
+  assert.match(source, /parseHubEndpoint\(readConfig\(options\.home\)\)/);
+  assert.match(source, /readConfig \?\? readRuntimeConfig/);
+  // Only creating tasks and listing entries; no other hub route is reachable from the panel.
+  assert.match(source, /\/v1\/ui\/tasks/);
+  assert.match(source, /\/v1\/ui\/rules/);
+  assert.doesNotMatch(source, /\/v1\/(?:state|tell|events|cards|runs|keys|in)\b/);
+  assert.doesNotMatch(source, /from ["'].*host\/config\.ts/);
+  assert.match(main, /createTaskSource\(\{ home: runtimeHome, getState: \(\) => controller\.getState\(\) \}\)/);
+  // A malformed input is rejected before any request leaves the process.
+  assert.match(main, /parseDesktopTaskInput\(args\[0\]\)/);
+  assert.match(main, /ipcMain\.handle\(channels\.taskCreate, async \(event, \.\.\.args: unknown\[\]\) => \{/);
+});
+
+test("the global new-task dialog is a native dialog driven by the pure task contract", () => {
+  const app = read("../src/renderer/app.ts");
+  const html = read("../src/renderer/index.html");
+  const view = read("../src/renderer/task-view.ts");
+  const controller = read("../src/renderer/task-controller.ts");
+  assert.match(html, /id="new-task"/);
+  assert.match(app, /mountTaskDialog\(/);
+  assert.match(app, /today\.refresh\(\)/);
+  // Pure DOM construction only; the dialog never serialises markup.
+  assert.doesNotMatch(view, /innerHTML|insertAdjacentHTML|console\./);
+  assert.doesNotMatch(controller, /node:|from ["'].*host\/(?:config|runtime|setup)\.ts/);
+  assert.match(controller, /from ["'].*host\/desktop-task-contract\.ts/);
+  // A finished submission refreshes today exactly once, even for duplicate acks.
+  assert.match(view, /showModal\(\)/);
 });
 
 test("fixed renderer has restrictive CSP and no simulated business or network connection", () => {
