@@ -267,10 +267,23 @@ test("the tray's live glance listens to the hub's own stream and never polls", (
   // The runtime decision re-opens or closes the stream; the app quit path always closes it.
   assert.match(main, /watcher\.sync\(\)/);
   assert.match(main, /watcher\.close\(\)/);
-  assert.match(main, /watcher\.subscribe\(\(\) => refreshMenus\(\)\)/);
+  assert.match(main, /watcher\.subscribe\(\(glance\) => \{/);
   assert.match(main, /tray\.setTitle\(glance\.attention > 0 \? String\(glance\.attention\) : ""\)/);
   assert.match(main, /最近待决策/);
   assert.match(main, /停止运行中的一轮/);
+});
+
+test("system notifications are main-process only and click back to today", () => {
+  const notifier = read("../src/notify.ts");
+  const main = read("../src/main.ts");
+  // The decision logic is pure and testable; sending stays in the main process.
+  assert.doesNotMatch(notifier, /electron|require\(|node:/);
+  assert.doesNotMatch(read("../dist/renderer/app.js"), /Notification/);
+  assert.match(main, /new Notification\(draft\)/);
+  assert.match(main, /notification\.on\("click", \(\) => showPage\("today"\)\)/);
+  // A user already looking at the console is not interrupted, and smoke never notifies.
+  assert.match(main, /smoke \|\| window\.isDestroyed\(\) \|\| window\.isFocused\(\)/);
+  assert.match(main, /createNotifier\(\)/);
 });
 
 test("fixed renderer has restrictive CSP and no simulated business or network connection", () => {
