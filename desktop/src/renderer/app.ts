@@ -1,4 +1,6 @@
 import type { DesktopBridge, Theme, ThemeState } from "../policy.ts";
+import { createRendererSetup } from "./setup-controller.ts";
+import { mountSetupView } from "./setup-view.ts";
 declare global {
   interface Window {
     desktop: DesktopBridge;
@@ -40,7 +42,7 @@ const pages = [
   {
     id: "settings",
     title: "设置",
-    description: "调整桌面体验，业务连接将在后续提供。",
+    description: "调整桌面体验与本机角色配置，其他业务连接将在后续提供。",
     empty: "",
     detail: "",
     icon: "settings",
@@ -58,11 +60,27 @@ function icon(id: string) {
 }
 const main = document.querySelector<HTMLElement>("#main")!;
 const navigation = document.querySelector<HTMLElement>("#navigation")!;
+let currentPage = "today";
+let setupView: ReturnType<typeof mountSetupView> | undefined;
+const setup = createRendererSetup(window.desktop, () => {
+  if (setup.state.kind === "unknown-locked") {
+    const error = document.querySelector<HTMLElement>("#error")!;
+    error.textContent = "无法确认配置操作已安全完成。本次会话已锁定，请保留现场并人工检查，不要重复初始化或强制退出。";
+    error.hidden = false;
+  }
+  for (const button of navigation.querySelectorAll<HTMLButtonElement>("button")) button.disabled = setup.submitting;
+  setupView?.render();
+});
+function openSetup() {
+  if (!setupView) setupView = mountSetupView(main, setup, () => render(currentPage));
+  setup.open();
+}
 let theme: ThemeState = {
   preference: "system",
   effective: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
 };
 function report(error: unknown) {
+  if (setup.state.kind === "unknown-locked") return;
   const element = document.querySelector<HTMLElement>("#error")!;
   element.textContent = `桌面操作失败：${error instanceof Error ? error.message : "请稍后重试"}`;
   element.hidden = false;
@@ -74,6 +92,13 @@ function applyTheme(state: ThemeState) {
   if (select) select.value = state.preference;
 }
 function render(id: string, focus = true) {
+  if (setupView) {
+    if (!setup.leave()) return;
+    setupView.dispose();
+    setupView = undefined;
+  }
+  currentPage = id;
+  main.setAttribute("aria-labelledby", "page-title");
   const page = pages.find((item) => item.id === id)!;
   for (const button of navigation.querySelectorAll<HTMLButtonElement>("button")) {
     button.classList.toggle("active", button.dataset.page === id);
@@ -84,7 +109,7 @@ function render(id: string, focus = true) {
   if (id === "settings") {
     main.insertAdjacentHTML(
       "beforeend",
-      `<section class="panel" aria-labelledby="appearance-title"><h2 id="appearance-title">桌面外观</h2><div class="setting-row"><div><label for="theme">主题</label><p>跟随系统，或固定为浅色、深色。</p></div><select id="theme"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></div></section><section class="panel"><h2>窗口与托盘</h2><p class="muted">关闭窗口只会收起到托盘。从托盘或应用菜单可恢复窗口；退出应用需要再次确认。</p></section><section class="pending"><h2>业务设置待接入</h2><p>服务连接、Agent 与凭据管理尚未开放。此页面不采集或保存凭据。</p></section>`,
+      `<section class="panel" aria-labelledby="appearance-title"><h2 id="appearance-title">桌面外观</h2><div class="setting-row"><div><label for="theme">主题</label><p>跟随系统，或固定为浅色、深色。</p></div><select id="theme"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></div></section><section class="panel"><h2>窗口与托盘</h2><p class="muted">关闭窗口只会收起到托盘。从托盘或应用菜单可恢复窗口；退出应用需要再次确认。</p></section><section class="pending"><h2>其他业务设置待接入</h2><p>Agent 登录、连接验证与凭据管理尚未开放。本机角色配置可通过上方入口保存。</p></section>`,
     );
     const select = document.querySelector<HTMLSelectElement>("#theme")!;
     select.value = theme.preference;
@@ -104,6 +129,24 @@ function render(id: string, focus = true) {
       "beforeend",
       `<div class="notice"><span class="connection">待接入</span><span>当前没有业务数据，不代表任务数量为零或设备离线。</span></div><section class="empty"><div class="empty-icon">${icon(page.icon)}</div><h2>${page.empty}</h2><p>${page.detail}</p><span class="empty-foot">不展示演示任务；页面数据接入将在后续迭代提供</span></section>`,
     );
+  }
+  if (id === "today" || id === "settings") {
+    const section = document.createElement("section");
+    section.className = "panel setup-entry";
+    const title = document.createElement("h2");
+    title.textContent = "本机角色配置";
+    const description = document.createElement("p");
+    description.className = "muted";
+    description.textContent =
+      setup.state.kind === "idle"
+        ? "本机配置尚未检查。可配置为中台＋本机 worker，或纯 worker。"
+        : "查看本次会话的配置检查结果；这里只保存配置，不自动启动服务。";
+    const button = document.createElement("button");
+    button.textContent = "配置此电脑";
+    button.type = "button";
+    button.addEventListener("click", openSetup);
+    section.append(title, description, button);
+    main.querySelector(".page-head")!.after(section);
   }
   if (focus) main.focus();
 }

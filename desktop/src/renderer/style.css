@@ -329,6 +329,109 @@ main {
   color: var(--text);
   background: var(--accent-bg);
 }
+.setup-entry button {
+  margin-top: 16px;
+}
+.setup-panel {
+  max-width: 760px;
+}
+.setup-steps {
+  display: flex;
+  gap: 18px;
+  list-style: none;
+  padding: 0 0 18px;
+  margin: 0 0 20px;
+  border-bottom: 1px solid var(--soft);
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+.setup-steps [aria-current="step"] {
+  color: var(--blue);
+  font-weight: 650;
+}
+.setup-form {
+  display: grid;
+  gap: 16px;
+}
+.setup-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.setup-choice {
+  text-align: left;
+  padding: 20px;
+  background: var(--panel);
+}
+.setup-choice span {
+  display: block;
+  font-size: 12px;
+  margin-top: 10px;
+}
+.setup-choice[aria-pressed="true"] {
+  border-color: var(--blue);
+  background: var(--accent-bg);
+  outline: 1px solid var(--blue);
+}
+.setup-field {
+  display: grid;
+  gap: 7px;
+}
+.setup-field input {
+  width: 100%;
+  font: inherit;
+  color: var(--text);
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.setup-field p,
+.setup-form > p {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+.setup-primary {
+  border-color: var(--blue);
+  background: var(--accent-bg);
+}
+.setup-checks {
+  margin: 0;
+  padding: 14px 14px 14px 32px;
+  background: var(--panel2);
+  border-radius: 6px;
+}
+.setup-skip {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.setup-error {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--blue);
+  background: var(--accent-bg);
+}
+.setup-status:empty {
+  display: none;
+}
+@media (max-width: 650px) {
+  .setup-choices {
+    grid-template-columns: 1fr;
+  }
+}
+@media (forced-colors: active) {
+  .setup-choice[aria-pressed="true"],
+  .setup-steps [aria-current="step"] {
+    outline: 2px solid Highlight;
+  }
+}
 [hidden] {
   display: none !important;
 }
