@@ -9,6 +9,8 @@ import { createRendererRun } from "./run-controller.ts";
 import { mountRunCard } from "./run-view.ts";
 import { createRendererRules } from "./rules-controller.ts";
 import { mountRulesView } from "./rules-view.ts";
+import { createRendererTasks } from "./tasks-controller.ts";
+import { mountTasksView } from "./tasks-view.ts";
 declare global {
   interface Window {
     desktop: DesktopBridge;
@@ -111,6 +113,11 @@ const rules = createRendererRules(window.desktop, () => {
   if (currentPage === "automation") rulesPage?.update();
 });
 const rulesPage = mountRulesView(rules);
+// The tasks page is app-level too: page switches only re-attach the list and re-read page one.
+const tasks = createRendererTasks(window.desktop, () => {
+  if (currentPage === "tasks") tasksPage?.update();
+});
+const tasksPage = mountTasksView(tasks);
 function openSetup() {
   if (!setupView) setupView = mountSetupView(main, setup, () => render(currentPage));
   setup.open();
@@ -186,6 +193,11 @@ function render(id: string, focus = true) {
     main.append(rulesPage.root);
     rulesPage.update();
     rules.refresh();
+  } else if (id === "tasks") {
+    // The hub's real run history, read-only; the placeholder days are over.
+    main.append(tasksPage.root);
+    tasksPage.update();
+    tasks.refresh();
   } else {
     main.insertAdjacentHTML(
       "beforeend",

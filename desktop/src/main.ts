@@ -9,7 +9,7 @@ import { createLifecycle } from "./lifecycle.ts";
 import { loadTheme, saveTheme } from "./preferences.ts";
 import { createSupervisor } from "./supervisor.ts";
 import { createRuntimeControl, SAFE_STOP_ERROR, type RuntimeControlState } from "./runtime-control.ts";
-import { createTodaySource } from "./state-source.ts";
+import { createTasksSource, createTodaySource } from "./state-source.ts";
 import { createTaskSource } from "./task-source.ts";
 import { parseDesktopTaskInput } from "../../host/desktop-task-contract.ts";
 import { parseDesktopRulesEntries } from "../../host/desktop-rules-contract.ts";
@@ -157,6 +157,8 @@ if (ownsAppLock)
       });
       // The today page reads the local hub over loopback while it runs; never while it does not.
       const todaySource = createTodaySource({ home: runtimeHome, getState: () => controller.getState() });
+      // The tasks page reads the same door with the hub's own paging into older runs.
+      const tasksSource = createTasksSource({ home: runtimeHome, getState: () => controller.getState() });
       // Task creation is the write side of the same owner data plane, through the hub's own door.
       const taskSource = createTaskSource({ home: runtimeHome, getState: () => controller.getState() });
       const statusLabel = (state: RuntimeControlState) =>
@@ -453,6 +455,15 @@ if (ownsAppLock)
         if (args.length !== 0) throw new Error("invalid-request");
         return todaySource.read();
       });
+      // Read-only task history; `before` is the hub's own paging cursor (a run id), never a page number.
+      ipcMain.handle(channels.tasksGet, async (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        if (args.length > 1) throw new Error("invalid-request");
+        const before = args[0];
+        if (before !== undefined && (!Number.isSafeInteger(before) || (before as number) <= 0))
+          throw new Error("invalid-request");
+        return tasksSource.read(before === undefined ? undefined : (before as number));
+      });
       // The entries the new-task panel offers; never while the local hub is not running.
       ipcMain.handle(channels.taskEntries, async (event, ...args: unknown[]) => {
         assertSender(event, window.webContents, page);
@@ -492,6 +503,9 @@ if (ownsAppLock)
         await window.desktop.setTheme('system');
         const runtime = await window.desktop.runtimeGet();
         const today = await window.desktop.todayState();
+        const tasks = await window.desktop.tasksGet();
+        let invalidPageRejected = false;
+        try { await window.desktop.tasksGet(0); } catch { invalidPageRejected = true; }
         const taskEntries = await window.desktop.taskEntries();
         let invalidTaskRejected = false;
         try { await window.desktop.taskCreate({ type: 'Task', summary: 'x', detail: '' }); } catch { invalidTaskRejected = true; }
@@ -502,7 +516,7 @@ if (ownsAppLock)
         const unsubscribe = window.desktop.onRuntimeEvent((event) => { runtimeEventSeen = true; });
         unsubscribe();
         unsubscribe();
-        return { theme, dark, invalidRejected, pages, runtime, today, taskEntries, invalidTaskRejected, rulesGet, invalidRulesRejected, runtimeEventSeen, nodeAbsent: typeof require === 'undefined' && typeof process === 'undefined', bridge: Object.keys(window.desktop).sort() };
+        return { theme, dark, invalidRejected, pages, runtime, today, tasks, invalidPageRejected, taskEntries, invalidTaskRejected, rulesGet, invalidRulesRejected, runtimeEventSeen, nodeAbsent: typeof require === 'undefined' && typeof process === 'undefined', bridge: Object.keys(window.desktop).sort() };
       })()`);
           const shots = join(base, "..", ".cache", "smoke");
           mkdirSync(shots, { recursive: true });
@@ -530,6 +544,10 @@ if (ownsAppLock)
             !result.today ||
             result.today.ok !== true ||
             result.today.state.kind !== "unavailable" ||
+            !result.tasks ||
+            result.tasks.ok !== true ||
+            result.tasks.state.kind !== "unavailable" ||
+            result.invalidPageRejected !== true ||
             !result.taskEntries ||
             result.taskEntries.ok !== false ||
             result.taskEntries.error.code !== "unavailable" ||
@@ -540,7 +558,7 @@ if (ownsAppLock)
             result.invalidRulesRejected !== true ||
             result.runtimeEventSeen !== false ||
             result.bridge.join(",") !==
-              "checkBuiltinAgents,getTheme,initHub,joinWorker,onRuntimeEvent,rulesGet,rulesPut,runtimeGet,runtimeStart,runtimeStop,setTheme,setupStatus,taskCreate,taskEntries,todayState,window" ||
+              "checkBuiltinAgents,getTheme,initHub,joinWorker,onRuntimeEvent,rulesGet,rulesPut,runtimeGet,runtimeStart,runtimeStop,setTheme,setupStatus,taskCreate,taskEntries,tasksGet,todayState,window" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||

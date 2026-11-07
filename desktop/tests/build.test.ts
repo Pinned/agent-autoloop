@@ -52,7 +52,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(main, /远程队列不会取消/);
   assert.match(main, /离线持久待同步/);
   assert.doesNotMatch(main, /restartPolicy|controller\.restart/);
-  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 15);
+  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 16);
   for (const name of [
     "setupStatus",
     "setupCheck",
@@ -62,6 +62,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
     "runtimeStart",
     "runtimeStop",
     "todayState",
+    "tasksGet",
     "taskEntries",
     "taskCreate",
     "rulesGet",
@@ -109,6 +110,7 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
     "setupStatus",
     "taskCreate",
     "taskEntries",
+    "tasksGet",
     "todayState",
     "window",
   ]);
@@ -207,6 +209,26 @@ test("the automation page edits the hub's own entries through the pure rules con
   assert.match(view, /showModal\(\)/);
   // The whole-list replacement is checked in main before any request leaves the process.
   assert.match(main, /parseDesktopRulesEntries\(args\[0\]\)/);
+});
+
+test("the tasks page shows the hub's run history through the pure tasks contract", () => {
+  const app = read("../src/renderer/app.ts");
+  const view = read("../src/renderer/tasks-view.ts");
+  const controller = read("../src/renderer/tasks-controller.ts");
+  const source = read("../src/state-source.ts");
+  const main = read("../src/main.ts");
+  assert.match(app, /mountTasksView\(/);
+  assert.match(app, /tasks\.refresh\(\)/);
+  // Pure DOM construction only; the list never serialises markup.
+  assert.doesNotMatch(view, /innerHTML|insertAdjacentHTML|console\./);
+  assert.doesNotMatch(controller, /node:|from ["'].*host\/(?:config|runtime|setup)\.ts/);
+  assert.match(controller, /from ["'].*host\/desktop-tasks-contract\.ts/);
+  // The same state door as today, with the hub's own paging cursor and never another route.
+  assert.match(source, /createTasksSource/);
+  assert.doesNotMatch(source, /\/v1\/(?:tell|ui|events|cards|runs|keys|in)\b/);
+  // The paging argument is a run id from the hub's own answer, checked before the fetch.
+  assert.match(main, /ipcMain\.handle\(channels\.tasksGet, async \(event, \.\.\.args: unknown\[\]\) => \{/);
+  assert.match(main, /Number\.isSafeInteger\(before\)/);
 });
 
 test("the global new-task dialog is a native dialog driven by the pure task contract", () => {

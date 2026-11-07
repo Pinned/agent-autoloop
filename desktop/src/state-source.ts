@@ -6,6 +6,12 @@ import {
   projectDesktopTodaySnapshot,
   type DesktopTodayResponse,
 } from "../../host/desktop-state-contract.ts";
+import {
+  DESKTOP_TASKS_MESSAGES,
+  desktopTasksOf,
+  projectDesktopTasksSnapshot,
+  type DesktopTasksResponse,
+} from "../../host/desktop-tasks-contract.ts";
 import type { DesktopRuntimeRole, DesktopRuntimeStatus } from "../../host/desktop-run-contract.ts";
 
 // The desktop app is an owner client of the local hub: it reads the display state over the very
@@ -61,6 +67,49 @@ export type TodaySourceOptions = {
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
 };
+
+/**
+ * The tasks page reads the same door with the hub's own paging: `before` asks for the page of
+ * runs older than that id. One shared gate for every read: only a running local hub is fetched.
+ */
+export function createTasksSource(options: TodaySourceOptions): {
+  read(before?: number): Promise<DesktopTasksResponse>;
+} {
+  const readConfig = options.readConfig ?? readRuntimeConfig;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const timeoutMs = options.timeoutMs ?? 1500;
+  const failure = desktopTasksOf({ kind: "error", message: DESKTOP_TASKS_MESSAGES.error });
+  return {
+    async read(before?: number) {
+      const { status, role } = options.getState();
+      if (status !== "running")
+        return desktopTasksOf({ kind: "unavailable", message: DESKTOP_TASKS_MESSAGES.unavailable });
+      if (role === "worker") return desktopTasksOf({ kind: "no-hub", message: DESKTOP_TASKS_MESSAGES["no-hub"] });
+      let endpoint: ReturnType<typeof parseHubEndpoint>;
+      try {
+        endpoint = parseHubEndpoint(readConfig(options.home));
+      } catch {
+        return failure;
+      }
+      if (endpoint === "no-hub") return desktopTasksOf({ kind: "no-hub", message: DESKTOP_TASKS_MESSAGES["no-hub"] });
+      if (endpoint === "invalid") return failure;
+      try {
+        const response = await fetchImpl(
+          `${endpoint.origin}/v1/state${before === undefined ? "" : `?before=${before}`}`,
+          {
+            headers: { authorization: `Bearer ${endpoint.owner}` },
+            signal: AbortSignal.timeout(timeoutMs),
+          },
+        );
+        if (!response.ok) return failure;
+        const payload: unknown = await response.json();
+        return desktopTasksOf({ kind: "ready", snapshot: projectDesktopTasksSnapshot(payload) });
+      } catch {
+        return failure;
+      }
+    },
+  };
+}
 
 export function createTodaySource(options: TodaySourceOptions): { read(): Promise<DesktopTodayResponse> } {
   const readConfig = options.readConfig ?? readRuntimeConfig;
