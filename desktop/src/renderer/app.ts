@@ -1,6 +1,8 @@
 import type { DesktopBridge, Theme, ThemeState } from "../policy.ts";
 import { createRendererSetup } from "./setup-controller.ts";
 import { mountSetupView } from "./setup-view.ts";
+import { createRendererToday } from "./today-controller.ts";
+import { mountTodayView } from "./today-view.ts";
 import { createRendererRun } from "./run-controller.ts";
 import { mountRunCard } from "./run-view.ts";
 declare global {
@@ -13,8 +15,8 @@ const pages = [
     id: "today",
     title: "今天",
     description: "把需要你关心的进展和决策放在一起。",
-    empty: "还没有可展示的工作进展",
-    detail: "此页面尚未读取进展数据。本机运行状态与启停请前往执行机页；这里不展示模拟进展。",
+    empty: "还没有今天数据",
+    detail: "本机中台运行中会展示真实进展与待决策卡片；未运行时给出固定提示，不展示模拟数据。",
     icon: "today",
   },
   {
@@ -65,12 +67,19 @@ const navigation = document.querySelector<HTMLElement>("#navigation")!;
 let currentPage = "today";
 let setupView: ReturnType<typeof mountSetupView> | undefined;
 let runCard: ReturnType<typeof mountRunCard> | undefined;
-// App-level singleton: page switches never destroy the controller or its event subscription.
+let todayView: ReturnType<typeof mountTodayView> | undefined;
+// App-level singletons: page switches never destroy the controllers or their subscriptions.
+const today = createRendererToday(window.desktop, () => {
+  if (currentPage === "today") todayView?.update();
+});
 const run = createRendererRun(
   window.desktop,
   () => ({ setupLocked: setup.state.kind === "unknown-locked", setupBusy: setup.busy }),
   () => {
     if (currentPage === "workers") runCard?.update();
+    // A running local hub is the one moment today's data can change on its own.
+    if (currentPage === "today" && run.state.kind === "ready" && run.state.snapshot.status === "running")
+      today.refresh();
   },
 );
 const setup = createRendererSetup(window.desktop, () => {
@@ -110,8 +119,9 @@ function render(id: string, focus = true) {
     setupView.dispose();
     setupView = undefined;
   }
-  // The card's DOM dies with the page; the controller and its subscription live on.
+  // The cards' DOM dies with the page; the controllers and their subscriptions live on.
   runCard = undefined;
+  todayView = undefined;
   currentPage = id;
   main.setAttribute("aria-labelledby", "page-title");
   const page = pages.find((item) => item.id === id)!;
@@ -139,6 +149,12 @@ function render(id: string, focus = true) {
         select.disabled = false;
       }
     });
+  } else if (id === "today") {
+    // Today shows real local-hub data or a fixed not-running line; never placeholder numbers.
+    const host = document.createElement("div");
+    main.append(host);
+    todayView = mountTodayView(host, today, () => render("workers"));
+    today.refresh();
   } else {
     main.insertAdjacentHTML(
       "beforeend",

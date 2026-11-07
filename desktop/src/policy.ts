@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, relative, sep } from "node:path";
 import type { DesktopJoinInput, DesktopSetupResponse } from "../../host/desktop-setup-contract.ts";
 import type { DesktopRuntimeEvent, DesktopRuntimeResponse } from "../../host/desktop-run-contract.ts";
+import type { DesktopTodayResponse } from "../../host/desktop-state-contract.ts";
 
 export const channels = Object.freeze({
   themeGet: "desktop:theme:get",
@@ -15,6 +16,7 @@ export const channels = Object.freeze({
   runtimeGet: "desktop:runtime:get",
   runtimeStart: "desktop:runtime:start",
   runtimeStop: "desktop:runtime:stop",
+  todayState: "desktop:state:today",
   // Main-to-renderer push only; the renderer never invokes this channel.
   runtimeEvent: "desktop:runtime:event",
 });
@@ -35,6 +37,8 @@ export interface DesktopBridge {
   runtimeGet(): Promise<DesktopRuntimeResponse>;
   runtimeStart(): Promise<DesktopRuntimeResponse>;
   runtimeStop(): Promise<DesktopRuntimeResponse>;
+  /** Read-only today-page data from the local hub while it runs. */
+  todayState(): Promise<DesktopTodayResponse>;
   /** Subscribe to main-pushed runtime state; the returned function unsubscribes. */
   onRuntimeEvent(listener: (event: DesktopRuntimeEvent) => void): () => void;
 }
