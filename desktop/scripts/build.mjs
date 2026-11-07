@@ -35,5 +35,6 @@ await Promise.all([
     target: "chrome144",
     outfile: "dist/renderer/app.js",
   }),
+  cp(`${root}/assets`, `${root}/dist/assets`, { recursive: true }),
   ...["index.html", "style.css"].map((file) => cp(`${root}/src/renderer/${file}`, `${root}/dist/renderer/${file}`)),
 ]);

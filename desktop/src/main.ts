@@ -264,6 +264,12 @@ if (ownsAppLock)
         callback({ cancel: !allowed.includes(details.url) });
       });
       session.defaultSession.on("will-download", (event) => event.preventDefault());
+      const appIcon = join(base, "assets", "icon.png");
+      if (process.platform === "darwin" && app.dock) {
+        try {
+          app.dock.setIcon(appIcon);
+        } catch {}
+      }
       window = new BrowserWindow({
         width: 1120,
         height: 780,
@@ -273,6 +279,7 @@ if (ownsAppLock)
         title: "agent-autoloop · 指挥台",
         titleBarStyle: "hiddenInset",
         backgroundColor: nativeTheme.shouldUseDarkColors ? "#0b0e14" : "#f4f6fa",
+        icon: appIcon,
         webPreferences: webPreferences(join(base, "preload.cjs")),
       });
       quit = createLifecycle({
