@@ -78,7 +78,7 @@ test("entries and creation go to the fixed door routes with the owner credential
   const fetchImpl = (url: string | URL, init?: RequestInit) => {
     seen.push({ url: String(url), init: init ?? {} });
     if (String(url).endsWith("/v1/ui/rules")) return Promise.resolve(new Response(JSON.stringify(entriesPage)));
-    return Promise.resolve(new Response(JSON.stringify({ event: "ui-1", duplicate: false, routed: ["开发任务"] })));
+    return Promise.resolve(new Response(JSON.stringify({ event: 7, duplicate: false, routed: ["开发任务"] })));
   };
   const s = source({ status: "running", role: "hub-worker" }, fetchImpl);
   const entries = await s.entries();
@@ -90,7 +90,7 @@ test("entries and creation go to the fixed door routes with the owner credential
   const created = await s.create({ type: "task.dev", summary: "修复登录", detail: "尽快" });
   assert.equal(created.ok, true);
   if (created.ok) {
-    assert.equal(created.result.event, "ui-1");
+    assert.equal(created.result.event, 7);
     assert.deepEqual(created.result.routed, ["开发任务"]);
   }
   assert.equal(seen.length, 2);

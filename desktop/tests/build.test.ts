@@ -31,6 +31,57 @@ test("isolated smoke verifies second process and uses confirmed normal quit rath
   assert.match(driver, /DESKTOP_SMOKE_CANCEL_RESIDENT/);
 });
 
+test("business lifecycle drive runs through the shipped bridge and never fakes success", () => {
+  const main = read("../src/main.ts");
+  const pkg = JSON.parse(read("../package.json"));
+  // The drive is parsed at startup from the environment and fails closed on any wrong combination.
+  assert.match(main, /parseLifecycleEnv\(process\.env/);
+  assert.match(main, /const lifecycle = drive\.mode !== "off"/);
+  // It drives the renderer the user drives: executeJavaScript on the real page, no new IPC.
+  assert.match(main, /evaluate: \(script\) => window\.webContents\.executeJavaScript\(script\)/);
+  assert.match(main, /runLifecycleHubDrive\(port, drive\.ruleCwd\)/);
+  assert.match(main, /runLifecycleWorkerDrive\(port, drive\.join, drive\.quitSentinel\)/);
+  // Quitting still walks the confirmed lifecycle path; a failure reports, stops safely, exits non-zero.
+  assert.match(main, /if \(lifecycle\) return true;/);
+  assert.match(main, /prepareQuit\(\(\) => controller\.stop\(\)\)[\s\S]*?finally\(\(\) => app\.exit\(1\)\)/);
+  assert.match(pkg.scripts.lifecycle, /lifecycle-smoke\.mjs/);
+});
+
+test("the lifecycle driver stays on loopback, coordinates through the production doors and keeps failure evidence", () => {
+  const driver = read("../scripts/lifecycle-smoke.mjs");
+  // It picks the first free loopback port instead of fighting a machine's own real hub on 3350,
+  // and it checks the port closed again after the exit.
+  assert.match(driver, /createConnection/);
+  assert.match(driver, /pickFreePort/);
+  assert.match(driver, /DESKTOP_SETUP_PORT: String\(PORT\)/);
+  assert.match(driver, /退出后中台端口未关闭/);
+  // Readiness through the hub's own unauthenticated healthz; the owner key comes from the
+  // isolated test home only, the worker key from the CLI, the agent from the console API.
+  assert.match(driver, /\/healthz/);
+  assert.match(driver, /key", "new", "worker"/);
+  assert.match(driver, /\/v1\/ui\/config\/agents/);
+  assert.match(driver, /use: "command"/);
+  // The two instances are coordinated by markers and a quit sentinel, never by guessing timing.
+  assert.match(driver, /DESKTOP_LIFECYCLE_HUB_OK/);
+  assert.match(driver, /writeFile\(sentinel/);
+  // No forced kill on the success path; a failure keeps its HOME directories for inspection.
+  assert.match(driver, /keepForEvidence/);
+  assert.match(driver, /保留证据目录/);
+  assert.match(driver, /SIGKILL/);
+});
+
+test("the hub port override is one validated knob: the setup entry refuses junk, the runner forwards only it", () => {
+  const entry = read("../../host/desktop-setup.ts");
+  const runner = read("../src/setup-runner.ts");
+  // The port is the CLI's `init --port` equivalent: default 3350, digits 1024-65535, nothing else.
+  assert.match(entry, /DESKTOP_SETUP_PORT_VARIABLE = "DESKTOP_SETUP_PORT"/);
+  assert.match(entry, /port >= 1024 && port <= 65535/);
+  assert.match(entry, /desktopSetupFailure\(operation, refusal\)/);
+  // The environment whitelist stays closed: the port variable is the only value passed through.
+  assert.match(runner, /DESKTOP_SETUP_PORT: process\.env\.DESKTOP_SETUP_PORT/);
+  assert.doesNotMatch(runner, /\.\.\.process\.env/);
+});
+
 test("native runtime is opt-in, isolated and not connected to the renderer", () => {
   const main = read("../src/main.ts");
   assert.match(main, /enabled: !app\.isPackaged && !!home && !smoke/);
@@ -281,8 +332,9 @@ test("system notifications are main-process only and click back to today", () =>
   assert.doesNotMatch(read("../dist/renderer/app.js"), /Notification/);
   assert.match(main, /new Notification\(draft\)/);
   assert.match(main, /notification\.on\("click", \(\) => showPage\("today"\)\)/);
-  // A user already looking at the console is not interrupted, and smoke never notifies.
-  assert.match(main, /smoke \|\| window\.isDestroyed\(\) \|\| window\.isFocused\(\)/);
+  // A user already looking at the console is not interrupted, and smoke and the lifecycle
+  // drive (which never has a human watching) never notify either.
+  assert.match(main, /smoke \|\| lifecycle \|\| window\.isDestroyed\(\) \|\| window\.isFocused\(\)/);
   assert.match(main, /createNotifier\(\)/);
 });
 

@@ -47,6 +47,8 @@ jobs:
         run: npm --prefix desktop run runtime:check
       - if: steps.scope.outputs.scope != 'docs' && runner.os == 'macOS'
         run: npm --prefix desktop run smoke
+      - if: steps.scope.outputs.scope != 'docs' && runner.os == 'macOS'
+        run: npm --prefix desktop run lifecycle
       - if: steps.scope.outputs.scope == 'normal'
         run: npm run test:quick
       - if: steps.scope.outputs.scope == 'full'

@@ -36,7 +36,7 @@ const entriesReady = (entries: DesktopTaskEntry[]): DesktopTaskEntriesResponse =
 const createOk = (overrides: Record<string, unknown> = {}): DesktopTaskCreateResponse => ({
   version: 1,
   ok: true,
-  result: { event: "ui-00000000-0000-4000-8000-000000000001", duplicate: false, routed: ["值班规则"], ...overrides },
+  result: { event: 1, duplicate: false, routed: ["值班规则"], ...overrides },
 });
 
 function fixture() {

@@ -59,7 +59,7 @@ export function mountTaskDialog(
   error.hidden = true;
   const actions = document.createElement("div");
   actions.className = "setup-actions";
-  let lastDone: { event: string; duplicate: boolean; routed: string[] } | null = null;
+  let lastDone: { event: number; duplicate: boolean; routed: string[] } | null = null;
   const cancelButton = document.createElement("button");
   cancelButton.type = "button";
   cancelButton.textContent = "取消";

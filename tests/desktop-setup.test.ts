@@ -26,7 +26,9 @@ import {
 import {
   createDesktopDiscovery,
   createDesktopSetupDriver,
+  desktopSetupPort,
   DESKTOP_CONFIG_MAX_BYTES,
+  DESKTOP_SETUP_PORT_VARIABLE,
   readDesktopSetupRequest,
   readDesktopSetupStatus,
   type DesktopSetupDependencies,
@@ -548,4 +550,45 @@ test("isolated init allows configuration before any Agent is installed", (t) => 
     assert.deepEqual(rules.agents,{}); assert.deepEqual(rules.rules,[]);
   `,
   );
+});
+
+test("the hub port knob defaults to 3350, accepts only real port numbers and refuses junk", async (t) => {
+  assert.equal(desktopSetupPort({}), "3350");
+  assert.equal(desktopSetupPort({ [DESKTOP_SETUP_PORT_VARIABLE]: undefined }), "3350");
+  assert.equal(desktopSetupPort({ [DESKTOP_SETUP_PORT_VARIABLE]: "3351" }), "3351");
+  assert.equal(desktopSetupPort({ [DESKTOP_SETUP_PORT_VARIABLE]: "65535" }), "65535");
+  for (const junk of ["", "x", "0", "1023", "65536", "80", " 3351", "3351 ", "99999"])
+    assert.equal(desktopSetupPort({ [DESKTOP_SETUP_PORT_VARIABLE]: junk }), null, junk);
+  // A wrong value must fail the operation, never fall back to a guessed default port.
+  process.env[DESKTOP_SETUP_PORT_VARIABLE] = "99999";
+  t.after(() => delete process.env[DESKTOP_SETUP_PORT_VARIABLE]);
+  const home = fixture(t);
+  const { driver } = driverFixture(home, {
+    async init() {
+      throw new Error("invalid port must never reach setup");
+    },
+  });
+  assert.deepEqual(await driver({ version: 1, operation: "init" }), desktopSetupFailure("init", "invalid-config"));
+  assert.equal(await driver({ version: 1, operation: "join", input: joinInput }).then((r) => r.ok), false);
+  // A good value reaches init exactly once, as the port the caller asked for.
+  process.env[DESKTOP_SETUP_PORT_VARIABLE] = "3351";
+  const second = fixture(t);
+  const { driver: retry, calls } = driverFixture(second, {
+    async init(options) {
+      assert.deepEqual(options, { allowNoAgent: true, port: "3351" });
+      calls.push("init");
+      writeFileSync(
+        path.join(second, "config.json"),
+        JSON.stringify({
+          url: "http://127.0.0.1:3351",
+          hub: { listen: "127.0.0.1:3351" },
+          worker: { name: "worker", key: "generated-secret" },
+          owner: "generated-owner",
+          source: { name: "local", key: "generated-source" },
+        }),
+      );
+    },
+  });
+  assert.equal((await retry({ version: 1, operation: "init" })).ok, true);
+  assert.deepEqual(calls, ["acquire", "init", "release"]);
 });
