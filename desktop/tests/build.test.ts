@@ -90,6 +90,21 @@ test("built preload exposes exactly the fixed theme, window and setup methods", 
   assert.doesNotMatch(source, /invoke\((?:channel|name|value)/);
 });
 
+test("onboarding is explicit and renderer bundles only the pure setup contract", () => {
+  const app = read("../src/renderer/app.ts");
+  const view = read("../src/renderer/setup-view.ts");
+  const controller = read("../src/renderer/setup-controller.ts");
+  const renderer = read("../dist/renderer/app.js");
+  assert.match(app, /button\.addEventListener\("click", openSetup\)/);
+  assert.match(app, /render\("today", false\)/);
+  assert.doesNotMatch(app, /setupStatus\(|checkBuiltinAgents\(|initHub\(|joinWorker\(/);
+  assert.doesNotMatch(controller, /node:|from ["'].*host\/(?:config|runtime|setup)\.ts/);
+  assert.doesNotMatch(renderer, /function readConfig|function initSetup|node:|AGENT_AUTOLOOP_HOME/);
+  assert.match(view, /input\.type = password \? "password"/);
+  assert.doesNotMatch(view, /innerHTML|insertAdjacentHTML|console\./);
+  assert.match(view, /input\.value = ""/);
+});
+
 test("fixed renderer has restrictive CSP and no simulated business or network connection", () => {
   const html = read("../dist/renderer/index.html");
   assert.match(html, /default-src 'none'/);
