@@ -11,6 +11,7 @@ import { createSupervisor } from "./supervisor.ts";
 import { createRuntimeControl, SAFE_STOP_ERROR, type RuntimeControlState } from "./runtime-control.ts";
 import { createTasksSource, createTodaySource } from "./state-source.ts";
 import { createTaskSource } from "./task-source.ts";
+import { createHubWatcher, type HubGlance } from "./hub-watcher.ts";
 import { parseDesktopTaskInput } from "../../host/desktop-task-contract.ts";
 import { parseDesktopRulesEntries } from "../../host/desktop-rules-contract.ts";
 import { createSetupControl } from "./setup-control.ts";
@@ -161,6 +162,34 @@ if (ownsAppLock)
       const tasksSource = createTasksSource({ home: runtimeHome, getState: () => controller.getState() });
       // Task creation is the write side of the same owner data plane, through the hub's own door.
       const taskSource = createTaskSource({ home: runtimeHome, getState: () => controller.getState() });
+      // The tray's live view: the hub's own stream says when, the state doors say what.
+      const watcher = createHubWatcher({
+        home: runtimeHome,
+        getState: () => controller.getState(),
+        readToday: () => todaySource.read(),
+        readTasks: () => tasksSource.read(),
+      });
+      watcher.subscribe(() => refreshMenus());
+      // Tray menu labels are short by design; the full truth lives on the pages.
+      const menuText = (text: string) => (text.length > 24 ? `${text.slice(0, 23)}…` : text);
+      function showPage(page: "today" | "tasks") {
+        quit.restore();
+        if (!window.isDestroyed()) window.webContents.send(channels.navigate, { page });
+      }
+      function glanceItems(glance: HubGlance): Electron.MenuItemConstructorOptions[] {
+        if (!glance.live || (glance.asks.length === 0 && glance.runs.length === 0)) return [];
+        const items: Electron.MenuItemConstructorOptions[] = [{ type: "separator" }];
+        if (glance.asks.length > 0) {
+          items.push({ label: `最近待决策（${glance.attention}）`, enabled: false });
+          for (const ask of glance.asks) items.push({ label: menuText(ask.title), click: () => showPage("today") });
+        }
+        if (glance.runs.length > 0) {
+          items.push({ label: "停止运行中的一轮", enabled: false });
+          for (const run of glance.runs)
+            items.push({ label: `停止 · ${menuText(run.rule)}`, click: () => void watcher.cancelRun(run.id) });
+        }
+        return items;
+      }
       const statusLabel = (state: RuntimeControlState) =>
         desktopRuntimeStatusText(state, {
           unavailable: smoke ? "纯壳验证，运行服务未启动" : "打包运行资源尚未提供，无法启动运行服务",
@@ -266,10 +295,15 @@ if (ownsAppLock)
           ]),
         );
         if (tray) {
+          const glance = watcher.glance();
           tray.setToolTip(`agent-autoloop · ${statusLabel(state)}`);
+          // The pending-decision count rides beside the icon as title text: template artwork stays,
+          // so light and dark keep working. A red badge would need non-template art for one number.
+          if (process.platform === "darwin") tray.setTitle(glance.attention > 0 ? String(glance.attention) : "");
           tray.setContextMenu(
             Menu.buildFromTemplate([
               { label: "打开指挥台", click: () => quit.restore() },
+              ...glanceItems(glance),
               ...operations(),
               { type: "separator" },
               { label: "退出…", click: () => void requestQuit() },
@@ -278,6 +312,8 @@ if (ownsAppLock)
         }
       }
       controller.subscribe((state) => {
+        // Every runtime change re-decides whether the tray should be listening to the stream at all.
+        watcher.sync();
         refreshMenus();
         if (window && !window.isDestroyed())
           window.webContents.send(channels.runtimeEvent, desktopRuntimeSnapshotOf(state));
@@ -317,6 +353,8 @@ if (ownsAppLock)
         restore,
         exit: () => app.quit(),
         prepareQuit: async () => {
+          // The stream listener is main-side plumbing; it never outlives the app it serves.
+          watcher.close();
           const safe = await setup.prepareQuit(() => controller.stop());
           if (!safe) await showSafeError(SAFE_STOP_ERROR);
           return safe;
@@ -358,6 +396,7 @@ if (ownsAppLock)
       trayImage.setTemplateImage(true);
       tray = new Tray(trayImage);
       refreshMenus();
+      watcher.sync();
       tray.on("double-click", () => quit.restore());
       tray.on("click", () => quit.restore());
       const themeState = () => ({
@@ -516,7 +555,11 @@ if (ownsAppLock)
         const unsubscribe = window.desktop.onRuntimeEvent((event) => { runtimeEventSeen = true; });
         unsubscribe();
         unsubscribe();
-        return { theme, dark, invalidRejected, pages, runtime, today, tasks, invalidPageRejected, taskEntries, invalidTaskRejected, rulesGet, invalidRulesRejected, runtimeEventSeen, nodeAbsent: typeof require === 'undefined' && typeof process === 'undefined', bridge: Object.keys(window.desktop).sort() };
+        let navigateSeen = false;
+        const offNavigate = window.desktop.onNavigate((target) => { navigateSeen = true; });
+        offNavigate();
+        offNavigate();
+        return { theme, dark, invalidRejected, pages, runtime, today, tasks, invalidPageRejected, taskEntries, invalidTaskRejected, rulesGet, invalidRulesRejected, runtimeEventSeen, navigateSeen, nodeAbsent: typeof require === 'undefined' && typeof process === 'undefined', bridge: Object.keys(window.desktop).sort() };
       })()`);
           const shots = join(base, "..", ".cache", "smoke");
           mkdirSync(shots, { recursive: true });
@@ -557,8 +600,9 @@ if (ownsAppLock)
             result.rulesGet.error.code !== "unavailable" ||
             result.invalidRulesRejected !== true ||
             result.runtimeEventSeen !== false ||
+            result.navigateSeen !== false ||
             result.bridge.join(",") !==
-              "checkBuiltinAgents,getTheme,initHub,joinWorker,onRuntimeEvent,rulesGet,rulesPut,runtimeGet,runtimeStart,runtimeStop,setTheme,setupStatus,taskCreate,taskEntries,tasksGet,todayState,window" ||
+              "checkBuiltinAgents,getTheme,initHub,joinWorker,onNavigate,onRuntimeEvent,rulesGet,rulesPut,runtimeGet,runtimeStart,runtimeStop,setTheme,setupStatus,taskCreate,taskEntries,tasksGet,todayState,window" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||

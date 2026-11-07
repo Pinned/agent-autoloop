@@ -29,8 +29,9 @@ test("IPC trusts only this window and its exact top-level local document", () =>
   }
 });
 
-test("IPC exposes only themes, window actions, the four fixed setup operations, the three runtime operations, the today read, the two task operations, the runs read and the two rules operations", () => {
+test("IPC exposes only themes, window actions, the four fixed setup operations, the three runtime operations, the today read, the two task operations, the runs read, the two rules operations and the two push channels", () => {
   assert.deepEqual(Object.values(channels).sort(), [
+    "desktop:navigate",
     "desktop:rules:get",
     "desktop:rules:put",
     "desktop:runtime:event",
@@ -50,6 +51,7 @@ test("IPC exposes only themes, window actions, the four fixed setup operations, 
     "desktop:window",
   ]);
   assert.equal(channels.runtimeEvent, "desktop:runtime:event");
+  assert.equal(channels.navigate, "desktop:navigate");
   for (const theme of ["system", "light", "dark"]) assert.equal(parseTheme(theme), theme);
   for (const action of ["hide", "minimize", "toggle-maximize", "restore", "quit"])
     assert.equal(parseWindowAction(action), action);

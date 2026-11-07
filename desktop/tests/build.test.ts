@@ -73,9 +73,10 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
       new RegExp(`ipcMain\\.handle\\(channels\\.${name},[^]*?assertSender\\(event, window\\.webContents, page\\)`),
     );
   }
-  // The renderer is pushed state only through the single fixed event channel.
-  assert.equal((main.match(/webContents\.send\(/g) ?? []).length, 1);
+  // The renderer is pushed state through the two fixed event channels, and nothing else.
+  assert.equal((main.match(/webContents\.send\(/g) ?? []).length, 2);
   assert.match(main, /webContents\.send\(channels\.runtimeEvent, desktopRuntimeSnapshotOf\(state\)\)/);
+  assert.match(main, /webContents\.send\(channels\.navigate, \{ page \}\)/);
   assert.match(main, /cachedOnly: true/);
   assert.match(main, /entryPath: join\(resources, "host", "desktop-setup\.ts"\)/);
   assert.match(main, /setup\.runStart\(\s*\(\) => controller\.start\(\),\s*\(\) => controller\.getState\(\),?\s*\)/);
@@ -100,6 +101,7 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
     "getTheme",
     "initHub",
     "joinWorker",
+    "onNavigate",
     "onRuntimeEvent",
     "rulesGet",
     "rulesPut",
@@ -115,10 +117,12 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
     "window",
   ]);
   assert.doesNotMatch(source, /invoke\((?:channel|name|value)/);
-  // The only renderer-bound listener is the fixed runtime event channel.
-  assert.equal((source.match(/ipcRenderer\.on\(/g) ?? []).length, 1);
+  // The only renderer-bound listeners are the two fixed push channels.
+  assert.equal((source.match(/ipcRenderer\.on\(/g) ?? []).length, 2);
   assert.match(source, /ipcRenderer\.on\("desktop:runtime:event"/);
   assert.match(source, /removeListener\("desktop:runtime:event"/);
+  assert.match(source, /ipcRenderer\.on\("desktop:navigate"/);
+  assert.match(source, /removeListener\("desktop:navigate"/);
 });
 
 test("onboarding is explicit and renderer bundles only the pure setup contract", () => {
@@ -245,6 +249,28 @@ test("the global new-task dialog is a native dialog driven by the pure task cont
   assert.match(controller, /from ["'].*host\/desktop-task-contract\.ts/);
   // A finished submission refreshes today exactly once, even for duplicate acks.
   assert.match(view, /showModal\(\)/);
+});
+
+test("the tray's live glance listens to the hub's own stream and never polls", () => {
+  const watcher = read("../src/hub-watcher.ts");
+  const main = read("../src/main.ts");
+  // Facts are never parsed for display; only the id line is kept, and truth always re-reads state.
+  assert.match(watcher, /\/v1\/stream\?after=/);
+  assert.match(watcher, /parseDesktopTodayResponse\(await options\.readToday\(\)\)/);
+  assert.match(watcher, /parseDesktopTasksResponse\(await options\.readTasks\(\)\)/);
+  assert.doesNotMatch(watcher, /setInterval/);
+  // The stream opens only for a running local hub with the loopback owner credential, like every reader.
+  assert.match(watcher, /status !== "running" \|\| role === "worker"/);
+  assert.match(watcher, /authorization: `Bearer \$\{gate\.owner\}`/);
+  // Stopping one round goes through the hub's own cancel door, never a process handle.
+  assert.match(watcher, /\/v1\/runs\/\$\{id\}\/cancel/);
+  // The runtime decision re-opens or closes the stream; the app quit path always closes it.
+  assert.match(main, /watcher\.sync\(\)/);
+  assert.match(main, /watcher\.close\(\)/);
+  assert.match(main, /watcher\.subscribe\(\(\) => refreshMenus\(\)\)/);
+  assert.match(main, /tray\.setTitle\(glance\.attention > 0 \? String\(glance\.attention\) : ""\)/);
+  assert.match(main, /最近待决策/);
+  assert.match(main, /停止运行中的一轮/);
 });
 
 test("fixed renderer has restrictive CSP and no simulated business or network connection", () => {
