@@ -52,7 +52,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(main, /远程队列不会取消/);
   assert.match(main, /离线持久待同步/);
   assert.doesNotMatch(main, /restartPolicy|controller\.restart/);
-  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 10);
+  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 11);
   for (const name of [
     "setupStatus",
     "setupCheck",
@@ -61,6 +61,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
     "runtimeGet",
     "runtimeStart",
     "runtimeStop",
+    "todayState",
   ]) {
     assert.match(
       main,
@@ -100,6 +101,7 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
     "runtimeStop",
     "setTheme",
     "setupStatus",
+    "todayState",
     "window",
   ]);
   assert.doesNotMatch(source, /invoke\((?:channel|name|value)/);
@@ -136,6 +138,33 @@ test("the workers page mounts the real local runtime card from the pure run cont
   // The renderer controller may touch the pure contract only, never config, runtime or setup host modules.
   assert.doesNotMatch(controller, /node:|from ["'].*host\/(?:config|runtime|setup)\.ts/);
   assert.match(controller, /from ["'].*host\/desktop-run-contract\.ts/);
+});
+
+test("the today page mounts the real local-hub data panel from the pure today contract", () => {
+  const app = read("../src/renderer/app.ts");
+  const view = read("../src/renderer/today-view.ts");
+  const controller = read("../src/renderer/today-controller.ts");
+  assert.match(app, /mountTodayView\(/);
+  assert.match(app, /today\.refresh\(\)/);
+  // The one moment today's data can change on its own is the local hub reaching running.
+  assert.match(app, /run\.state\.snapshot\.status === "running"\)\s*today\.refresh\(\)/);
+  assert.doesNotMatch(view, /innerHTML|insertAdjacentHTML|console\./);
+  assert.doesNotMatch(controller, /node:|from ["'].*host\/(?:config|runtime|setup)\.ts/);
+  assert.match(controller, /from ["'].*host\/desktop-state-contract\.ts/);
+});
+
+test("the today source only ever fetches a validated loopback endpoint with the owner credential", () => {
+  const source = read("../src/state-source.ts");
+  const main = read("../src/main.ts");
+  assert.match(source, /LOOPBACK/);
+  assert.match(source, /O_NOFOLLOW/);
+  assert.match(source, /DESKTOP_CONFIG_MAX_BYTES/);
+  // Only the fixed state route is fetched; keys and config values never reach the renderer.
+  assert.match(source, /\/v1\/state/);
+  assert.doesNotMatch(source, /\/v1\/(?:tell|ui|events|cards|runs|keys|in)\b/);
+  assert.doesNotMatch(source, /from ["'].*host\/config\.ts/);
+  assert.match(main, /createTodaySource\(\{ home: runtimeHome, getState: \(\) => controller\.getState\(\) \}\)/);
+  assert.match(main, /ipcMain\.handle\(channels\.todayState, async \(event, \.\.\.args: unknown\[\]\) => \{/);
 });
 
 test("fixed renderer has restrictive CSP and no simulated business or network connection", () => {

@@ -12,6 +12,7 @@ const bridge = Object.freeze<DesktopBridge>({
   runtimeGet: () => ipcRenderer.invoke("desktop:runtime:get"),
   runtimeStart: () => ipcRenderer.invoke("desktop:runtime:start"),
   runtimeStop: () => ipcRenderer.invoke("desktop:runtime:stop"),
+  todayState: () => ipcRenderer.invoke("desktop:state:today"),
   onRuntimeEvent: (listener) => {
     const receiving = (_event: unknown, payload: unknown) => {
       listener(payload as never);

@@ -472,6 +472,95 @@ main {
   color: var(--faint);
   margin-top: 12px;
 }
+.today-status {
+  font-size: 12px;
+  margin-top: 12px;
+}
+.today-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+.today-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel2);
+  min-width: 72px;
+}
+.today-stat-value {
+  font-size: 16px;
+  font-weight: 650;
+}
+.today-stat-label {
+  font-size: 10px;
+  color: var(--muted);
+}
+.today-cards-title {
+  margin-top: 22px;
+}
+.today-cards {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.today-card {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel2);
+}
+.today-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.today-card-kind {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.today-card-text {
+  font-size: 12px;
+  margin-top: 7px;
+  overflow-wrap: anywhere;
+}
+.today-card-by {
+  font-size: 11px;
+  margin-top: 5px;
+}
+.today-card-empty {
+  font-size: 12px;
+}
+.today-error {
+  padding: 12px;
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--blue);
+  background: var(--accent-bg);
+  font-size: 12px;
+}
+.today-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+.today-note {
+  font-size: 11px;
+  color: var(--faint);
+  margin-top: 12px;
+}
 @media (max-width: 650px) {
   .setup-choices {
     grid-template-columns: 1fr;

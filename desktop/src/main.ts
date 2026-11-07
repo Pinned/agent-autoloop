@@ -9,6 +9,7 @@ import { createLifecycle } from "./lifecycle.ts";
 import { loadTheme, saveTheme } from "./preferences.ts";
 import { createSupervisor } from "./supervisor.ts";
 import { createRuntimeControl, SAFE_STOP_ERROR, type RuntimeControlState } from "./runtime-control.ts";
+import { createTodaySource } from "./state-source.ts";
 import { createSetupControl } from "./setup-control.ts";
 import { createSetupRunner } from "./setup-runner.ts";
 import {
@@ -151,6 +152,8 @@ if (ownsAppLock)
         canSetup: () => controller.isIdle() && ["stopped", "unconfigured"].includes(controller.getState().status),
         run: (request) => setupRunner.run(request),
       });
+      // The today page reads the local hub over loopback while it runs; never while it does not.
+      const todaySource = createTodaySource({ home: runtimeHome, getState: () => controller.getState() });
       const statusLabel = (state: RuntimeControlState) =>
         desktopRuntimeStatusText(state, {
           unavailable: smoke ? "纯壳验证，运行服务未启动" : "打包运行资源尚未提供，无法启动运行服务",
@@ -439,6 +442,12 @@ if (ownsAppLock)
         if (args.length !== 0) throw new Error("invalid-request");
         return performStop();
       });
+      // Read-only today data; the response is already contract-validated and carries no keys or paths.
+      ipcMain.handle(channels.todayState, async (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        if (args.length !== 0) throw new Error("invalid-request");
+        return todaySource.read();
+      });
       await window.loadFile(pagePath);
       window.show();
       if (smoke) {
@@ -452,11 +461,12 @@ if (ownsAppLock)
         for (const button of document.querySelectorAll('[data-page]')) { button.click(); pages.push(document.querySelector('h1').textContent); }
         await window.desktop.setTheme('system');
         const runtime = await window.desktop.runtimeGet();
+        const today = await window.desktop.todayState();
         let runtimeEventSeen = false;
         const unsubscribe = window.desktop.onRuntimeEvent((event) => { runtimeEventSeen = true; });
         unsubscribe();
         unsubscribe();
-        return { theme, dark, invalidRejected, pages, runtime, runtimeEventSeen, nodeAbsent: typeof require === 'undefined' && typeof process === 'undefined', bridge: Object.keys(window.desktop).sort() };
+        return { theme, dark, invalidRejected, pages, runtime, today, runtimeEventSeen, nodeAbsent: typeof require === 'undefined' && typeof process === 'undefined', bridge: Object.keys(window.desktop).sort() };
       })()`);
           const shots = join(base, "..", ".cache", "smoke");
           mkdirSync(shots, { recursive: true });
@@ -481,9 +491,12 @@ if (ownsAppLock)
             !result.runtime ||
             result.runtime.ok !== true ||
             result.runtime.state.status !== "unavailable" ||
+            !result.today ||
+            result.today.ok !== true ||
+            result.today.state.kind !== "unavailable" ||
             result.runtimeEventSeen !== false ||
             result.bridge.join(",") !==
-              "checkBuiltinAgents,getTheme,initHub,joinWorker,onRuntimeEvent,runtimeGet,runtimeStart,runtimeStop,setTheme,setupStatus,window" ||
+              "checkBuiltinAgents,getTheme,initHub,joinWorker,onRuntimeEvent,runtimeGet,runtimeStart,runtimeStop,setTheme,setupStatus,todayState,window" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||
