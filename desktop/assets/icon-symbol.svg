@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="symFrameGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#94a3b8" />
+      <stop offset="100%" stop-color="#475569" />
+    </linearGradient>
+    <linearGradient id="symAccentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4c8dff" />
+      <stop offset="100%" stop-color="#255bb7" />
+    </linearGradient>
+  </defs>
+  <!-- Main Loop Frame -->
+  <rect x="56" y="56" width="320" height="320" rx="80"
+        fill="none" stroke="url(#symFrameGrad)" stroke-width="36" />
+  <!-- Trench Cutout -->
+  <rect x="272" y="272" width="184" height="184" rx="52"
+        fill="#ffffff" />
+  <!-- Accent Block -->
+  <rect x="290" y="290" width="148" height="148" rx="38"
+        fill="url(#symAccentGrad)" />
+</svg>
