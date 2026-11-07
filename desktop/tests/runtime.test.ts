@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile, access } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -212,6 +212,98 @@ test("cache reuse rejects a substituted binary without downloading or executing 
   }
 });
 
+for (const missing of ["cache", "install"]) {
+  test(`cached-only missing ${missing} fails with a fixed error without downloading and releases owned resources`, async () => {
+    const dir = await mkdtemp(join(tmpdir(), "runtime cached only missing "));
+    try {
+      const cache = join(dir, "cache");
+      if (missing === "install") await mkdir(cache);
+      let downloads = 0;
+      let cleanup: (() => Promise<void>) | undefined;
+      await assert.rejects(
+        runtime.ensureRuntime({
+          cacheDir: cache,
+          platform: "darwin",
+          arch: "arm64",
+          cachedOnly: true,
+          ownCleanup: (fn: () => Promise<void>) => {
+            cleanup = fn;
+          },
+          download: async () => {
+            downloads++;
+            throw new Error("cached-only downloader must never be called");
+          },
+        }),
+        (error: Error & { code?: string }) => {
+          assert.ok(error instanceof runtime.RuntimeUnavailableError);
+          assert.equal(error.name, "RuntimeUnavailableError");
+          assert.equal(error.code, "RUNTIME_UNAVAILABLE");
+          assert.equal(error.message, "Cached runtime is unavailable");
+          return true;
+        },
+      );
+      assert.equal(downloads, 0);
+      assert.deepEqual(await readdir(cache), []);
+      assert.equal(typeof cleanup, "function");
+      // A completed owner's cleanup must not remove a subsequently acquired lock.
+      const lock = join(cache, `${root}.lock`);
+      await mkdir(lock);
+      await writeFile(join(lock, "foreign"), "keep");
+      await cleanup!();
+      await cleanup!();
+      assert.equal(await readFile(join(lock, "foreign"), "utf8"), "keep");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const damage of ["missing archive", "checksum", "binary", "install symlink"]) {
+  test(`cached-only rejects ${damage} without downloading, fallback or deleting the install`, async () => {
+    const dir = await mkdtemp(join(tmpdir(), "runtime cached only damaged "));
+    try {
+      const cache = join(dir, "cache");
+      const install = join(cache, root);
+      await mkdir(cache);
+      const fixture = damage === "install symlink" ? join(dir, "outside") : install;
+      await mkdir(join(fixture, "bin"), { recursive: true });
+      const archive = tar([{ name: `${root}/bin/node`, data: "official fixture bytes" }]);
+      if (damage !== "missing archive") await writeFile(join(fixture, ".official.tar.gz"), archive);
+      await writeFile(
+        join(fixture, ".official.SHASUMS256.txt"),
+        `${damage === "checksum" ? "0".repeat(64) : digest(archive)}  ${root}.tar.gz\n`,
+      );
+      await writeFile(join(fixture, "bin/node"), "substituted bytes: must never execute");
+      if (damage === "install symlink") await symlink(fixture, install);
+      let downloads = 0;
+      await assert.rejects(
+        runtime.ensureRuntime({
+          cacheDir: cache,
+          platform: "darwin",
+          arch: "arm64",
+          cachedOnly: true,
+          download: async () => {
+            downloads++;
+            throw new Error("cached-only downloader must never be called");
+          },
+        }),
+        damage === "missing archive"
+          ? /ENOENT/
+          : damage === "checksum"
+            ? /SHA256/
+            : damage === "binary"
+              ? /binary does not match official archive/
+              : /symlink|unsafe/i,
+      );
+      assert.equal(downloads, 0);
+      assert.deepEqual(await readdir(cache), [root]);
+      assert.equal(await readFile(join(fixture, "bin/node"), "utf8"), "substituted bytes: must never execute");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+}
+
 async function cleanupFaultCase(scenario: string) {
   // Isolate module mocks in an official-Node subprocess; production gets no filesystem injection seam.
   const { stdout } = await exec(
@@ -279,6 +371,40 @@ ${scenario}
   );
   assert.equal(stdout.trim(), "fault case passed");
 }
+
+test("cached-only cleanup failures retain the unavailable cause and retry only owned resources", async () => {
+  await cleanupFaultCase(`
+  failures.add("home"); failures.add("lock");
+  let error;
+  try {
+    await runtime.ensureRuntime({
+      ...options,
+      cachedOnly: true,
+      download: async () => { downloads++; throw new Error("cached-only must not download"); },
+    });
+  } catch (caught) { error = caught; }
+  assert.equal(downloads, 0);
+  assert.equal(error.name, "RuntimeCleanupError");
+  assert.ok(error.cause instanceof runtime.RuntimeUnavailableError);
+  assert.equal(error.cause.code, "RUNTIME_UNAVAILABLE");
+  assert.deepEqual(attempts, ["home", "lock"]);
+  assert.equal(owned.has("stage"), false);
+  assert.deepEqual(error.cleanupPending, [lock, owned.get("home")]);
+  failures.clear();
+  await fs.rename(lock, lock + ".original");
+  await fs.mkdir(lock);
+  await fs.writeFile(join(lock, "foreign"), "keep");
+  await assert.rejects(cleanup(), /ownership/i);
+  assert.equal(await fs.readFile(join(lock, "foreign"), "utf8"), "keep");
+  assert.deepEqual(error.cleanupPending, [lock]);
+  await fs.rm(lock, { recursive: true });
+  await fs.rename(lock + ".original", lock);
+  await Promise.all([cleanup(), error.retryCleanup()]);
+  assert.deepEqual(error.cleanupPending, []);
+  assert.deepEqual(await fs.readdir(cache), []);
+  assert.equal(downloads, 0);
+  `);
+});
 
 test("identity preparation failure releases its lock and permits another attempt", async () => {
   await cleanupFaultCase(`

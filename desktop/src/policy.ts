@@ -1,11 +1,16 @@
 import { realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, relative, sep } from "node:path";
+import type { DesktopJoinInput, DesktopSetupResponse } from "../../host/desktop-setup-contract.ts";
 
 export const channels = Object.freeze({
   themeGet: "desktop:theme:get",
   themeSet: "desktop:theme:set",
   window: "desktop:window",
+  setupStatus: "desktop:setup:status",
+  setupCheck: "desktop:setup:check",
+  setupInit: "desktop:setup:init",
+  setupJoin: "desktop:setup:join",
 });
 export type Theme = "system" | "light" | "dark";
 export type WindowAction = "hide" | "minimize" | "toggle-maximize" | "restore" | "quit";
@@ -17,6 +22,10 @@ export interface DesktopBridge {
   getTheme(): Promise<ThemeState>;
   setTheme(theme: Theme): Promise<ThemeState>;
   window(action: WindowAction): Promise<void>;
+  setupStatus(): Promise<DesktopSetupResponse>;
+  checkBuiltinAgents(): Promise<DesktopSetupResponse>;
+  initHub(): Promise<DesktopSetupResponse>;
+  joinWorker(input: DesktopJoinInput): Promise<DesktopSetupResponse>;
 }
 export function parseTheme(value: unknown): Theme {
   if (value === "system" || value === "light" || value === "dark") return value;

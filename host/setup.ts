@@ -1,9 +1,8 @@
 // Local setup for the CLI and an App's private worker process. No service, global skill, UI or network calls.
 // Set AGENT_AUTOLOOP_HOME (and HOME for agent lookup) before importing this module: home.ts is process-scoped.
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { execFileSync, spawn } from "node:child_process";
+import { runLocalProcess } from "./local-process.ts";
 import { randomBytes } from "node:crypto";
-import type { Readable } from "node:stream";
 import { parseRules } from "../protocol/rules.ts";
 import { digest } from "../kernel/credentials.ts";
 import { hostname } from "node:os";
@@ -47,7 +46,17 @@ export function starterRules(agents: Record<string, object>, first?: string) {
 }
 
 /** CLI discovery intentionally checks installation, not login, and only constructs commands, never runs a turn. */
-export async function agentsToUse(options: Pick<InitOptions, "agent" | "command">, worker: string) {
+/** Internal host capability, never populated from renderer input. The CLI's default discovery stays unchanged. */
+export type SetupDiscovery = {
+  locate(name: "claude" | "codex"): string | null;
+  adapter(name: "claude" | "codex"): Pick<import("../worker/agents.ts").Adapter, "command">;
+};
+
+export async function agentsToUse(
+  options: Pick<InitOptions, "agent" | "command">,
+  worker: string,
+  discovery?: SetupDiscovery,
+) {
   const agents: Record<string, SetupAgent> = {};
   if (options.command) {
     agents.agent = { name: "Agent", worker, use: "command", command: options.command.split(/\s+/) };
@@ -62,12 +71,20 @@ export async function agentsToUse(options: Pick<InitOptions, "agent" | "command"
     contextFile: "",
     folder: "",
   } as const;
-  for (const name of ["claude", "codex"]) {
+  for (const name of ["claude", "codex"] as const) {
     if (options.agent && options.agent !== name) continue;
-    const adapter = await adapterFor(name);
+    const adapter = discovery ? discovery.adapter(name) : await adapterFor(name);
     try {
-      adapter.command(emptyTurn);
-      agents[name] = { name: name === "claude" ? "Claude Code" : "Codex", worker, use: name };
+      const launcher = discovery?.locate(name);
+      if (discovery && !launcher) continue;
+      const command = launcher ? [launcher] : undefined;
+      adapter.command({ ...emptyTurn, ...(command && { command }) });
+      agents[name] = {
+        name: name === "claude" ? "Claude Code" : "Codex",
+        worker,
+        use: name,
+        ...(command && { command }),
+      };
     } catch {}
   }
   return agents;
@@ -177,14 +194,14 @@ function prepareRules(pending: PendingSetup) {
  * Private pending credentials AND exact rule-write intent precede all rules/runtime side effects. Recovery
  * reuses credentials, preserves user rules, never replaces unknown identities, and commits config last.
  */
-export async function initSetup(options: InitOptions = {}): Promise<InitResult> {
+export async function initSetup(options: InitOptions = {}, discovery?: SetupDiscovery): Promise<InitResult> {
   requireNewConfig();
   const recovering = readPending();
   const hostName = hostname()
     .toLowerCase()
     .replace(/\.local$/, "");
   const worker = hostName.replace(/[^a-z0-9-]/g, "-").replace(/^[^a-z]+/, "") || "this-machine";
-  const agents = recovering?.agents ?? (await agentsToUse(options, worker));
+  const agents = recovering?.agents ?? (await agentsToUse(options, worker, discovery));
   if (!recovering && !Object.keys(agents).length && !options.allowNoAgent) {
     throw new Error(
       "这台电脑上没找到 Claude Code 或 Codex。先装好并登录，" +
@@ -306,185 +323,27 @@ export async function checkLocalAgents(
     }
     writeFileSync(3, JSON.stringify(results));
   `;
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      process.execPath,
-      ["--disable-warning=ExperimentalWarning", "--input-type=module", "-e", script],
-      {
-        // Own a fresh process group, including synchronous adapter login/lookup children.
-        detached: process.platform !== "win32",
-        stdio: ["pipe", "ignore", "ignore", "pipe"],
-      },
-    );
-    const output = child.stdio[3] as Readable;
-    const chunks: Buffer[] = [];
-    let size = 0;
-    let done = false;
-    let exited = false;
-    let closed = false;
-    let spawned = false;
-    let failure: Error | null = null;
-    let cleanupFailure: Error | null = null;
-    let identity: string | null = null;
-    let stopping = false;
-    let stopRequested = false;
-    let stopTimer: ReturnType<typeof setTimeout> | undefined;
-    let poll: ReturnType<typeof setTimeout> | undefined;
-    const stopTimeout = deadlines.stopTimeoutMs ?? 5_000;
-
-    // Absolute system tool, never an inherited PATH lookup. Identity is PID + PGID + start time,
-    // captured while the owned leader is live; command text never grants signal permission.
-    const leaderIdentity = () => {
-      const row = execFileSync("/bin/ps", ["-p", String(child.pid), "-o", "pid=,pgid=,lstart="], {
-        encoding: "utf8",
-        timeout: 1_000,
-      }).trim();
-      const ids = row.split(/\s+/);
-      if (
-        ids.length !== 7 ||
-        Number(ids[0]) !== child.pid ||
-        Number(ids[1]) !== child.pid ||
-        !Number.isFinite(Date.parse(ids.slice(2).join(" ")))
-      )
-        throw new Error("检查进程组身份不匹配");
-      return row;
-    };
-    const groupEmpty = () => {
-      if (!spawned && !child.pid) return true;
-      if (process.platform === "win32") throw new Error("此平台无法确认检查进程树停止");
-      if (!identity) throw new Error("未核实检查进程组身份");
-      const rows = execFileSync("/bin/ps", ["-ax", "-o", "pid=,pgid=,stat="], {
-        encoding: "utf8",
-        timeout: 1_000,
-      })
-        .trim()
-        .split("\n");
-      // A successful system-wide ps always includes processes. Empty/truncated/malformed output
-      // is not proof that our group is empty; validate every row before deciding membership.
-      const members = rows.map((line) => {
-        const match = /^\s*([1-9]\d*)\s+(\d+)\s+([A-Za-z][A-Za-z0-9+<>=Nsls-]*)\s*$/.exec(line);
-        if (!match) throw new Error("进程组查询结果无效");
-        return { group: Number(match[2]), state: match[3] };
-      });
-      return !members.some(({ group, state }) => group === child.pid && !state.startsWith("Z"));
-    };
-    const releaseErrors = () => {
-      child.off("error", onError);
-      output.off("error", onError);
-      child.stdin!.off("error", onError);
-    };
-    const finish = (blocked = false) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      clearTimeout(stopTimer);
-      clearTimeout(poll);
-      child.off("spawn", onSpawn);
-      child.off("exit", onExit);
-      child.off("close", onClose);
-      output.off("data", onData);
-      // Unknown is not closed: a queued stdin write can still emit EPIPE after rejection.
-      // onError becomes an error absorber once done; retain it until actual ChildProcess close.
-      if (blocked && !closed) child.once("close", releaseErrors);
-      else releaseErrors();
-      if (blocked) {
-        const reason = cleanupFailure ?? new Error("未确认 exit、close 和进程组停止");
-        checkBlocked = new Error(
-          `本机 Agent 检查受阻：${failure?.message ?? "检查结束"}；清理失败：${reason.message}；保留 HOME/日志，不得继续检查`,
-          {
-            cause: new AggregateError([...(failure ? [failure] : []), reason]),
-          },
-        );
-        reject(checkBlocked);
-      } else if (failure) reject(failure);
-      else {
-        try {
-          resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")) as LocalAgentCheck[]);
-        } catch {
-          reject(new Error("本机 Agent 检查未返回结构化结果"));
-        }
-      }
-    };
-    const confirm = () => {
-      if (done) return;
-      try {
-        if (exited && closed && groupEmpty()) return finish();
-      } catch (error) {
-        cleanupFailure ??= error as Error;
-      }
-      poll = setTimeout(confirm, 20);
-    };
-    const requestStop = () => {
-      if (stopRequested || !spawned || exited || done) return;
-      stopRequested = true;
-      try {
-        if (process.platform === "win32" || !identity || leaderIdentity() !== identity) {
-          throw new Error("无法核实自有检查进程组，未发送停止信号");
-        }
-        process.kill(-child.pid!, "SIGTERM");
-      } catch (error) {
-        cleanupFailure ??= error as Error;
-      }
-    };
-    const beginStop = () => {
-      if (stopping || done) return;
-      stopping = true;
-      clearTimeout(timer);
-      stopTimer = setTimeout(() => finish(true), stopTimeout);
-      // All exit/close listeners are already attached. Never signal a PID discovered from text.
-      requestStop();
-      confirm();
-    };
-    const onError = (error: Error) => {
-      if (done) return;
-      failure ??= error;
-      // A pre-spawn error has no process tree; still wait for ChildProcess close.
-      if (!spawned && !child.pid) exited = true;
-      beginStop();
-    };
-    const onSpawn = () => {
-      spawned = true;
-      try {
-        identity = leaderIdentity();
-      } catch (error) {
-        onError(error as Error);
-      }
-      if (failure) {
-        beginStop();
-        requestStop();
-      }
-    };
-    const onData = (chunk: Buffer) => {
-      if (done || failure) return;
-      size += chunk.length;
-      if (size > 1024 * 1024) onError(new Error("本机 Agent 检查结果过大"));
-      else chunks.push(chunk);
-    };
-    const onExit = (code: number | null) => {
-      exited = true;
-      if (code !== 0) failure ??= new Error(`本机 Agent 检查失败：退出码 ${code}`);
-      beginStop();
-    };
-    const onClose = (code: number | null) => {
-      closed = true;
-      if (code !== 0) failure ??= new Error(`本机 Agent 检查失败：退出码 ${code}`);
-      beginStop();
-    };
-    const timer = setTimeout(
-      () => onError(new Error("本机 Agent 检查超时")),
-      deadlines.timeoutMs ?? Math.max(30_000, Object.keys(agents).length * 40_000),
-    );
-    child.on("spawn", onSpawn);
-    child.on("error", onError);
-    child.on("exit", onExit);
-    child.on("close", onClose);
-    output.on("data", onData);
-    output.on("error", onError);
-    child.stdin!.on("error", onError);
-    try {
-      child.stdin!.end(JSON.stringify(agents));
-    } catch (error) {
-      onError(error as Error);
-    }
+  const result = await runLocalProcess({
+    args: ["--disable-warning=ExperimentalWarning", "--input-type=module", "-e", script],
+    input: JSON.stringify(agents),
+    mode: "read-only",
+    timeoutMs: deadlines.timeoutMs ?? Math.max(30_000, Object.keys(agents).length * 40_000),
+    stopTimeoutMs: deadlines.stopTimeoutMs,
+    maxOutputBytes: 1024 * 1024,
+    label: "本机 Agent 检查",
   });
+  if (result.state === "unknown") {
+    const reason = result.cleanupFailure;
+    checkBlocked = new Error(
+      `本机 Agent 检查受阻：${result.failure?.message ?? "检查结束"}；清理失败：${reason.message}；保留 HOME/日志，不得继续检查`,
+      { cause: new AggregateError([...(result.failure ? [result.failure] : []), reason]) },
+    );
+    throw checkBlocked;
+  }
+  if (result.failure) throw result.failure;
+  try {
+    return JSON.parse(result.output.toString("utf8")) as LocalAgentCheck[];
+  } catch {
+    throw new Error("本机 Agent 检查未返回结构化结果");
+  }
 }
