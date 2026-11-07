@@ -8,8 +8,13 @@ import {
   parseDesktopTodayResponse,
   type DesktopTodayResponse,
 } from "../../host/desktop-state-contract.ts";
+import {
+  DESKTOP_TASKS_MESSAGES,
+  parseDesktopTasksResponse,
+  type DesktopTasksResponse,
+} from "../../host/desktop-tasks-contract.ts";
 import type { DesktopRuntimeRole, DesktopRuntimeStatus } from "../../host/desktop-run-contract.ts";
-import { createTodaySource, parseHubEndpoint, readRuntimeConfig } from "../src/state-source.ts";
+import { createTasksSource, createTodaySource, parseHubEndpoint, readRuntimeConfig } from "../src/state-source.ts";
 
 const hubConfig = {
   hub: { listen: "127.0.0.1:3350" },
@@ -150,4 +155,145 @@ test("readRuntimeConfig reads a real bounded file and rejects junk", () => {
   writeFileSync(join(junk, "config.json"), "{not json");
   assert.throws(() => readRuntimeConfig(junk));
   assert.throws(() => readRuntimeConfig(join(junk, "missing")));
+});
+
+const runsHubPayload = {
+  now: "2026-01-02T03:04:05.678Z",
+  timezone: "Asia/Shanghai",
+  totals: { running: 1, queued: 0, retrying: 0, unknown: 0, done: 2, doneToday: 1, attention: 0 },
+  cards: [],
+  runs: [
+    {
+      id: 7,
+      rule: "值班规则",
+      agent: "claude",
+      state: "done",
+      attempts: 1,
+      created_at: "2026-01-02T03:00:00.000Z",
+      claimed_at: "2026-01-02T03:00:05.000Z",
+      finished_at: null,
+      not_before: null,
+      summary: "完成",
+      error: "",
+      stopping: false,
+      events: [
+        { source: "task.ops", type: "created", subject: "#12", summary: "工单建立", link: "http://127.0.0.1:3350/e" },
+      ],
+      usage: null,
+      link: "http://127.0.0.1:3350/run/7",
+    },
+  ],
+  hasMore: true,
+  nextBefore: 7,
+};
+
+test("the tasks source reports unavailable or no-hub without touching config or network", async () => {
+  let read = 0;
+  let fetched = 0;
+  const tasks = createTasksSource({
+    home: "/unused",
+    getState: () => ({ status: "stopped", role: "hub-worker" }),
+    readConfig: () => {
+      read++;
+      return hubConfig;
+    },
+    fetchImpl: () => {
+      fetched++;
+      throw new Error("never");
+    },
+  });
+  const stopped = await tasks.read();
+  assert.deepEqual(parseDesktopTasksResponse(stopped).state, {
+    kind: "unavailable",
+    message: DESKTOP_TASKS_MESSAGES.unavailable,
+  });
+  assert.equal(read, 0);
+  assert.equal(fetched, 0);
+  const worker = await createTasksSource({
+    home: "/unused",
+    getState: () => ({ status: "running", role: "worker" }),
+    readConfig: () => workerConfig,
+  }).read();
+  assert.deepEqual(parseDesktopTasksResponse(worker).state, {
+    kind: "no-hub",
+    message: DESKTOP_TASKS_MESSAGES["no-hub"],
+  });
+});
+
+test("the tasks source fetches the same state door, paging only with the hub's own cursor", async () => {
+  const seen: { url: string; headers: Record<string, string> }[] = [];
+  const fetchImpl = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    seen.push({ url: String(url), headers: init?.headers as Record<string, string> });
+    return new Response(JSON.stringify(runsHubPayload), { status: 200 });
+  }) as typeof fetch;
+  const tasks = createTasksSource({
+    home: "/unused",
+    getState: () => ({ status: "running", role: "hub-worker" }),
+    readConfig: () => hubConfig,
+    fetchImpl,
+    timeoutMs: 50,
+  });
+  const first: DesktopTasksResponse = await tasks.read();
+  const pageOne = parseDesktopTasksResponse(first);
+  assert.equal(pageOne.state.kind, "ready");
+  if (pageOne.state.kind === "ready") {
+    const snapshot = pageOne.state.snapshot;
+    assert.equal(snapshot.runs.length, 1);
+    assert.equal(snapshot.runs[0].id, 7);
+    assert.equal(snapshot.runs[0].createdAt, "2026-01-02T03:00:00.000Z");
+    assert.equal(snapshot.hasMore, true);
+    assert.equal(snapshot.nextBefore, 7);
+    // The hub's own links ride in the payload; the projection drops them before the renderer.
+    assert.ok(!JSON.stringify(snapshot).includes("link"));
+  }
+  const second: DesktopTasksResponse = await tasks.read(7);
+  const pageTwo = parseDesktopTasksResponse(second);
+  assert.equal(pageTwo.state.kind, "ready");
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0].url, "http://127.0.0.1:3350/v1/state");
+  assert.equal(seen[1].url, "http://127.0.0.1:3350/v1/state?before=7");
+  assert.equal(seen[0].headers.authorization, "Bearer owner-key");
+  assert.equal(seen[1].headers.authorization, "Bearer owner-key");
+});
+
+test("the tasks source falls back to the fixed error on any failure", async () => {
+  const badStatus = (async () => new Response("nope", { status: 500 })) as unknown as typeof fetch;
+  const answer = await createTasksSource({
+    home: "/unused",
+    getState: () => ({ status: "running", role: "hub-worker" }),
+    readConfig: () => hubConfig,
+    fetchImpl: badStatus,
+  }).read();
+  assert.deepEqual(parseDesktopTasksResponse(answer).state, { kind: "error", message: DESKTOP_TASKS_MESSAGES.error });
+
+  const unreachable = (async () => {
+    throw new Error("connection refused");
+  }) as unknown as typeof fetch;
+  const answer2 = await createTasksSource({
+    home: "/unused",
+    getState: () => ({ status: "running", role: "hub-worker" }),
+    readConfig: () => hubConfig,
+    fetchImpl: unreachable,
+  }).read(3);
+  assert.deepEqual(parseDesktopTasksResponse(answer2).state, { kind: "error", message: DESKTOP_TASKS_MESSAGES.error });
+
+  // A payload whose runs cannot be projected is a read failure, never partial data.
+  const brokenPayload = (async () =>
+    new Response(JSON.stringify({ runs: "x" }), { status: 200 })) as unknown as typeof fetch;
+  const answer3 = await createTasksSource({
+    home: "/unused",
+    getState: () => ({ status: "running", role: "hub-worker" }),
+    readConfig: () => hubConfig,
+    fetchImpl: brokenPayload,
+  }).read();
+  assert.deepEqual(parseDesktopTasksResponse(answer3).state, { kind: "error", message: DESKTOP_TASKS_MESSAGES.error });
+
+  for (const config of [null, { hub: { listen: "10.0.0.1:1" }, owner: "x" }]) {
+    const answer4 = await createTasksSource({
+      home: "/unused",
+      getState: () => ({ status: "running", role: null }),
+      readConfig: () => config,
+    }).read();
+    assert.equal(parseDesktopTasksResponse(answer4).state.kind, "error");
+  }
 });

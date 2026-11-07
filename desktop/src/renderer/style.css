@@ -687,6 +687,70 @@ main {
 .rules-dialog .setup-field input[type="number"] {
   width: 90px;
 }
+.run-list {
+  list-style: none;
+  margin: 18px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.run-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: var(--panel2);
+  display: grid;
+  gap: 8px;
+}
+.run-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.run-state {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  flex: none;
+}
+.run-state.claimed,
+.run-state.failed,
+.run-state.unknown {
+  border-color: var(--blue);
+  background: var(--accent-bg);
+  color: var(--blue);
+}
+.run-meta {
+  font-size: 11px;
+}
+.run-detail {
+  border-top: 1px dashed var(--border);
+  padding-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+.run-events {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+.run-times {
+  font-size: 11px;
+}
 @media (max-width: 650px) {
   .setup-choices {
     grid-template-columns: 1fr;

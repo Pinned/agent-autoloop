@@ -4,6 +4,7 @@ import { isAbsolute, relative, sep } from "node:path";
 import type { DesktopJoinInput, DesktopSetupResponse } from "../../host/desktop-setup-contract.ts";
 import type { DesktopRuntimeEvent, DesktopRuntimeResponse } from "../../host/desktop-run-contract.ts";
 import type { DesktopTodayResponse } from "../../host/desktop-state-contract.ts";
+import type { DesktopTasksResponse } from "../../host/desktop-tasks-contract.ts";
 import type {
   DesktopTaskCreateResponse,
   DesktopTaskEntriesResponse,
@@ -27,6 +28,7 @@ export const channels = Object.freeze({
   runtimeStart: "desktop:runtime:start",
   runtimeStop: "desktop:runtime:stop",
   todayState: "desktop:state:today",
+  tasksGet: "desktop:tasks:get",
   taskEntries: "desktop:task:entries",
   taskCreate: "desktop:task:create",
   rulesGet: "desktop:rules:get",
@@ -53,6 +55,8 @@ export interface DesktopBridge {
   runtimeStop(): Promise<DesktopRuntimeResponse>;
   /** Read-only today-page data from the local hub while it runs. */
   todayState(): Promise<DesktopTodayResponse>;
+  /** The runs page for the tasks list; `before` pages further into history. */
+  tasksGet(before?: number): Promise<DesktopTasksResponse>;
   /** The real rule entries the new-task panel offers, from the local hub while it runs. */
   taskEntries(): Promise<DesktopTaskEntriesResponse>;
   /** Create one task through the hub's own door; the input is checked again in main. */
