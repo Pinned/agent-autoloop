@@ -617,6 +617,76 @@ main {
   padding: 10px 12px;
   resize: vertical;
 }
+.rules-panel .rules-intro {
+  margin: 4px 0 0;
+}
+.rules-status {
+  font-size: 12px;
+  color: var(--faint);
+  margin: 14px 0 0;
+}
+.rules-status:empty {
+  display: none;
+}
+.rules-error {
+  margin: 10px 0 0;
+}
+.rules-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+.entry-list {
+  list-style: none;
+  margin: 18px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.entry-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: var(--panel2);
+  display: grid;
+  gap: 8px;
+}
+.entry-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+.entry-to {
+  font-size: 12px;
+  color: var(--faint);
+}
+.entry-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.entry-types code {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+.entry-meta {
+  font-size: 11px;
+}
+.entry-actions {
+  display: flex;
+  gap: 8px;
+}
+.entry-list.editing .entry-item {
+  border-style: dashed;
+}
+.rules-dialog .setup-field input[type="number"] {
+  width: 90px;
+}
 @media (max-width: 650px) {
   .setup-choices {
     grid-template-columns: 1fr;

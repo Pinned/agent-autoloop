@@ -12,6 +12,7 @@ import { createRuntimeControl, SAFE_STOP_ERROR, type RuntimeControlState } from 
 import { createTodaySource } from "./state-source.ts";
 import { createTaskSource } from "./task-source.ts";
 import { parseDesktopTaskInput } from "../../host/desktop-task-contract.ts";
+import { parseDesktopRulesEntries } from "../../host/desktop-rules-contract.ts";
 import { createSetupControl } from "./setup-control.ts";
 import { createSetupRunner } from "./setup-runner.ts";
 import {
@@ -465,6 +466,18 @@ if (ownsAppLock)
         const input = parseDesktopTaskInput(args[0]);
         return taskSource.create(input);
       });
+      // The automation page's editor: whole-list read and whole-list replace through the same door.
+      ipcMain.handle(channels.rulesGet, async (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        if (args.length !== 0) throw new Error("invalid-request");
+        return taskSource.rules();
+      });
+      ipcMain.handle(channels.rulesPut, async (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        if (args.length !== 1) throw new Error("invalid-request");
+        const entries = parseDesktopRulesEntries(args[0]);
+        return taskSource.save(entries);
+      });
       await window.loadFile(pagePath);
       window.show();
       if (smoke) {
@@ -482,11 +495,14 @@ if (ownsAppLock)
         const taskEntries = await window.desktop.taskEntries();
         let invalidTaskRejected = false;
         try { await window.desktop.taskCreate({ type: 'Task', summary: 'x', detail: '' }); } catch { invalidTaskRejected = true; }
+        const rulesGet = await window.desktop.rulesGet();
+        let invalidRulesRejected = false;
+        try { await window.desktop.rulesPut([{ name: '', types: ['t'], to: 'c', cwd: '~/' }]); } catch { invalidRulesRejected = true; }
         let runtimeEventSeen = false;
         const unsubscribe = window.desktop.onRuntimeEvent((event) => { runtimeEventSeen = true; });
         unsubscribe();
         unsubscribe();
-        return { theme, dark, invalidRejected, pages, runtime, today, taskEntries, invalidTaskRejected, runtimeEventSeen, nodeAbsent: typeof require === 'undefined' && typeof process === 'undefined', bridge: Object.keys(window.desktop).sort() };
+        return { theme, dark, invalidRejected, pages, runtime, today, taskEntries, invalidTaskRejected, rulesGet, invalidRulesRejected, runtimeEventSeen, nodeAbsent: typeof require === 'undefined' && typeof process === 'undefined', bridge: Object.keys(window.desktop).sort() };
       })()`);
           const shots = join(base, "..", ".cache", "smoke");
           mkdirSync(shots, { recursive: true });
@@ -518,9 +534,13 @@ if (ownsAppLock)
             result.taskEntries.ok !== false ||
             result.taskEntries.error.code !== "unavailable" ||
             result.invalidTaskRejected !== true ||
+            !result.rulesGet ||
+            result.rulesGet.ok !== false ||
+            result.rulesGet.error.code !== "unavailable" ||
+            result.invalidRulesRejected !== true ||
             result.runtimeEventSeen !== false ||
             result.bridge.join(",") !==
-              "checkBuiltinAgents,getTheme,initHub,joinWorker,onRuntimeEvent,runtimeGet,runtimeStart,runtimeStop,setTheme,setupStatus,taskCreate,taskEntries,todayState,window" ||
+              "checkBuiltinAgents,getTheme,initHub,joinWorker,onRuntimeEvent,rulesGet,rulesPut,runtimeGet,runtimeStart,runtimeStop,setTheme,setupStatus,taskCreate,taskEntries,todayState,window" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||

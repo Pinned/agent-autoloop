@@ -52,7 +52,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(main, /远程队列不会取消/);
   assert.match(main, /离线持久待同步/);
   assert.doesNotMatch(main, /restartPolicy|controller\.restart/);
-  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 13);
+  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 15);
   for (const name of [
     "setupStatus",
     "setupCheck",
@@ -64,6 +64,8 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
     "todayState",
     "taskEntries",
     "taskCreate",
+    "rulesGet",
+    "rulesPut",
   ]) {
     assert.match(
       main,
@@ -98,6 +100,8 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
     "initHub",
     "joinWorker",
     "onRuntimeEvent",
+    "rulesGet",
+    "rulesPut",
     "runtimeGet",
     "runtimeStart",
     "runtimeStop",
@@ -187,6 +191,22 @@ test("the task source only ever fetches the two fixed hub task routes with the o
   // A malformed input is rejected before any request leaves the process.
   assert.match(main, /parseDesktopTaskInput\(args\[0\]\)/);
   assert.match(main, /ipcMain\.handle\(channels\.taskCreate, async \(event, \.\.\.args: unknown\[\]\) => \{/);
+});
+
+test("the automation page edits the hub's own entries through the pure rules contract", () => {
+  const app = read("../src/renderer/app.ts");
+  const view = read("../src/renderer/rules-view.ts");
+  const controller = read("../src/renderer/rules-controller.ts");
+  const main = read("../src/main.ts");
+  assert.match(app, /mountRulesView\(/);
+  assert.match(app, /rules\.refresh\(\)/);
+  // Pure DOM construction only; the list and the dialog never serialise markup.
+  assert.doesNotMatch(view, /innerHTML|insertAdjacentHTML|console\./);
+  assert.doesNotMatch(controller, /node:|from ["'].*host\/(?:config|runtime|setup)\.ts/);
+  assert.match(controller, /from ["'].*host\/desktop-rules-contract\.ts/);
+  assert.match(view, /showModal\(\)/);
+  // The whole-list replacement is checked in main before any request leaves the process.
+  assert.match(main, /parseDesktopRulesEntries\(args\[0\]\)/);
 });
 
 test("the global new-task dialog is a native dialog driven by the pure task contract", () => {

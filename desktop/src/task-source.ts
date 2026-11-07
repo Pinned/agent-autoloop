@@ -9,6 +9,16 @@ import {
   type DesktopTaskEntriesResponse,
   type DesktopTaskInput,
 } from "../../host/desktop-task-contract.ts";
+import {
+  DESKTOP_RULES_MESSAGES,
+  desktopRulesGetOf,
+  desktopRulesSaveOf,
+  parseDesktopRulesEntries,
+  projectDesktopRulesData,
+  type DesktopRuleEntry,
+  type DesktopRulesGetResponse,
+  type DesktopRulesSaveResponse,
+} from "../../host/desktop-rules-contract.ts";
 import type { DesktopRuntimeRole, DesktopRuntimeStatus } from "../../host/desktop-run-contract.ts";
 import { parseHubEndpoint, readRuntimeConfig, type HubEndpoint } from "./state-source.ts";
 
@@ -17,6 +27,7 @@ import { parseHubEndpoint, readRuntimeConfig, type HubEndpoint } from "./state-s
 // check it, so a mistake is refused before it ever leaves the app. The owner key stays in main.
 
 const failure = { code: "error", message: DESKTOP_TASK_MESSAGES.error } as const;
+const rulesFailure = { code: "error", message: DESKTOP_RULES_MESSAGES.error } as const;
 
 export type TaskSourceOptions = {
   home: string;
@@ -29,6 +40,8 @@ export type TaskSourceOptions = {
 export function createTaskSource(options: TaskSourceOptions): {
   entries(): Promise<DesktopTaskEntriesResponse>;
   create(input: DesktopTaskInput): Promise<DesktopTaskCreateResponse>;
+  rules(): Promise<DesktopRulesGetResponse>;
+  save(entries: DesktopRuleEntry[]): Promise<DesktopRulesSaveResponse>;
 } {
   const readConfig = options.readConfig ?? readRuntimeConfig;
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -112,6 +125,78 @@ export function createTaskSource(options: TaskSourceOptions): {
         return desktopTaskCreateOf({ version: 1, ok: true, result: projectDesktopTaskResult(payload) });
       } catch {
         return desktopTaskCreateOf({ version: 1, ok: false, error: { ...failure } });
+      }
+    },
+    async rules() {
+      const gate = await endpoint();
+      if (gate === "unavailable")
+        return desktopRulesGetOf({
+          version: 1,
+          ok: false,
+          error: { code: "unavailable", message: DESKTOP_RULES_MESSAGES.unavailable },
+        });
+      if (gate === "no-hub")
+        return desktopRulesGetOf({
+          version: 1,
+          ok: false,
+          error: { code: "no-hub", message: DESKTOP_RULES_MESSAGES["no-hub"] },
+        });
+      if (gate === "error") return desktopRulesGetOf({ version: 1, ok: false, error: { ...rulesFailure } });
+      try {
+        const response = await fetchImpl(`${gate.origin}/v1/ui/rules`, {
+          headers: { authorization: `Bearer ${gate.owner}` },
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (!response.ok) return desktopRulesGetOf({ version: 1, ok: false, error: { ...rulesFailure } });
+        return desktopRulesGetOf({ version: 1, ok: true, data: projectDesktopRulesData(await response.json()) });
+      } catch {
+        return desktopRulesGetOf({ version: 1, ok: false, error: { ...rulesFailure } });
+      }
+    },
+    async save(entries: DesktopRuleEntry[]) {
+      // The door's own limits, enforced before anything leaves this process.
+      parseDesktopRulesEntries(entries);
+      const gate = await endpoint();
+      if (gate === "unavailable")
+        return desktopRulesSaveOf({
+          version: 1,
+          ok: false,
+          error: { code: "unavailable", message: DESKTOP_RULES_MESSAGES.unavailable },
+        });
+      if (gate === "no-hub")
+        return desktopRulesSaveOf({
+          version: 1,
+          ok: false,
+          error: { code: "no-hub", message: DESKTOP_RULES_MESSAGES["no-hub"] },
+        });
+      if (gate === "error") return desktopRulesSaveOf({ version: 1, ok: false, error: { ...rulesFailure } });
+      try {
+        const response = await fetchImpl(`${gate.origin}/v1/ui/rules`, {
+          method: "PUT",
+          headers: { authorization: `Bearer ${gate.owner}`, "content-type": "application/json" },
+          body: JSON.stringify(entries),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        const payload: unknown = await response.json().catch(() => null);
+        if (!response.ok) {
+          // A 400 is the door's own refusal text; it is the one message passed through verbatim.
+          if (response.status !== 400) return desktopRulesSaveOf({ version: 1, ok: false, error: { ...rulesFailure } });
+          const message =
+            typeof payload === "object" &&
+            payload !== null &&
+            typeof (payload as Record<string, unknown>).error === "string"
+              ? ((payload as Record<string, unknown>).error as string)
+              : DESKTOP_RULES_MESSAGES.error;
+          return desktopRulesSaveOf({ version: 1, ok: false, error: { code: "invalid", message } });
+        }
+        // The door answers with the list it actually kept, so the editor shows the truth, not the wish.
+        return desktopRulesSaveOf({
+          version: 1,
+          ok: true,
+          data: projectDesktopRulesData(payload),
+        });
+      } catch {
+        return desktopRulesSaveOf({ version: 1, ok: false, error: { ...rulesFailure } });
       }
     },
   };

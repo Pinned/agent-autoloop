@@ -7,6 +7,8 @@ import { createRendererTask } from "./task-controller.ts";
 import { mountTaskDialog } from "./task-view.ts";
 import { createRendererRun } from "./run-controller.ts";
 import { mountRunCard } from "./run-view.ts";
+import { createRendererRules } from "./rules-controller.ts";
+import { mountRulesView } from "./rules-view.ts";
 declare global {
   interface Window {
     desktop: DesktopBridge;
@@ -103,6 +105,12 @@ const setup = createRendererSetup(window.desktop, () => {
   if (setup.state.kind === "configured") run.refresh();
   setupView?.render();
 });
+// The automation page is app-level too: one entry list and one edit dialog, page switches only
+// re-attach the card, so an edit in progress is never lost to navigation.
+const rules = createRendererRules(window.desktop, () => {
+  if (currentPage === "automation") rulesPage?.update();
+});
+const rulesPage = mountRulesView(rules);
 function openSetup() {
   if (!setupView) setupView = mountSetupView(main, setup, () => render(currentPage));
   setup.open();
@@ -173,6 +181,11 @@ function render(id: string, focus = true) {
     main.append(host);
     todayView = mountTodayView(host, today, () => render("workers"));
     today.refresh();
+  } else if (id === "automation") {
+    // The hub's own entries, read and replaced whole; no mock rules and no background triggers.
+    main.append(rulesPage.root);
+    rulesPage.update();
+    rules.refresh();
   } else {
     main.insertAdjacentHTML(
       "beforeend",
