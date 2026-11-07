@@ -2,11 +2,12 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
-import { homedir, hostname } from "node:os";
+import { homedir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { hubClient } from "../protocol/client.ts";
-import { CONFIG_FILE, readConfig, writeConfig, type Config } from "../host/config.ts";
+import { CONFIG_FILE, readConfig } from "../host/config.ts";
+import { initSetup, joinSetup } from "../host/setup.ts";
 import { HOME, RULES_FILE } from "../host/home.ts";
 import { installService, removeService, serviceRunning } from "../host/service.ts";
 import { versionLine } from "../host/version.ts";
@@ -80,29 +81,6 @@ const client = (key: string, config = readConfig()) => hubClient(config.url, key
 const ownerClient = (config = readConfig()) =>
   client(config.owner ?? fail("这台电脑上没有本人的密钥（只接活的电脑看不了）"), config);
 
-/** The first rules of a new install: its agents and one rule to try the whole loop with. */
-function starterRules(agents: Record<string, object>, first: string) {
-  return {
-    sources: { local: { name: "本机" } },
-    agents,
-    channels: { desktop: { name: "桌面通知" } },
-    rules: [
-      {
-        name: "试一下",
-        when: { source: "local", types: ["try.*"] },
-        to: first,
-        cwd: path.join(HOME, "try"),
-        prompt:
-          "这是 agent-autoloop try 的试跑，不要改任何文件，不要做别的事。读资料文件。" +
-          "如果 answers 是空的，就问一个问题：title 写“试跑：选一个颜色”，text 写“这是一次试跑，选哪个都行。”，" +
-          'options 写 ["蓝色","绿色"]，key 写 try-color，第一行结论写“问了一个问题”。' +
-          "如果 answers 不是空的，第一行结论写“你选了某某，试跑通过”，把某某换成 answers 里选的那一项，不附回执。",
-      },
-    ],
-    elsewhere: [],
-  };
-}
-
 /** Shows the user's Agents how to set it up. Only for the install in its usual place, never over their own. */
 function linkSkill() {
   if (process.env.AGENT_AUTOLOOP_HOME) return;
@@ -122,70 +100,13 @@ function howToRun() {
   return /\s/.test(PROGRAM) ? `'${PROGRAM}'` : PROGRAM;
 }
 
-/** What was asked for on the command line, or whichever of the usual Agents is installed. */
-async function agentsToUse(named: Flags, worker: string) {
-  const agents: Record<string, { name: string; worker: string; use: string; command?: string[] }> = {};
-  const command = text(named.command);
-  if (command) {
-    agents.agent = { name: "Agent", worker, use: "command", command: command.split(/\s+/) };
-    return agents;
-  }
-  const wanted = text(named.agent);
-  const { adapterFor } = await import("../worker/agents.ts");
-  const emptyTurn = {
-    prompt: "",
-    session: "",
-    resume: null,
-    cwd: "",
-    access: "edit",
-    contextFile: "",
-    folder: "",
-  } as const;
-  for (const name of ["claude", "codex"]) {
-    if (wanted && wanted !== name) continue;
-    const adapter = await adapterFor(name);
-    try {
-      // An adapter finds its program to build the command line, and throws if it's not there.
-      adapter.command(emptyTurn);
-      agents[name] = { name: name === "claude" ? "Claude Code" : "Codex", worker, use: name };
-    } catch {}
-  }
-  return agents;
-}
-
 async function init(args: string[]) {
   const { named } = flags(args);
-  if (existsSync(CONFIG_FILE)) return fail(`已经装过了：${CONFIG_FILE}`);
-  mkdirSync(HOME, { recursive: true, mode: 0o700 });
-  mkdirSync(path.join(HOME, "try"), { recursive: true });
-  const hostName = hostname()
-    .toLowerCase()
-    .replace(/\.local$/, "");
-  const worker = hostName.replace(/[^a-z0-9-]/g, "-").replace(/^[^a-z]+/, "") || "this-machine";
-  const agents = await agentsToUse(named, worker);
-  if (!Object.keys(agents).length) {
-    return fail(
-      "这台电脑上没找到 Claude Code 或 Codex。先装好并登录，" +
-        "或者用 --command 指定别的命令行 Agent，比如 --command 'hermes chat -q {prompt}'",
-    );
-  }
-  const port = text(named.port) ?? "3350";
-  const url = `http://127.0.0.1:${port}`;
-  const ownRules = !existsSync(RULES_FILE);
-  if (ownRules) {
-    writeFileSync(RULES_FILE, `${JSON.stringify(starterRules(agents, Object.keys(agents)[0]), null, 2)}\n`);
-  }
-  const { addKey } = await import("../host/runtime.ts");
-  const config: Config = {
-    url,
-    hub: { listen: `127.0.0.1:${port}`, publicUrl: url },
-    worker: { name: worker, key: addKey("worker", worker) },
-    source: { name: "local", key: addKey("source", "local") },
-    owner: addKey("owner", "owner"),
-    // A channel only rules.json knows about, or only this file, would do nothing: it's on only if both are ours to write.
-    ...(ownRules && { channels: { desktop: { key: addKey("channel", "desktop") } } }),
-  };
-  writeConfig(config);
+  const { agents, ownRules } = await initSetup({
+    agent: text(named.agent),
+    command: text(named.command),
+    port: text(named.port),
+  }).catch((error) => fail((error as Error).message));
   linkSkill();
   if (!named["no-service"]) installService();
   const names = Object.values(agents).map((agent) => agent.name);
@@ -203,7 +124,7 @@ async function join(args: string[]) {
   const name = text(named.worker);
   const key = text(named.key);
   if (!url || !name || !key) return fail("用法：agent-autoloop join <中台地址> --worker <名字> --key <密钥>");
-  writeConfig({ url, worker: { name, key } });
+  joinSetup({ url, worker: name, key });
   if (!named["no-service"]) installService();
   console.log(`这台电脑以 ${name} 的身份接活了。`);
 }
