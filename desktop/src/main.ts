@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, session, Tray } from "electron";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { lstat, mkdtemp, rm } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -9,6 +9,13 @@ import { createLifecycle } from "./lifecycle.ts";
 import { loadTheme, saveTheme } from "./preferences.ts";
 import { createSupervisor } from "./supervisor.ts";
 import { createRuntimeControl, SAFE_STOP_ERROR, type RuntimeControlState } from "./runtime-control.ts";
+import { createSetupControl } from "./setup-control.ts";
+import { createSetupRunner } from "./setup-runner.ts";
+import {
+  desktopSetupFailure,
+  parseDesktopSetupRequest,
+  type DesktopSetupOperation,
+} from "../../host/desktop-setup-contract.ts";
 import type * as RuntimeResources from "../scripts/runtime.mjs";
 
 let home: string | undefined;
@@ -93,6 +100,51 @@ if (ownsAppLock)
               }),
           }),
       });
+      const setupRunner = createSetupRunner({
+        enabled: !app.isPackaged && !!home && !smoke,
+        prepare: async (ownCleanup) => {
+          const resourcesModule = pathToFileURL(join(base, "..", "scripts", "runtime.mjs")).href;
+          const { ensureRuntime, copySources } = (await import(resourcesModule)) as typeof RuntimeResources;
+          const runtime = await ensureRuntime({
+            cacheDir: join(base, "..", ".cache", "runtime"),
+            cachedOnly: true,
+            ownCleanup,
+          });
+          // Only directories created by this request can be removed, after all children are confirmed stopped.
+          async function ownDirectory(prefix: string) {
+            const directory = await mkdtemp(join(prefsHome, prefix));
+            let identity: Awaited<ReturnType<typeof lstat>> | undefined;
+            ownCleanup(async () => {
+              const current = await lstat(directory);
+              if (
+                !identity ||
+                !current.isDirectory() ||
+                current.isSymbolicLink() ||
+                current.dev !== identity.dev ||
+                current.ino !== identity.ino
+              )
+                throw new Error("设置临时目录所有权不符");
+              await rm(directory, { recursive: true });
+            });
+            identity = await lstat(directory);
+            return directory;
+          }
+          const resources = await ownDirectory("setup resources ");
+          const environmentHome = await ownDirectory("setup environment ");
+          await copySources(join(base, "..", ".."), resources);
+          return {
+            nodePath: runtime.node,
+            entryPath: join(resources, "host", "desktop-setup.ts"),
+            home: runtimeHome,
+            environmentHome,
+          };
+        },
+      });
+      const setup = createSetupControl({
+        enabled: !app.isPackaged && !!home && !smoke,
+        canSetup: () => controller.isIdle() && ["stopped", "unconfigured"].includes(controller.getState().status),
+        run: (request) => setupRunner.run(request),
+      });
       const statusLabel = (state: RuntimeControlState) => {
         const labels: Record<RuntimeControlState["status"], string> = {
           stopped: "本机运行服务未启动",
@@ -125,7 +177,10 @@ if (ownsAppLock)
         refreshMenus();
         try {
           if (action === "start") {
-            const state = await controller.start();
+            const state = await setup.runStart(
+              () => controller.start(),
+              () => controller.getState(),
+            );
             if (state.error) await showSafeError(state.error);
             else if (state.status === "unconfigured")
               await dialog.showMessageBox(window, {
@@ -136,7 +191,7 @@ if (ownsAppLock)
                 buttons: ["知道了"],
                 noLink: true,
               });
-          } else if (!(await controller.stop())) await showSafeError(SAFE_STOP_ERROR);
+          } else if (!(await setup.runStop(() => controller.stop()))) await showSafeError(SAFE_STOP_ERROR);
         } catch {
           await showSafeError(action === "stop" ? SAFE_STOP_ERROR : "无法启动本机运行服务，请检查后手动重试。");
         } finally {
@@ -155,6 +210,9 @@ if (ownsAppLock)
             enabled:
               !nativeOperation &&
               !nativeStopping &&
+              !setup.busy &&
+              !setup.blocked &&
+              !setup.quitting &&
               !quit?.quitting &&
               ["stopped", "unconfigured", "failed"].includes(state.status),
             click: () => void runtimeAction("start"),
@@ -222,7 +280,7 @@ if (ownsAppLock)
         restore,
         exit: () => app.quit(),
         prepareQuit: async () => {
-          const safe = await controller.stop();
+          const safe = await setup.prepareQuit(() => controller.stop());
           if (!safe) await showSafeError(SAFE_STOP_ERROR);
           return safe;
         },
@@ -299,6 +357,44 @@ if (ownsAppLock)
             await requestQuit();
             break;
         }
+      });
+      async function setupRequest(operation: DesktopSetupOperation, args: unknown[]) {
+        let request;
+        try {
+          if (args.length !== (operation === "join" ? 1 : 0)) throw new Error("invalid-request");
+          request = parseDesktopSetupRequest({
+            version: 1,
+            operation,
+            ...(operation === "join" ? { input: args[0] } : {}),
+          });
+        } catch {
+          return desktopSetupFailure(operation, "invalid-request");
+        }
+        const flight = setup.runSetup(request);
+        refreshMenus();
+        try {
+          return await flight;
+        } catch {
+          return desktopSetupFailure(operation, "unknown");
+        } finally {
+          refreshMenus();
+        }
+      }
+      ipcMain.handle(channels.setupStatus, (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        return setupRequest("status", args);
+      });
+      ipcMain.handle(channels.setupCheck, (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        return setupRequest("check", args);
+      });
+      ipcMain.handle(channels.setupInit, (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        return setupRequest("init", args);
+      });
+      ipcMain.handle(channels.setupJoin, (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        return setupRequest("join", args);
       });
       await window.loadFile(pagePath);
       window.show();

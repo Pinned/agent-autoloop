@@ -77,7 +77,9 @@ test("construction does not prepare or start; concurrent explicit starts share p
     supervisorFactory: () => f.supervisor,
   });
   assert.equal(prepares, 0);
+  assert.equal(control.isIdle(), true);
   const first = control.start();
+  assert.equal(control.isIdle(), false);
   const second = control.start();
   assert.equal(first, second);
   gate.resolve();
@@ -119,6 +121,7 @@ test("stop during preparation waits, prevents late spawn and rejects starts whil
   assert.equal(await stop, true);
   assert.equal(f.starts(), 0);
   assert.equal(cleaned, 1);
+  assert.equal(control.isIdle(), true);
 });
 
 test("failed preparation cleans registered resources and emits only fixed safe errors", async (t) => {
@@ -232,7 +235,9 @@ test("unknown stop keeps resources and supervisor; retry safe stop preserves pen
   await control.start();
   assert.equal(f.starts(), 1);
   f.setState(state("stopped", 7));
+  assert.equal(control.isIdle(), false);
   assert.equal(await control.stop(), true);
+  assert.equal(control.isIdle(), true);
   assert.equal(cleaned, 1);
   assert.equal(f.stops(), 2);
   assert.equal(control.getState().pendingSync, 7);

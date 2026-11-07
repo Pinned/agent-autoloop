@@ -12,6 +12,8 @@ export type RuntimeOptions = {
   cacheDir?: string;
   platform?: string;
   arch?: string;
+  /** Refuse a missing installed runtime before attempting any download. */
+  cachedOnly?: boolean;
   /** Unit-test seam; production defaults to bounded nodejs.org HTTPS downloads. */
   download?: (url: string) => Promise<Uint8Array>;
   sourceDir?: string;
@@ -19,6 +21,10 @@ export type RuntimeOptions = {
   /** Register local resource ownership immediately after acquiring the runtime lock. Rejects until cleanup is complete. */
   ownCleanup?: (cleanup: () => Promise<void>) => void;
 };
+export class RuntimeUnavailableError extends Error {
+  readonly code: "RUNTIME_UNAVAILABLE";
+  constructor();
+}
 export type RuntimeIdentity = { version: string; platform: string; arch: string; execPath: string; electron: null };
 export const NODE_VERSION: string;
 export const SOURCE_ENTRIES: readonly string[];

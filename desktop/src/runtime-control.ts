@@ -105,6 +105,10 @@ export function createRuntimeControl(options: {
   }
   return {
     getState: snapshot,
+    /** Status alone is not ownership proof: a stopped child can still retain temporary resources. */
+    isIdle() {
+      return !supervisor && !cleanups.length && !starting && !preparing && !stopping && !stopRequested;
+    },
     subscribe(listener: (state: RuntimeControlState) => void) {
       listeners.add(listener);
       return () => {

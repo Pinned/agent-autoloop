@@ -29,8 +29,16 @@ test("IPC trusts only this window and its exact top-level local document", () =>
   }
 });
 
-test("IPC accepts only theme preferences and explicit window actions", () => {
-  assert.deepEqual(Object.values(channels).sort(), ["desktop:theme:get", "desktop:theme:set", "desktop:window"]);
+test("IPC exposes only themes, window actions and the four fixed setup operations", () => {
+  assert.deepEqual(Object.values(channels).sort(), [
+    "desktop:setup:check",
+    "desktop:setup:init",
+    "desktop:setup:join",
+    "desktop:setup:status",
+    "desktop:theme:get",
+    "desktop:theme:set",
+    "desktop:window",
+  ]);
   for (const theme of ["system", "light", "dark"]) assert.equal(parseTheme(theme), theme);
   for (const action of ["hide", "minimize", "toggle-maximize", "restore", "quit"])
     assert.equal(parseWindowAction(action), action);

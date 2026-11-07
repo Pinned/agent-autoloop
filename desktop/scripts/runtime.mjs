@@ -311,6 +311,15 @@ async function verifyRuntime(node, target, entries, home) {
   return info;
 }
 
+export class RuntimeUnavailableError extends Error {
+  constructor() {
+    super("Cached runtime is unavailable");
+    this.name = "RuntimeUnavailableError";
+    this.code = "RUNTIME_UNAVAILABLE";
+  }
+}
+
+// cachedOnly validates an existing install through the same lock, identity and cleanup path; never downloads.
 export async function ensureRuntime(options = {}) {
   const target = runtimeTarget(options.platform, options.arch);
   const cache = await safeDirectory(options.cacheDir ?? defaultCache, true);
@@ -403,6 +412,7 @@ export async function ensureRuntime(options = {}) {
       if (error.code !== "ENOENT") throw error;
     }
     if (!exists) {
+      if (options.cachedOnly === true) throw new RuntimeUnavailableError();
       stage = await mkdtemp(join(cache, ".download-"));
       await capture("stage", stage);
       const download = options.download ?? downloadOfficial;

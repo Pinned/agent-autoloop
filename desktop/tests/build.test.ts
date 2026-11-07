@@ -47,12 +47,23 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(main, /启动运行服务/);
   assert.match(main, /停止本机运行服务/);
   assert.match(main, /prepareQuit: async/);
-  assert.match(main, /await controller\.stop\(\)/);
+  assert.match(main, /await setup\.prepareQuit\(\(\) => controller\.stop\(\)\)/);
   assert.match(main, /defaultId: 0/);
   assert.match(main, /远程队列不会取消/);
   assert.match(main, /离线持久待同步/);
   assert.doesNotMatch(main, /restartPolicy|controller\.restart|channels\.runtime/);
-  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 3);
+  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 7);
+  for (const name of ["setupStatus", "setupCheck", "setupInit", "setupJoin"]) {
+    assert.match(
+      main,
+      new RegExp(`ipcMain\\.handle\\(channels\\.${name},[^]*?assertSender\\(event, window\\.webContents, page\\)`),
+    );
+  }
+  assert.match(main, /cachedOnly: true/);
+  assert.match(main, /entryPath: join\(resources, "host", "desktop-setup\.ts"\)/);
+  assert.match(main, /setup\.runStart\(\s*\(\) => controller\.start\(\),\s*\(\) => controller\.getState\(\),?\s*\)/);
+  assert.match(main, /setup\.prepareQuit\(\(\) => controller\.stop\(\)/);
+  assert.doesNotMatch(read("../dist/main.js"), /function initSetup|function joinSetup|function readConfig/);
 });
 
 test("built preload is a single CommonJS file requiring only Electron", () => {
@@ -62,6 +73,21 @@ test("built preload is a single CommonJS file requiring only Electron", () => {
   assert.doesNotMatch(preload, /\bimport\s|node:|\.\.\//);
   assert.match(preload, /exposeInMainWorld/);
   assert.doesNotMatch(preload, /exposeInMainWorld\(["'](?:ipcRenderer|require)/);
+});
+
+test("built preload exposes exactly the fixed theme, window and setup methods", () => {
+  const source = read("../src/preload.ts");
+  const methods = [...source.matchAll(/^  (\w+):/gm)].map((match) => match[1]).sort();
+  assert.deepEqual(methods, [
+    "checkBuiltinAgents",
+    "getTheme",
+    "initHub",
+    "joinWorker",
+    "setTheme",
+    "setupStatus",
+    "window",
+  ]);
+  assert.doesNotMatch(source, /invoke\((?:channel|name|value)/);
 });
 
 test("fixed renderer has restrictive CSP and no simulated business or network connection", () => {
