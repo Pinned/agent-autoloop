@@ -1,4 +1,15 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, session, Tray } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  nativeTheme,
+  Notification,
+  session,
+  Tray,
+} from "electron";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { lstat, mkdtemp, rm } from "node:fs/promises";
 import { spawn } from "node:child_process";
@@ -12,6 +23,7 @@ import { createRuntimeControl, SAFE_STOP_ERROR, type RuntimeControlState } from 
 import { createTasksSource, createTodaySource } from "./state-source.ts";
 import { createTaskSource } from "./task-source.ts";
 import { createHubWatcher, type HubGlance } from "./hub-watcher.ts";
+import { createNotifier } from "./notify.ts";
 import { parseDesktopTaskInput } from "../../host/desktop-task-contract.ts";
 import { parseDesktopRulesEntries } from "../../host/desktop-rules-contract.ts";
 import { createSetupControl } from "./setup-control.ts";
@@ -169,7 +181,18 @@ if (ownsAppLock)
         readToday: () => todaySource.read(),
         readTasks: () => tasksSource.read(),
       });
-      watcher.subscribe(() => refreshMenus());
+      // A new ask card is worth a system notification, but only when the user is not
+      // already looking at the console. The renderer never touches Notification.
+      const notifier = createNotifier();
+      watcher.subscribe((glance) => {
+        refreshMenus();
+        for (const draft of notifier.push(glance)) {
+          if (smoke || window.isDestroyed() || window.isFocused()) break;
+          const notification = new Notification(draft);
+          notification.on("click", () => showPage("today"));
+          notification.show();
+        }
+      });
       // Tray menu labels are short by design; the full truth lives on the pages.
       const menuText = (text: string) => (text.length > 24 ? `${text.slice(0, 23)}…` : text);
       function showPage(page: "today" | "tasks") {
