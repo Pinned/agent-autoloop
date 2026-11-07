@@ -13,12 +13,14 @@
     "typecheck": "tsc -p tsconfig.json",
     "start": "npm run build && node scripts/start.mjs",
     "smoke": "npm run build && node scripts/smoke.mjs",
-    "runtime:check": "node scripts/runtime-smoke.mjs"
+    "runtime:check": "node scripts/runtime-smoke.mjs",
+    "dist": "npm run build && electron-builder"
   },
   "devDependencies": {
     "@types/node": "24.19.2",
     "electron": "45.2.3",
     "esbuild": "0.28.2",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "electron-builder": "26.18.0"
   }
 }

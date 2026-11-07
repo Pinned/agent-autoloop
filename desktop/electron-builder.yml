@@ -1,0 +1,20 @@
+# The packaged app is the V1 shell: exactly the built dist, never sources or tests.
+appId: com.autoloop.desktop
+productName: agent-autoloop
+directories:
+  output: release
+  buildResources: assets
+# The local Electron install ships the app; no second download, no surprises.
+electronDist: node_modules/electron/dist
+asar: true
+files:
+  - dist/**
+  - package.json
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+  icon: assets/icon.icns
+  # V1 ships unsigned for local use; signing is a later release decision.
+  identity: null

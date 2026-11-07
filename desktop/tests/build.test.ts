@@ -286,6 +286,24 @@ test("system notifications are main-process only and click back to today", () =>
   assert.match(main, /createNotifier\(\)/);
 });
 
+test("the dmg packages exactly the built dist, unsigned, from the local Electron install", () => {
+  const pkg = JSON.parse(read("../package.json"));
+  const config = read("../electron-builder.yml");
+  assert.match(pkg.scripts.dist, /electron-builder/);
+  assert.ok(pkg.devDependencies["electron-builder"]);
+  // The packaged app is the V1 shell: built output only, never sources, tests or scripts.
+  assert.match(config, /- dist\/\*\*[\s\S]*- package\.json/);
+  assert.doesNotMatch(config, /src\/|tests\/|scripts\//);
+  // No second Electron download and no signing: both are release decisions, not silent defaults.
+  assert.match(config, /electronDist: node_modules\/electron\/dist/);
+  assert.match(config, /target: dmg/);
+  assert.match(config, /- arm64/);
+  assert.match(config, /identity: null/);
+  assert.match(config, /icon: assets\/icon\.icns/);
+  // Build output never enters git.
+  assert.match(read("../.gitignore"), /release\//);
+});
+
 test("fixed renderer has restrictive CSP and no simulated business or network connection", () => {
   const html = read("../dist/renderer/index.html");
   assert.match(html, /default-src 'none'/);
