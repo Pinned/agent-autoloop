@@ -27,5 +27,14 @@ const bridge = Object.freeze<DesktopBridge>({
       ipcRenderer.removeListener("desktop:runtime:event", receiving);
     };
   },
+  onNavigate: (listener) => {
+    const receiving = (_event: unknown, payload: unknown) => {
+      listener(payload as never);
+    };
+    ipcRenderer.on("desktop:navigate", receiving);
+    return () => {
+      ipcRenderer.removeListener("desktop:navigate", receiving);
+    };
+  },
 });
 contextBridge.exposeInMainWorld("desktop", bridge);

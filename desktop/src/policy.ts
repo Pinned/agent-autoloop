@@ -35,6 +35,7 @@ export const channels = Object.freeze({
   rulesPut: "desktop:rules:put",
   // Main-to-renderer push only; the renderer never invokes this channel.
   runtimeEvent: "desktop:runtime:event",
+  navigate: "desktop:navigate",
 });
 export type Theme = "system" | "light" | "dark";
 export type WindowAction = "hide" | "minimize" | "toggle-maximize" | "restore" | "quit";
@@ -67,6 +68,8 @@ export interface DesktopBridge {
   rulesPut(entries: DesktopRuleEntry[]): Promise<DesktopRulesSaveResponse>;
   /** Subscribe to main-pushed runtime state; the returned function unsubscribes. */
   onRuntimeEvent(listener: (event: DesktopRuntimeEvent) => void): () => void;
+  /** Subscribe to main-pushed page navigation (tray card and notification clicks). */
+  onNavigate(listener: (target: { page: string }) => void): () => void;
 }
 export function parseTheme(value: unknown): Theme {
   if (value === "system" || value === "light" || value === "dark") return value;

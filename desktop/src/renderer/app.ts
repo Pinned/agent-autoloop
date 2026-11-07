@@ -118,6 +118,14 @@ const tasks = createRendererTasks(window.desktop, () => {
   if (currentPage === "tasks") tasksPage?.update();
 });
 const tasksPage = mountTasksView(tasks);
+// The tray's card and stop shortcuts land here: main names the page, the renderer stays the judge.
+window.desktop.onNavigate((target) => {
+  const id = typeof target === "object" && target !== null ? (target as { page?: unknown }).page : "";
+  if (typeof id !== "string" || !pages.some((page) => page.id === id)) return;
+  if (id !== currentPage) render(id);
+  // Landing on today should show the card that just asked for a decision, not the last render.
+  if (id === "today") today.refresh();
+});
 function openSetup() {
   if (!setupView) setupView = mountSetupView(main, setup, () => render(currentPage));
   setup.open();
