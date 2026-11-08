@@ -753,6 +753,13 @@
           "type": "string",
           "maxLength": 100
         },
+        "meta": {
+          "type": "object",
+          "properties": {
+            "declarationHash": { "type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[a-f0-9]{64}$" }
+          },
+          "additionalProperties": true
+        },
         "changes": {
           "type": "array",
           "items": {

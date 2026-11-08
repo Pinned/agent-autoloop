@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { RULES_FILE } from "./home.ts";
 import * as hub from "./runtime.ts";
 import { writeLocalEntries, writeSection, type Entry, type Section } from "./rules-io.ts";
-import { checkedLocalEntry as checkedEntry, createLocalEntriesReader } from "./local-entries.ts";
+import { checkedLocalEntriesBody, createLocalEntriesReader } from "./local-entries.ts";
+import { assertRulesBaseline } from "./rules-baseline.ts";
 import { AuthError, Conflict, InputError, NotFound } from "../kernel/errors.ts";
 import { EVENT_TYPE } from "../protocol/validate.ts";
 import { RulesError, TYPE_PATTERN } from "../protocol/rules.ts";
@@ -41,7 +42,15 @@ const denied = (error: unknown) =>
     { error: error instanceof Error ? error.message : "出错了" },
     {
       status:
-        error instanceof AuthError ? 401 : error instanceof NotFound ? 404 : error instanceof InputError ? 400 : 500,
+        error instanceof AuthError
+          ? 401
+          : error instanceof NotFound
+            ? 404
+            : error instanceof Conflict
+              ? 409
+              : error instanceof InputError
+                ? 400
+                : 500,
       headers: HEADERS,
     },
   );
@@ -58,12 +67,19 @@ const readLocalEntries = createLocalEntriesReader({
   read: () => readFileSync(RULES_FILE, "utf8"),
   parse: hub.parseRules,
   applied: () => hub.rules,
+  baseline: hub.getRulesBaseline,
 });
 
 function localEntries() {
-  const entries = readLocalEntries();
-  const agents = Object.entries(hub.rules.agents).map(([id, agent]) => ({ id, name: agent.name, use: agent.use }));
-  return { entries, agents, seq: hub.getView().seq };
+  const latest = hub.getView();
+  const baseline = hub.getRulesBaseline(latest);
+  const entries = readLocalEntries(baseline);
+  const agents = Object.entries(baseline.effective.agents).map(([id, agent]) => ({
+    id,
+    name: agent.name,
+    use: agent.use,
+  }));
+  return { entries, agents, seq: latest.seq, rulesSeq: baseline.rulesSeq };
 }
 
 // ---- The sections of rules.json, each gathered from what the page could have shown ----
@@ -302,9 +318,19 @@ async function api(request: Request): Promise<Response> {
     } catch (error) {
       throw new InputError(`不是合法的 JSON：${(error as Error).message}`);
     }
-    if (!Array.isArray(body)) throw new InputError("入口要是一个列表");
-    const entries = body.map(checkedEntry);
-    writeLocalEntries(entries);
+    const { entries, rulesSeq } = checkedLocalEntriesBody(body);
+    const baseline = hub.getRulesBaseline();
+    if (rulesSeq !== undefined && (rulesSeq !== baseline.rulesSeq || !baseline.declarationHash))
+      throw new Conflict("规则已变化，请重新读取后再保存");
+    writeLocalEntries(entries, {
+      ...(rulesSeq === undefined
+        ? {}
+        : { beforeMerge: (text: string) => assertRulesBaseline(text, rulesSeq, baseline, hub.parseRules) }),
+      afterRename: () => {
+        const result = hub.reloadRules(RULES_FILE, true);
+        if (result.problem) throw new InputError(result.problem);
+      },
+    });
     hub.tick();
     return Response.json({ ok: true, ...localEntries() }, { headers: HEADERS });
   }

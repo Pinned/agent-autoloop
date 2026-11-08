@@ -1,6 +1,14 @@
 // Pure production logic. Filesystem paths, runtime state and side effects belong to adapters.
 import { InputError } from "../kernel/errors.ts";
 import { TYPE_PATTERN } from "../protocol/rules.ts";
+import {
+  matchesRulesDeclaration,
+  parseRulesDeclaration,
+  runSynchronousHook,
+  sameRulesBaseline,
+  type RulesBaseline,
+  type RulesParser,
+} from "./rules-baseline.ts";
 
 export type Entry = Record<string, unknown>;
 const isObject = (value: unknown): value is Entry =>
@@ -11,23 +19,31 @@ export type LocalEntriesReaderOptions = {
   read(): string;
   parse(json: string): unknown;
   applied(): unknown;
+  baseline?(): RulesBaseline;
 };
 
-export function createLocalEntriesReader(options: LocalEntriesReaderOptions): () => (Entry & { types: string[] })[] {
-  function declaration(): { rules: Entry[]; effective: string } | null {
+export function createLocalEntriesReader(options: LocalEntriesReaderOptions) {
+  function declaration(applied: RulesBaseline): { rules: Entry[]; baseline: RulesBaseline } | null {
     try {
       const json = options.read();
-      const effective = JSON.stringify(options.parse(json));
-      if (effective !== JSON.stringify(options.applied())) return null;
-      return { rules: (JSON.parse(json) as { rules: Entry[] }).rules, effective };
+      const parsed = parseRulesDeclaration(json, options.parse as RulesParser);
+      if (
+        options.baseline
+          ? !matchesRulesDeclaration(parsed, applied)
+          : JSON.stringify(parsed.effective) !== JSON.stringify(applied.effective)
+      )
+        return null;
+      return { rules: parsed.raw.rules, baseline: applied };
     } catch {
       return null;
     }
   }
-  let snapshot = declaration();
-  return () => {
-    snapshot = declaration() ?? snapshot;
-    if (!snapshot || snapshot.effective !== JSON.stringify(options.applied()))
+  const current = (): RulesBaseline =>
+    options.baseline?.() ?? { rulesSeq: 0, effective: options.applied() as RulesBaseline["effective"] };
+  let snapshot = declaration(current());
+  const read = (applied = current()) => {
+    snapshot = declaration(applied) ?? snapshot;
+    if (!snapshot || !sameRulesBaseline(snapshot.baseline, applied) || (options.baseline && !applied.declarationHash))
       throw new InputError("无法读取已生效规则的原始声明，请先修复 rules.json");
     return snapshot.rules.filter(takesLocal).map((rule) => {
       const when = rule.when as { types: string[] };
@@ -43,6 +59,7 @@ export function createLocalEntriesReader(options: LocalEntriesReaderOptions): ()
       return entry;
     });
   };
+  return read;
 }
 
 /** The unchanged HTTP entry checker: full reference validation happens on the merged file. */
@@ -106,15 +123,34 @@ export function checkedLocalEntry(given: unknown): Entry {
   };
 }
 
+export function checkedLocalEntriesBody(given: unknown): { entries: Entry[]; rulesSeq?: number } {
+  if (Array.isArray(given)) return { entries: given.map(checkedLocalEntry) };
+  if (
+    !isObject(given) ||
+    Object.keys(given).some((key) => !["entries", "rulesSeq"].includes(key)) ||
+    !Object.hasOwn(given, "entries") ||
+    !Object.hasOwn(given, "rulesSeq") ||
+    !Array.isArray(given.entries) ||
+    !Number.isSafeInteger(given.rulesSeq) ||
+    (given.rulesSeq as number) < 1
+  )
+    throw new InputError("入口要是列表，或带 entries 和有效 rulesSeq 的对象");
+  return { entries: given.entries.map(checkedLocalEntry), rulesSeq: given.rulesSeq as number };
+}
+
 export type LocalEntriesWriteIO = {
   read(): string;
   validate(json: string): unknown;
   write(json: string): void;
   rename(): void;
+  beforeMerge?(text: string): undefined;
+  afterRename?(): undefined;
 };
 
 export function writeLocalEntriesWith(entries: Entry[], io: LocalEntriesWriteIO): void {
-  const whole: unknown = JSON.parse(io.read());
+  const text = io.read();
+  if (io.beforeMerge) runSynchronousHook(() => io.beforeMerge!(text));
+  const whole: unknown = JSON.parse(text);
   if (!isObject(whole)) throw new InputError("rules.json 不是一个对象");
   if (!Array.isArray(whole.rules) || !isObject(whole.sources))
     throw new InputError("rules.json 缺少 rules 或 sources，先把它修好再用网页改");
@@ -143,4 +179,5 @@ export function writeLocalEntriesWith(entries: Entry[], io: LocalEntriesWriteIO)
   io.validate(json);
   io.write(json);
   io.rename();
+  if (io.afterRename) runSynchronousHook(io.afterRename);
 }

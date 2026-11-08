@@ -1,3 +1,4 @@
+// Failure modes: CAS conflicts write or apply an external declaration; rename failure still triggers apply.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { checkedLocalEntry, createLocalEntriesReader, writeLocalEntriesWith } from "../host/local-entries.ts";
@@ -197,6 +198,52 @@ test("cold invalid disk has no inferred declaration; A cache cannot serve applie
   assert.equal(read()[0].group, "B");
 });
 
+test("CAS guard runs on the single original read and conflict has no write, rename or apply", () => {
+  const m = memory(config([local("旧")]));
+  const before = m.disk();
+  assert.throws(
+    () =>
+      writeLocalEntriesWith([entry("新")], {
+        ...m.io,
+        beforeMerge(text: string) {
+          m.events.push("guard");
+          assert.equal(text, before);
+          throw new Error("conflict");
+        },
+        afterRename() {
+          m.events.push("apply");
+        },
+      }),
+    /conflict/,
+  );
+  assert.deepEqual(m.events, ["read", "guard"]);
+  assert.equal(m.disk(), before);
+});
+
+test("synchronous hooks run guard before validate and force apply only after rename", () => {
+  const m = memory();
+  writeLocalEntriesWith([entry("新")], {
+    ...m.io,
+    beforeMerge() {
+      m.events.push("guard");
+    },
+    afterRename() {
+      m.events.push("apply");
+    },
+  });
+  assert.deepEqual(m.events, ["read", "guard", "validate", "write", "rename", "apply"]);
+  m.events.length = 0;
+  assert.throws(
+    () =>
+      writeLocalEntriesWith([], {
+        ...m.io,
+        beforeMerge: (() => Promise.resolve()) as never,
+      }),
+    /同步/,
+  );
+  assert.deepEqual(m.events, ["read"]);
+});
+
 test("rename failure propagates after validation and write, preserving the original disk", () => {
   const m = memory(config([local("旧")]));
   const before = m.disk();
@@ -204,7 +251,14 @@ test("rename failure propagates after validation and write, preserving the origi
     m.events.push("rename");
     throw new Error("rename failed");
   };
-  assert.throws(() => writeLocalEntriesWith([entry("新")], m.io), /rename failed/);
+  const failingIO = {
+    ...m.io,
+    rename: m.io.rename,
+    afterRename(): undefined {
+      m.events.push("apply");
+    },
+  };
+  assert.throws(() => writeLocalEntriesWith([entry("新")], failingIO), /rename failed/);
   assert.deepEqual(m.events, ["read", "validate", "write", "rename"]);
   assert.equal(m.disk(), before);
 });

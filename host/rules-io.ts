@@ -6,7 +6,7 @@ import { dirname } from "node:path";
 import { RULES_FILE } from "./home.ts";
 import { parseRules } from "../protocol/rules.ts";
 import { InputError } from "../kernel/errors.ts";
-import { writeLocalEntriesWith } from "./local-entries.ts";
+import { writeLocalEntriesWith, type LocalEntriesWriteIO } from "./local-entries.ts";
 export { takesLocal } from "./local-entries.ts";
 export type { Entry } from "./local-entries.ts";
 import type { Entry } from "./local-entries.ts";
@@ -71,8 +71,12 @@ function commitWhole(whole: Record<string, unknown>) {
 }
 
 /** Replace the local-source rules with these entries, keep the rest of the file, check the whole, then swap it in. */
-export function writeLocalEntries(entries: Entry[]) {
+export function writeLocalEntries(
+  entries: Entry[],
+  hooks: Pick<LocalEntriesWriteIO, "beforeMerge" | "afterRename"> = {},
+) {
   writeLocalEntriesWith(entries, {
+    ...hooks,
     read: () => readFileSync(RULES_FILE, "utf8"),
     validate: (json) => parseRules(json, Date.now(), Intl.DateTimeFormat().resolvedOptions().timeZone),
     write: (json) => {

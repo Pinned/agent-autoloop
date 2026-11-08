@@ -23,6 +23,23 @@ test("protocol description schema rejects duplicate capabilities through checkSc
   }
 });
 
+test("fact accepts optional declaration hash and existing meta, rejects malformed sha256", () => {
+  const fact = { version: 1, seq: 1, at: 0, type: "rules", changes: [] };
+  assert.deepEqual(checkSchema("fact", fact), []);
+  assert.deepEqual(checkSchema("fact", { ...fact, meta: { previous: "kept", declarationHash: "a".repeat(64) } }), []);
+  assert.deepEqual(checkSchema("fact", { ...fact, meta: { previous: "kept" } }), []);
+  for (const declarationHash of [
+    null,
+    42,
+    "a".repeat(63),
+    "a".repeat(65),
+    "A".repeat(64),
+    "z".repeat(64),
+    `${"a".repeat(64)}\n`,
+  ])
+    assert.ok(checkSchema("fact", { ...fact, meta: { declarationHash } }).length);
+});
+
 test("wire schemas agree with event and receipt boundaries", () => {
   for (const input of [
     { id: "one", type: "app.changed" },

@@ -16,6 +16,7 @@ import { commit, openView } from "../kernel/store.ts";
 import type { Job } from "../protocol/job.ts";
 import { parseRules as checkRules, RulesError } from "../protocol/rules.ts";
 import type { Rejected } from "../protocol/validate.ts";
+import { appliedRulesBaseline, createRulesLoader, decorateRulesFacts } from "./rules-baseline.ts";
 
 mkdirSync(HOME, { recursive: true, mode: 0o700 });
 chmodSync(HOME, 0o700);
@@ -93,11 +94,16 @@ export const onChange = (listener: Listener) => {
 };
 
 export function execute(type: string, args: any[], now = Date.now()) {
+  return executeWithDeclaration(type, args, now);
+}
+
+function executeWithDeclaration(type: string, args: any[], now: number, declarationHash?: string) {
   let facts: Fact[] = [];
   let value: any;
   const latest = getView();
   current = commit(db, latest, () => {
     ({ facts, value } = decide(latest, { type, args }, now, environment));
+    if (declarationHash) facts = decorateRulesFacts(facts, declarationHash);
     return facts;
   });
   if (facts.length) for (const listener of listeners) listener(type, facts);
@@ -108,23 +114,28 @@ export const parseRules = (json: string, now = Date.now()) =>
   checkRules(json, now, Intl.DateTimeFormat().resolvedOptions().timeZone);
 export { RulesError, typeMatches };
 export let rules = query.configuration(current);
-let loaded = { file: "", mtime: 0 };
+export function getRulesBaseline(latest = getView()) {
+  return appliedRulesBaseline(latest, (seq) => {
+    const row = statement(db, "SELECT fact FROM facts WHERE seq=?").get(seq);
+    return row ? (JSON.parse(String(row.fact)) as Fact) : undefined;
+  });
+}
 
-export function reloadRules(file = RULES_FILE) {
-  const mtime = statSync(file).mtimeMs;
-  if (loaded.file === file && loaded.mtime === mtime) return { changed: false };
-  loaded = { file, mtime };
-  try {
-    const next = parseRules(readFileSync(file, "utf8"));
-    const differs = JSON.stringify(next) !== JSON.stringify(query.configuration(getView()));
-    const reportedBroken = (card: Row) => card.key.startsWith("rules:") && card.state === "open";
-    if (differs || rows(current, "cards", { state: "open" }).some(reportedBroken)) execute("rules", [next]);
-    rules = next;
-    return { changed: true };
-  } catch (error) {
-    if (error instanceof RulesError) return { changed: false, problem: error.message };
-    throw error;
-  }
+const loadRules = createRulesLoader({
+  stat: (file) => statSync(file).mtimeMs,
+  read: (file) => readFileSync(file, "utf8"),
+  parse: parseRules,
+  applied: getRulesBaseline,
+  hasBroken: () => rows(current, "cards", { state: "open" }).some((card) => card.key.startsWith("rules:")),
+  apply: (declaration) => {
+    executeWithDeclaration("rules", [declaration.effective], Date.now(), declaration.declarationHash);
+  },
+});
+
+export function reloadRules(file = RULES_FILE, force = false) {
+  const result = loadRules(file, force);
+  if (!result.problem) rules = query.configuration(getView());
+  return result;
 }
 
 const initial = reloadRules();
