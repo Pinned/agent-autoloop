@@ -17,6 +17,29 @@
 
 **中台内核没有界面。** 通道、命令行、本机控制台和正在开发的桌面 App 都是它的客户端，通过「本人」等鉴权请求操作业务，不直接改数据库。桌面 App 的进程与权限边界见 [桌面开发说明](desktop.md)。想要其他页面或大屏，也可以用这些请求自己做。
 
+## 无副作用的协议与身份探测
+
+```text
+GET /v1/protocol                 无需鉴权
+→ 200 {"version":1,"capabilities":["credentials.owner.v1","credentials.worker.v1"]}
+
+GET /v1/credentials/owner        Authorization: Bearer <本人密钥>
+→ 200 {"version":1,"kind":"owner","name":"owner"}
+
+GET /v1/credentials/worker       Authorization: Bearer <接单程序密钥>
+→ 200 {"version":1,"kind":"worker","name":"mac-mini"}
+```
+
+公开描述固定，不读取时钟、视图或规则；Authorization 无论是否有效都不影响其结果。**公开描述不是可信证明，也不表示完整 external 兼容**：未知但格式合法的 capability 标识不能授予已知能力；身份结果也不能替代业务接口自己的鉴权。本单元不提供 HTTP fetch 客户端，不改变桌面端 `externalSupported` 或宣称整个 existing hub 接入完成。
+
+三个端点只接受精确 GET 和路径。任何 query（包括裸 `?`），以及声明非空 Content-Length 或带 Transfer-Encoding 的 GET，返回 `400 {"error":"协议探测请求不能带查询或正文"}`，不读取正文。其他方法、尾斜杠、encoded 路径和未知身份种类沿用旧路由的 `404 {"error":"没有这个地址"}`。旧中台没有这些端点时也按 404 fail closed，不能回退到领活、心跳或写业务请求来验证身份。
+
+身份核验严格要求 ASCII 前缀 `Bearer `，token 非空、不含空白或控制字符、UTF-8 编码最多 4096 字节。每次请求只读取最新视图的 keys，对 token 做一次 SHA-256，与全部种类的合法 hash 比较；必须恰好匹配一条，且种类正确、名字符合 `^[a-z][a-z0-9-]*$` 并最多 128 字符。同种类或跨种类同 hash 的歧义、错误种类、撤销、格式错误统一返回 `401 {"error":"密钥身份无效"}`，不泄露 token、hash 或 name。畸形存储 hash 安全拒绝，不触发长度不符的 timingSafeEqual 异常。**歧义分类仅是这两个新身份端点的约定**，旧 `whose` 与业务鉴权不变。
+
+所有新端点响应均为 JSON，带 `Cache-Control: no-store`，最多 1024 UTF-8 字节。`protocol/handshake.ts` 提供纯 DTO 校验与有界字节解析：version 必须为 1；只接受普通 object 自有可枚举 data descriptors，无 symbol、getter、自定义原型或额外字段；capabilities 是无空洞、无 getter/额外属性的普通数组，最多 8 个唯一 ASCII 标识，每个最多 64 字符，符合 `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`。身份 DTO 必须与调用方预期 kind 一致。字节解析先限制 1024 字节，再 fatal UTF-8 解码和严格校验。JSON Schema 新定义为 `protocolDescription` 与 `credentialIdentity`；字节、descriptor 和预期 kind 约束由纯校验器补足。
+
+探测不 dispatch，不读取 state，不 wait/stream/adapt，不 claim、heartbeat 或 tick，不更新日志序号、投影、租约或在线状态。拒绝非法请求也不调用业务 services；合法身份请求只允许 `services.view()` 及 keys 读取。
+
 ## 六个词
 
 | 词       | 是什么                                                                                                                   |

@@ -6,6 +6,23 @@ import { test } from "node:test";
 import { checkSchema } from "../protocol/schema.ts";
 import { parseEvent, parseResult } from "../protocol/validate.ts";
 
+// Failure mode: published uniqueItems must reject duplicate capabilities through the actual checker,
+// not merely declare uniqueness in schema.json. Current uniqueItems support is for string items only.
+test("protocol description schema rejects duplicate capabilities through checkSchema", () => {
+  assert.ok(
+    checkSchema("protocolDescription", {
+      version: 1,
+      capabilities: ["credentials.owner.v1", "credentials.owner.v1"],
+    }).length,
+  );
+  for (const capabilities of [[], ["credentials.owner.v1", "credentials.worker.v1"], ["future.safe.v2"], ["a", "A"]]) {
+    assert.deepEqual(checkSchema("protocolDescription", { version: 1, capabilities }), []);
+  }
+  for (const capabilities of [["same", "same"], ["one", "two", "one"], [42], [""], ["bad space"]]) {
+    assert.ok(checkSchema("protocolDescription", { version: 1, capabilities }).length);
+  }
+});
+
 test("wire schemas agree with event and receipt boundaries", () => {
   for (const input of [
     { id: "one", type: "app.changed" },
