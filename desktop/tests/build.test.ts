@@ -49,10 +49,10 @@ test("business lifecycle drive runs through the shipped bridge and never fakes s
 
 test("the lifecycle driver stays on loopback, coordinates through the production doors and keeps failure evidence", () => {
   const driver = read("../scripts/lifecycle-smoke.mjs");
-  // It picks the first free loopback port instead of fighting a machine's own real hub on 3350,
-  // and it checks the port closed again after the exit.
-  assert.match(driver, /createConnection/);
-  assert.match(driver, /pickFreePort/);
+  // The OS selects an ephemeral loopback port; this driver never scans or controls the real
+  // default hub and confirms the chosen port closed after the verified app exits.
+  assert.match(driver, /portOpen/);
+  assert.match(driver, /pickLoopbackPort/);
   assert.match(driver, /DESKTOP_SETUP_PORT: String\(PORT\)/);
   assert.match(driver, /退出后中台端口未关闭/);
   // Readiness through the hub's own unauthenticated healthz; the owner key comes from the
@@ -64,10 +64,12 @@ test("the lifecycle driver stays on loopback, coordinates through the production
   // The two instances are coordinated by markers and a quit sentinel, never by guessing timing.
   assert.match(driver, /DESKTOP_LIFECYCLE_HUB_OK/);
   assert.match(driver, /writeFile\(sentinel/);
-  // No forced kill on the success path; a failure keeps its HOME directories for inspection.
+  // No signals or hidden detached children on either path; bounded failure retains homes/logs.
   assert.match(driver, /keepForEvidence/);
   assert.match(driver, /保留证据目录/);
-  assert.match(driver, /SIGKILL/);
+  assert.match(driver, /settleChildren/);
+  assert.match(driver, /isolatedEnvironment/);
+  assert.doesNotMatch(driver, /SIGKILL|\.kill\(|\.unref\(|\.\.\.process\.env/);
 });
 
 test("the hub port override is one validated knob: the setup entry refuses junk, the runner forwards only it", () => {
