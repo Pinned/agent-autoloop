@@ -40,6 +40,9 @@ function sameSnapshot(a: DesktopRuntimeSnapshot, b: DesktopRuntimeSnapshot): boo
 export function createRendererRun(bridge: RunBridge, gate: RunGate, onChange: () => void) {
   let state: RunState = Object.freeze({ kind: "loading" });
   let flight: "get" | "start" | "stop" | null = null;
+  let eventGeneration = 0;
+  let readGeneration = 0;
+  let trailingRefresh = false;
   // Sticky: once an operation cannot be confirmed safe, only a pushed stopped/running state reopens the view.
   let lock: "unknown" | null = null;
 
@@ -77,11 +80,15 @@ export function createRendererRun(bridge: RunBridge, gate: RunGate, onChange: ()
       else if (state.kind === "ready")
         // Admission refusals are transient text; the last known snapshot is never replayed from them.
         state = Object.freeze({ ...state, admission: response.error.message });
-    } else adopt(response.state);
+    } else if (operation !== "get" || readGeneration === eventGeneration) adopt(response.state);
+    const reread = trailingRefresh;
+    trailingRefresh = false;
     notify();
+    if (reread && !lock && flight === null) begin("get");
   }
   function begin(operation: "get" | "start" | "stop") {
     flight = operation;
+    if (operation === "get") readGeneration = eventGeneration;
     let result: Promise<unknown>;
     try {
       result =
@@ -113,6 +120,7 @@ export function createRendererRun(bridge: RunBridge, gate: RunGate, onChange: ()
       notify();
       return;
     }
+    eventGeneration++;
     const next = frozen(event.state);
     const reopening = (next.status === "stopped" && next.error === null) || next.status === "running";
     if (lock) {
@@ -147,7 +155,11 @@ export function createRendererRun(bridge: RunBridge, gate: RunGate, onChange: ()
     },
     /** Re-read after an outside change, for example once setup reports this computer configured. */
     refresh(): void {
-      if (flight !== null || lock) return;
+      if (lock) return;
+      if (flight !== null) {
+        trailingRefresh = true;
+        return;
+      }
       begin("get");
     },
     start(): void {

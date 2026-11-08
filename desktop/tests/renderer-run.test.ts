@@ -78,6 +78,22 @@ const settled = (state: RunState): string => {
   return state.kind;
 };
 
+test("new runtime event fences stale reads and outside refresh queues only one bounded trailing read", async () => {
+  const f = fixture();
+  f.controller.refresh();
+  f.push(pushed(snap({ status: "running", role: "worker" })));
+  f.controller.refresh();
+  f.controller.refresh();
+  f.gates[0].resolve(ok(snap({ status: "stopped", role: "worker" })));
+  await flush();
+  assert.equal(readyState(f.controller.state).status, "running");
+  assert.deepEqual(f.calls, ["get", "get"]);
+  f.gates[1].resolve(ok(snap({ status: "running", role: "worker" })));
+  await flush();
+  assert.equal(f.controller.busy, false);
+  assert.equal(f.calls.length, 2);
+});
+
 test("construction is inert; init is single-flight and later page entries never re-call", async () => {
   const f = fixture();
   assert.deepEqual(f.controller.state, { kind: "loading" });
