@@ -27,6 +27,7 @@ import {
 import { loadTheme, saveTheme } from "./preferences.ts";
 import { createSupervisor } from "./supervisor.ts";
 import { createRuntimeControl, SAFE_STOP_ERROR, type RuntimeControlState } from "./runtime-control.ts";
+import { desktopRuntimeEventOf } from "./runtime-event.ts";
 import { createTasksSource, createTodaySource } from "./state-source.ts";
 import { createTaskSource } from "./task-source.ts";
 import { createHubWatcher, type HubGlance } from "./hub-watcher.ts";
@@ -357,7 +358,7 @@ if (ownsAppLock)
         watcher.sync();
         refreshMenus();
         if (window && !window.isDestroyed())
-          window.webContents.send(channels.runtimeEvent, desktopRuntimeSnapshotOf(state));
+          window.webContents.send(channels.runtimeEvent, desktopRuntimeEventOf(state));
       });
       nativeTheme.themeSource = loadTheme(prefsHome);
       session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
