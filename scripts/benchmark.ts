@@ -5,7 +5,20 @@ import { mkdtempSync, readdirSync, readFileSync, writeFileSync, rmSync } from "n
 import { tmpdir, cpus } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-import { observePolls, checkPolls, observe, checkBudget, dispatchLatency } from "./metrics.ts";
+import {
+  observePolls,
+  checkPolls,
+  observe,
+  checkBudget,
+  dispatchLatency,
+  POLL_TARGET,
+  READY_MS,
+  waitForActive,
+  sampleChild,
+  readReady,
+  stopChild,
+  bounded,
+} from "./metrics.ts";
 
 if (process.argv.includes("--server")) {
   // A cron tick can claim the poll before its measured event and leave readiness waiting forever.
@@ -59,21 +72,28 @@ if (process.argv.includes("--server")) {
     },
     stdio: ["ignore", "pipe", "inherit", "ipc"],
   });
+  const requests = new AbortController();
+  let failure: unknown;
+  let failed = false;
   try {
-    const ready = JSON.parse(String((await once(child.stdout!, "data"))[0]));
+    const ready = await readReady(child, start + READY_MS);
     const coldMs = performance.now() - start;
     await new Promise((resolve) => setTimeout(resolve, 1000));
-    child.send("sample");
-    const [idle] = await once(child, "message");
+    const idle = await sampleChild(child, performance.now() + READY_MS);
     const url = `http://127.0.0.1:${ready.port}`;
-    const request = async (path: string, key: string, body?: unknown) => {
-      const res = await fetch(url + path, {
-        method: body ? "POST" : "GET",
-        headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      });
-      assert.equal(res.status, 200);
-      return res.json();
+    const request = (path: string, key: string, body?: unknown) => {
+      const result = (async () => {
+        const res = await fetch(url + path, {
+          method: body ? "POST" : "GET",
+          headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+          signal: AbortSignal.any([requests.signal, AbortSignal.timeout(10_000)]),
+          ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        });
+        assert.equal(res.status, 200);
+        return res.json();
+      })();
+      void observe(result);
+      return result;
     };
     const count = Number(process.env.BENCH_EVENTS ?? 1000);
     const writeAt = performance.now();
@@ -83,28 +103,20 @@ if (process.argv.includes("--server")) {
     for (let i = 0; i < 100; i++) {
       const { job, ms } = await dispatchLatency(
         request,
-        async () => {
-          for (;;) {
-            child.send("sample");
-            const [sample] = await once(child, "message");
-            if (sample.active === 1) break;
-            await new Promise((resolve) => setTimeout(resolve, 1));
-          }
-        },
+        (pending, deadline) => waitForActive((at) => sampleChild(child, at), 1, [pending], deadline),
         i,
       );
       latency.push(ms);
       await request(`/v1/runs/${job.run}/result`, job.token, { outcome: "done" });
     }
     const polls = [];
-    for (let i = 0; i < 1000; i++) {
+    const deadline = performance.now() + READY_MS;
+    for (let i = 0; i < POLL_TARGET; i++) {
       polls.push(observe(request(`/v1/work?wait=5&capacity=0&claim=p${i}`, "worker")));
       if (i % 32 === 31) await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    child.send("sample");
-    const [loaded] = await once(child, "message");
-    const responses = (await Promise.all(polls)).map((result) => {
+    const loaded = await waitForActive((at) => sampleChild(child, at), POLL_TARGET, polls, deadline);
+    const responses = (await bounded(Promise.all(polls), deadline + 6000, "长轮询结果收集")).map((result) => {
       if (result.status === "rejected") throw result.reason;
       return result.value;
     });
@@ -136,9 +148,19 @@ if (process.argv.includes("--server")) {
     };
     console.log(JSON.stringify(measured, null, 2));
     if (process.argv.includes("--check")) checkBudget(measured);
+  } catch (error) {
+    failed = true;
+    failure = error;
+    throw error;
   } finally {
-    child.kill("SIGTERM");
-    await once(child, "exit");
+    requests.abort();
+    try {
+      await stopChild(child, performance.now() + READY_MS);
+    } catch (cleanupError) {
+      const blocked = new Error(`未确认假服务退出，保留临时目录 ${home}`, { cause: cleanupError });
+      if (failed) throw new AggregateError([failure, blocked], "benchmark 失败且清理受阻");
+      throw blocked;
+    }
     rmSync(home, { recursive: true, force: true });
   }
 }
