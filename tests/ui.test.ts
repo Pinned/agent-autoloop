@@ -110,6 +110,135 @@ test("a task from the page reaches the entry's rule; one no entry takes is refus
   assert.equal((await call("/v1/ui/tasks", { method: "POST", body: { type: "Fix Now", summary: "x" } })).status, 400);
 });
 
+test("local entries preserve explicit options on rename, clear options, and restore the missing source", async () => {
+  const original = readFileSync(rulesFile, "utf8");
+  try {
+    const entries = [
+      {
+        name: "旧名",
+        types: ["task.*"],
+        to: "a3",
+        cwd: "~/x",
+        group: "旧名",
+        tell: "never",
+        emits: { source: "app", types: ["feedback.*"] },
+      },
+      { name: "默认名", types: ["*"], to: "a3", cwd: "~/x" },
+    ];
+    let saved = await call("/v1/ui/rules", { method: "PUT", body: entries });
+    assert.equal(saved.status, 200);
+    const shown = (await saved.json()).entries;
+    assert.deepEqual(shown, entries);
+    const valid = readFileSync(rulesFile, "utf8");
+    writeFileSync(rulesFile, "not json");
+    assert.deepEqual((await (await call("/v1/ui/rules")).json()).entries, entries);
+    writeFileSync(rulesFile, valid);
+    const interleaved = onDisk();
+    const local = interleaved.rules.splice(-2);
+    interleaved.rules.splice(1, 0, local[0]);
+    interleaved.rules.splice(4, 0, local[1]);
+    writeFileSync(rulesFile, JSON.stringify(interleaved));
+    hub.tick();
+    const extra = { name: "新增", types: ["task.new"], to: "a3", cwd: "~/x" };
+    saved = await call("/v1/ui/rules", { method: "PUT", body: [...entries, extra] });
+    assert.equal(saved.status, 200);
+    assert.deepEqual(
+      onDisk().rules.map((rule: any) => rule.name),
+      ["意见", "旧名", "告警", "告警也记一笔", "默认名", "新增", "早报", "巡检"],
+    );
+    // Restore the append layout for the remaining rename checks.
+    writeFileSync(rulesFile, valid);
+    hub.tick();
+    shown[0].name = "新名";
+    shown[1].name = "新默认名";
+    saved = await call("/v1/ui/rules", { method: "PUT", body: shown });
+    assert.equal(saved.status, 200);
+    assert.equal(onDisk().rules.at(-2).group, "旧名");
+    assert.equal(onDisk().rules.at(-1).group, undefined);
+    assert.equal(hub.rules.rules.at(-1)?.group, "新默认名");
+    const implicit = onDisk();
+    implicit.rules.at(-1).group = "新默认名";
+    writeFileSync(rulesFile, JSON.stringify(implicit));
+    // An identical effective configuration can still gain an explicit declaration.
+    const explicit = (await (await call("/v1/ui/rules")).json()).entries;
+    assert.equal(explicit.at(-1).group, "新默认名");
+    explicit.at(-1).name = "再次改名";
+    assert.equal((await call("/v1/ui/rules", { method: "PUT", body: explicit })).status, 200);
+    assert.equal(onDisk().rules.at(-1).group, "新默认名");
+    const before = readFileSync(rulesFile, "utf8");
+    assert.equal(
+      (
+        await call("/v1/ui/rules", {
+          method: "PUT",
+          body: [{ ...entries[0], emits: { source: "missing", types: ["x"] } }],
+        })
+      ).status,
+      400,
+    );
+    assert.equal(readFileSync(rulesFile, "utf8"), before);
+    const disk = onDisk();
+    const nonLocal = disk.rules.filter((rule: any) => rule.when.source !== "local");
+    disk.rules = nonLocal;
+    delete disk.sources.local;
+    writeFileSync(rulesFile, JSON.stringify(disk));
+    const minimal = { name: "仅本机", types: ["*"], to: "a3", cwd: "~/x" };
+    saved = await call("/v1/ui/rules", { method: "PUT", body: [minimal] });
+    assert.equal(saved.status, 200);
+    assert.deepEqual((await saved.json()).entries, [minimal]);
+    assert.deepEqual(onDisk().sources.local, { name: "本机" });
+    assert.deepEqual(onDisk().rules.slice(0, -1), nonLocal);
+    assert.equal(
+      (await call("/v1/ui/tasks", { method: "POST", body: { type: "task.*", summary: "星号不是事件" } })).status,
+      400,
+    );
+    saved = await call("/v1/ui/rules", { method: "PUT", body: [] });
+    assert.equal(saved.status, 200);
+    assert.deepEqual((await saved.json()).entries, []);
+    assert.deepEqual(onDisk().rules, nonLocal);
+  } finally {
+    writeFileSync(rulesFile, original);
+    hub.tick();
+  }
+});
+
+test("a cached declaration cannot fall back across an applied configuration change", async () => {
+  const original = readFileSync(rulesFile, "utf8");
+  const cached = await (await call("/v1/ui/rules")).json();
+  try {
+    const next = onDisk();
+    next.agents["new-agent"] = next.agents.a3;
+    next.rules = next.rules.filter((rule: any) => rule.when.source !== "local");
+    next.rules.push({ name: "全新入口", when: { source: "local", types: ["new.type"] }, to: "new-agent", cwd: "~/x" });
+    writeFileSync(rulesFile, JSON.stringify(next));
+    hub.tick();
+    assert.ok(hub.rules.agents["new-agent"]);
+    // B applies without an intervening GET, so the declaration cache still belongs to A.
+    for (const disk of [
+      "broken json",
+      JSON.stringify({
+        ...next,
+        agents: { ...next.agents, "new-agent": { ...next.agents["new-agent"], name: "尚未应用" } },
+      }),
+    ]) {
+      writeFileSync(rulesFile, disk);
+      const response = await call("/v1/ui/rules");
+      assert.equal(response.status, 400);
+      assert.match((await response.json()).error, /原始声明/);
+      const task = await call("/v1/ui/tasks", {
+        method: "POST",
+        body: { type: cached.entries[0].types[0], summary: "旧入口不能混用" },
+      });
+      assert.equal(task.status, 400);
+    }
+    writeFileSync(rulesFile, JSON.stringify(next));
+    assert.equal((await call("/v1/ui/rules")).status, 200);
+  } finally {
+    writeFileSync(rulesFile, original);
+    hub.tick();
+    assert.equal((await call("/v1/ui/rules")).status, 200);
+  }
+});
+
 // ---- The sections of rules.json: read the whole, replace one, keep the rest ----
 
 test("the config door shows every section, without the kernel's own schedule", async () => {

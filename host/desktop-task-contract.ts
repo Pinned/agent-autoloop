@@ -11,14 +11,15 @@ const ENCODER = new TextEncoder();
 const bytesOf = (value: string) => ENCODER.encode(value).byteLength;
 
 /** Same shape the kernel uses for event types, so the client rejects before the hub has to. */
-export const DESKTOP_TASK_TYPE_PATTERN = /^[a-z][a-z0-9_.-]{0,64}$/;
+export const DESKTOP_TASK_TYPE_PATTERN = /^[a-z][a-z0-9_.-]{0,63}$/;
+export const DESKTOP_TASK_ENTRY_TYPE_PATTERN = /^(\*|[a-z][a-z0-9_.-]{0,63}(\.\*)?)$/;
 export const DESKTOP_TASK_SUMMARY_MAX_CHARS = 200 as const;
 export const DESKTOP_TASK_DETAIL_MAX_CHARS = 4000 as const;
 export const DESKTOP_TASK_ENTRIES_MAX = 50 as const;
 export const DESKTOP_TASK_TYPES_MAX = 16 as const;
 export const DESKTOP_TASK_ROUTED_MAX = 64 as const;
 export const DESKTOP_TASK_RESPONSE_MAX_BYTES = 64 * 1024;
-export const DESKTOP_TASK_VERSION = 1 as const;
+export const DESKTOP_TASK_VERSION = 2 as const;
 
 export type DesktopTaskInput = { type: string; summary: string; detail: string };
 export type DesktopTaskResult = { event: number; duplicate: boolean; routed: string[] };
@@ -26,11 +27,11 @@ export type DesktopTaskEntry = { name: string; types: string[]; to: string };
 export type DesktopTaskEntries = { entries: DesktopTaskEntry[] };
 export type DesktopTaskCode = "invalid" | "unavailable" | "no-hub" | "error";
 export type DesktopTaskCreateResponse =
-  | { version: 1; ok: true; result: DesktopTaskResult }
-  | { version: 1; ok: false; error: { code: DesktopTaskCode; message: string } };
+  | { version: 2; ok: true; result: DesktopTaskResult }
+  | { version: 2; ok: false; error: { code: DesktopTaskCode; message: string } };
 export type DesktopTaskEntriesResponse =
-  | { version: 1; ok: true; data: DesktopTaskEntries }
-  | { version: 1; ok: false; error: { code: Exclude<DesktopTaskCode, "invalid">; message: string } };
+  | { version: 2; ok: true; data: DesktopTaskEntries }
+  | { version: 2; ok: false; error: { code: Exclude<DesktopTaskCode, "invalid">; message: string } };
 
 export const DESKTOP_TASK_MESSAGES = Object.freeze({
   unavailable: "本机运行服务未运行，不能新建任务。可前往执行机页启动后再试。",
@@ -55,6 +56,21 @@ function record(value: unknown, keys: string[]): Record<string, unknown> {
   }
   if (Object.getPrototypeOf(value) !== OBJECT) throw new Error("原型不对");
   return value as Record<string, unknown>;
+}
+
+function list(value: unknown, max: number): unknown[] {
+  if (
+    !Array.isArray(value) ||
+    Object.getPrototypeOf(value) !== Array.prototype ||
+    value.length > max ||
+    Reflect.ownKeys(value).length !== value.length + 1
+  )
+    throw new Error("不是列表");
+  for (let index = 0; index < value.length; index++) {
+    const property = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!property || !("value" in property) || !property.enumerable) throw new Error("不是列表");
+  }
+  return value;
 }
 
 function text(value: unknown, max: number): string {
@@ -97,26 +113,27 @@ export function projectDesktopTaskResult(value: unknown): DesktopTaskResult {
   const event = count(given.event);
   const duplicate = given.duplicate;
   if (typeof duplicate !== "boolean") throw new Error("duplicate 不对");
-  const routed = given.routed;
-  if (!Array.isArray(routed) || routed.length > DESKTOP_TASK_ROUTED_MAX) throw new Error("routed 不对");
+  const routed = list(given.routed, DESKTOP_TASK_ROUTED_MAX);
   return { event, duplicate, routed: routed.map((name) => text(name, 200)) };
 }
 
 /** The entry list the new-task panel offers; only the fields a chooser needs survive the bridge. */
 export function projectDesktopTaskEntries(value: unknown): DesktopTaskEntries {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("不是对象");
-  const entries = (value as Record<string, unknown>).entries;
-  if (!Array.isArray(entries) || entries.length > DESKTOP_TASK_ENTRIES_MAX) throw new Error("入口列表不对");
+  const entries = list((value as Record<string, unknown>).entries, DESKTOP_TASK_ENTRIES_MAX);
   return {
     entries: entries.map((entry) => {
       if (typeof entry !== "object" || entry === null || Array.isArray(entry)) throw new Error("入口不对");
       const given = entry as Record<string, unknown>;
-      const types = given.types;
-      if (!Array.isArray(types) || !types.length || types.length > DESKTOP_TASK_TYPES_MAX)
-        throw new Error("入口类型不对");
+      const types = list(given.types, DESKTOP_TASK_TYPES_MAX);
+      if (!types.length) throw new Error("入口类型不对");
       return {
         name: text(given.name, 200),
-        types: types.map(taskType),
+        types: types.map((type) => {
+          if (typeof type !== "string" || !DESKTOP_TASK_ENTRY_TYPE_PATTERN.test(type))
+            throw new Error("不是事件类型模式");
+          return type;
+        }),
         to: text(given.to, 200),
       };
     }),
@@ -145,8 +162,7 @@ export function parseDesktopTaskCreateResponse(value: unknown): DesktopTaskCreat
   if (peekOk(value) === true) {
     const accepted = record(value, ["version", "ok", "result"]);
     const result = record(accepted.result, ["event", "duplicate", "routed"]);
-    const routed = result.routed;
-    if (!Array.isArray(routed) || routed.length > DESKTOP_TASK_ROUTED_MAX) throw new Error("routed 不对");
+    const routed = list(result.routed, DESKTOP_TASK_ROUTED_MAX);
     if (typeof result.duplicate !== "boolean") throw new Error("duplicate 不对");
     return {
       version: DESKTOP_TASK_VERSION,
@@ -173,7 +189,10 @@ export function parseDesktopTaskCreateResponse(value: unknown): DesktopTaskCreat
 export function parseDesktopTaskEntriesResponse(value: unknown): DesktopTaskEntriesResponse {
   if (peekOk(value) === true) {
     const accepted = record(value, ["version", "ok", "data"]);
-    const data = projectDesktopTaskEntries(accepted.data);
+    const source = record(accepted.data, ["entries"]);
+    const entries = list(source.entries, DESKTOP_TASK_ENTRIES_MAX);
+    for (const entry of entries) record(entry, ["name", "types", "to"]);
+    const data = projectDesktopTaskEntries(source);
     // Size is checked on the projected copy, so unknown source fields are never evaluated here.
     if (JSON.stringify(data).length > DESKTOP_TASK_RESPONSE_MAX_BYTES) throw new Error("响应过大");
     return { version: DESKTOP_TASK_VERSION, ok: true, data };

@@ -11,6 +11,44 @@ import {
   projectDesktopTaskResult,
 } from "../../host/desktop-task-contract.ts";
 
+test("all task response and projected arrays reject getters and non-dense data", () => {
+  for (const field of ["entries", "types", "routed"] as const) {
+    const item =
+      field === "entries" ? { name: "入口", types: ["task.*"], to: "a" } : field === "types" ? "task.*" : "入口";
+    let reads = 0;
+    const accessor = [item];
+    Object.defineProperty(accessor, "0", {
+      enumerable: true,
+      get() {
+        reads++;
+        return item;
+      },
+    });
+    const custom = [item];
+    Object.setPrototypeOf(custom, Object.create(Array.prototype));
+    for (const array of [
+      accessor,
+      new Array(1),
+      Object.assign([item], { extra: 1 }),
+      Object.assign([item], { [Symbol("extra")]: 1 }),
+      custom,
+    ]) {
+      if (field === "routed") {
+        const result = { event: 1, duplicate: false, routed: array };
+        assert.throws(() => parseDesktopTaskCreateResponse({ version: 2, ok: true, result }));
+        assert.equal(reads, 0);
+        assert.throws(() => projectDesktopTaskResult(result));
+      } else {
+        const data = { entries: field === "entries" ? array : [{ name: "入口", types: array, to: "a" }] };
+        assert.throws(() => parseDesktopTaskEntriesResponse({ version: 2, ok: true, data }));
+        assert.equal(reads, 0);
+        assert.throws(() => projectDesktopTaskEntries(data));
+      }
+      assert.equal(reads, 0);
+    }
+  }
+});
+
 test("input validation mirrors the hub door's limits", () => {
   assert.deepEqual(parseDesktopTaskInput({ type: "task.dev", summary: "修复登录", detail: "" }), {
     type: "task.dev",
@@ -21,6 +59,8 @@ test("input validation mirrors the hub door's limits", () => {
     null,
     { type: "task.dev", summary: "x" }, // missing detail
     { type: "Task", summary: "x", detail: "" }, // uppercase type
+    { type: "task.*", summary: "x", detail: "" },
+    { type: "a".repeat(65), summary: "x", detail: "" },
     { type: "task.dev", summary: "", detail: "" }, // empty summary
     { type: "task.dev", summary: "  ", detail: "" }, // blank summary
     { type: "task.dev", summary: "标".repeat(201), detail: "" }, // over 200 chars
@@ -96,7 +136,7 @@ test("entry projection keeps only what a chooser needs", () => {
 test("create responses round-trip and fixed messages are verbatim", () => {
   // The kernel's ingest ack carries the event id as a number; a string here would be refused.
   const ok = desktopTaskCreateOf({
-    version: 1,
+    version: 2,
     ok: true,
     result: projectDesktopTaskResult({ event: 3, duplicate: false, routed: [] }),
   });
@@ -104,14 +144,14 @@ test("create responses round-trip and fixed messages are verbatim", () => {
   if (!okAgain.ok) throw new Error("expected ok");
   assert.equal(okAgain.result.event, 3);
   for (const code of ["unavailable", "no-hub", "error"] as const) {
-    const fixed = desktopTaskCreateOf({ version: 1, ok: false, error: { code, message: DESKTOP_TASK_MESSAGES[code] } });
+    const fixed = desktopTaskCreateOf({ version: 2, ok: false, error: { code, message: DESKTOP_TASK_MESSAGES[code] } });
     const parsed = parseDesktopTaskCreateResponse(JSON.parse(JSON.stringify(fixed)));
     if (parsed.ok) throw new Error("expected refusal");
     assert.equal(parsed.error.code, code);
   }
   // invalid is the one code whose message comes from the hub's own door text.
   const invalid = desktopTaskCreateOf({
-    version: 1,
+    version: 2,
     ok: false,
     error: { code: "invalid", message: "没有任务入口接 task.dev，先在入口设置里加一个" },
   });
@@ -121,21 +161,21 @@ test("create responses round-trip and fixed messages are verbatim", () => {
 
 test("forged messages, versions and unknown fields are rejected", () => {
   for (const poison of [
-    { version: 1, ok: false, error: { code: "error", message: "自造文案" } },
-    { version: 2, ok: false, error: { code: "error", message: DESKTOP_TASK_MESSAGES.error } },
-    { version: 1, ok: false, error: { code: "strange", message: DESKTOP_TASK_MESSAGES.error } },
-    { version: 1, ok: true, result: { event: 3, duplicate: false, routed: [], extra: 1 } },
-    { version: 1, ok: true, result: { event: 3, duplicate: false } },
-    { version: 1, ok: true, result: { event: "e", duplicate: false, routed: [] } },
-    { version: 1, ok: true, result: { event: -1, duplicate: false, routed: [] } },
-    { version: 1, ok: false, error: { code: "error", message: DESKTOP_TASK_MESSAGES.error }, extra: 1 },
+    { version: 2, ok: false, error: { code: "error", message: "自造文案" } },
+    { version: 99, ok: false, error: { code: "error", message: DESKTOP_TASK_MESSAGES.error } },
+    { version: 2, ok: false, error: { code: "strange", message: DESKTOP_TASK_MESSAGES.error } },
+    { version: 2, ok: true, result: { event: 3, duplicate: false, routed: [], extra: 1 } },
+    { version: 2, ok: true, result: { event: 3, duplicate: false } },
+    { version: 2, ok: true, result: { event: "e", duplicate: false, routed: [] } },
+    { version: 2, ok: true, result: { event: -1, duplicate: false, routed: [] } },
+    { version: 2, ok: false, error: { code: "error", message: DESKTOP_TASK_MESSAGES.error }, extra: 1 },
   ]) {
     assert.throws(() => parseDesktopTaskCreateResponse(poison));
   }
   for (const poison of [
-    { version: 1, ok: false, error: { code: "invalid", message: "x" } }, // entries never fail invalid
-    { version: 1, ok: false, error: { code: "unavailable", message: "自造" } },
-    { version: 1, ok: true, data: { entries: "x" } },
+    { version: 2, ok: false, error: { code: "invalid", message: "x" } }, // entries never fail invalid
+    { version: 2, ok: false, error: { code: "unavailable", message: "自造" } },
+    { version: 2, ok: true, data: { entries: "x" } },
   ]) {
     assert.throws(() => parseDesktopTaskEntriesResponse(poison));
   }
@@ -143,7 +183,7 @@ test("forged messages, versions and unknown fields are rejected", () => {
 
 test("entries responses round-trip through both constructors", () => {
   const ok = desktopTaskEntriesOf({
-    version: 1,
+    version: 2,
     ok: true,
     data: projectDesktopTaskEntries({ entries: [{ name: "开发任务", types: ["task.dev"], to: "claude" }] }),
   });
@@ -152,7 +192,7 @@ test("entries responses round-trip through both constructors", () => {
   assert.equal(okAgain.data.entries.length, 1);
   for (const code of ["unavailable", "no-hub", "error"] as const) {
     const fixed = desktopTaskEntriesOf({
-      version: 1,
+      version: 2,
       ok: false,
       error: { code, message: DESKTOP_TASK_MESSAGES[code] },
     });

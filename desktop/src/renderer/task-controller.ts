@@ -1,6 +1,7 @@
 import {
   DESKTOP_TASK_MESSAGES,
   parseDesktopTaskCreateResponse,
+  parseDesktopTaskInput,
   parseDesktopTaskEntriesResponse,
   type DesktopTaskCreateResponse,
   type DesktopTaskEntriesResponse,
@@ -96,6 +97,16 @@ export function createRendererTask(bridge: TaskBridge, onChange: () => void) {
     submitTask(input: DesktopTaskInput): void {
       if (submitFlight) return;
       if (submit.kind === "done") return;
+      try {
+        input = parseDesktopTaskInput(input);
+      } catch {
+        submit = Object.freeze({
+          kind: "failed",
+          message: "请选择或填写具体事件类型，并填写合规标题；不能提交通配符。",
+        });
+        notify();
+        return;
+      }
       submitFlight = true;
       submit = Object.freeze({ kind: "busy" });
       notify();

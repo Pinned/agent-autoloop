@@ -4,8 +4,10 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { RULES_FILE } from "./home.ts";
 import * as hub from "./runtime.ts";
-import { takesLocal, writeLocalEntries, writeSection, type Entry, type Section } from "./rules-io.ts";
+import { writeLocalEntries, writeSection, type Entry, type Section } from "./rules-io.ts";
+import { checkedLocalEntry as checkedEntry, createLocalEntriesReader } from "./local-entries.ts";
 import { AuthError, Conflict, InputError, NotFound } from "../kernel/errors.ts";
 import { EVENT_TYPE } from "../protocol/validate.ts";
 import { RulesError, TYPE_PATTERN } from "../protocol/rules.ts";
@@ -51,60 +53,17 @@ function requireOwner(request: Request) {
   return name;
 }
 
-/** What the settings tab shows: the local rules as entries, the agents an entry may point at, and where the log is. */
+// Original declarations are checked against the same applied configuration the hub uses.
+const readLocalEntries = createLocalEntriesReader({
+  read: () => readFileSync(RULES_FILE, "utf8"),
+  parse: hub.parseRules,
+  applied: () => hub.rules,
+});
+
 function localEntries() {
-  const entries = hub.rules.rules.filter(takesLocal).map((rule) => {
-    const when = rule.when as { source?: string; types?: string[] };
-    return {
-      name: rule.name,
-      types: when.source === "local" ? (when.types ?? []) : [],
-      to: rule.to,
-      cwd: rule.cwd,
-      ...(rule.prompt && { prompt: rule.prompt }),
-      ...(rule.skill && { skill: rule.skill }),
-      ...(rule.parallel && { parallel: rule.parallel }),
-    };
-  });
+  const entries = readLocalEntries();
   const agents = Object.entries(hub.rules.agents).map(([id, agent]) => ({ id, name: agent.name, use: agent.use }));
   return { entries, agents, seq: hub.getView().seq };
-}
-
-/** An entry as the page sends it, checked the way the whole file will be checked, so a misspelt word is caught here. */
-function checkedEntry(given: unknown): Entry {
-  if (typeof given !== "object" || given === null || Array.isArray(given)) throw new InputError("每个入口要是一个对象");
-  const entry = given as Record<string, unknown>;
-  for (const name of Object.keys(entry))
-    if (!["name", "types", "to", "cwd", "prompt", "skill", "parallel"].includes(name))
-      throw new InputError(`入口有不认识的字段 ${name}`);
-  const text = (name: string, optional = false) => {
-    const value = entry[name];
-    if (value === undefined || value === "") {
-      if (optional) return undefined;
-      throw new InputError(`入口缺少 ${name}`);
-    }
-    if (typeof value !== "string" || !value.trim()) throw new InputError(`入口的 ${name} 要是文字`);
-    return value.trim();
-  };
-  const name = text("name")!;
-  const types = entry.types;
-  if (
-    !Array.isArray(types) ||
-    !types.length ||
-    !types.every((type) => typeof type === "string" && TYPE_PATTERN.test(type))
-  )
-    throw new InputError(`入口「${name}」的 types 要是事件类型的列表，只能用小写字母、数字和 . _ -，可用 x.* 通配`);
-  const parallel = entry.parallel;
-  if (parallel !== undefined && (!Number.isInteger(parallel) || (parallel as number) <= 0))
-    throw new InputError(`入口「${name}」的 parallel 要是正整数`);
-  return {
-    name,
-    types,
-    to: text("to")!,
-    cwd: text("cwd")!,
-    ...(text("prompt", true) && { prompt: text("prompt", true) }),
-    ...(text("skill", true) && { skill: text("skill", true) }),
-    ...(parallel !== undefined && { parallel: parallel as number }),
-  };
 }
 
 // ---- The sections of rules.json, each gathered from what the page could have shown ----

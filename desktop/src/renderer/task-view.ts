@@ -1,4 +1,4 @@
-import { DESKTOP_TASK_MESSAGES } from "../../../host/desktop-task-contract.ts";
+import { DESKTOP_TASK_MESSAGES, DESKTOP_TASK_TYPE_PATTERN } from "../../../host/desktop-task-contract.ts";
 import type { DesktopTaskInput } from "../../../host/desktop-task-contract.ts";
 import type { createRendererTask } from "./task-controller.ts";
 
@@ -34,6 +34,16 @@ export function mountTaskDialog(
   const typeSelect = document.createElement("select");
   typeSelect.id = "task-type";
   typeField.append(typeLabel, typeSelect);
+  const concreteInput = document.createElement("input");
+  concreteInput.id = "task-concrete-type";
+  concreteInput.placeholder = "填写具体类型，例如 task.release；不自动推测后缀";
+  typeField.append(concreteInput);
+  const needsConcrete = () => typeSelect.value.includes("*");
+  function updateConcrete() {
+    concreteInput.hidden = !needsConcrete();
+    concreteInput.required = needsConcrete();
+  }
+  typeSelect.addEventListener("change", updateConcrete);
   const summaryField = document.createElement("label");
   summaryField.className = "setup-field";
   const summaryLabel = document.createElement("span");
@@ -80,6 +90,7 @@ export function mountTaskDialog(
   function fillEntries() {
     const state = controller.entriesState;
     const entries = state.kind === "ready" ? state.entries : [];
+    const selected = entrySelect.value;
     entrySelect.replaceChildren(
       ...entries.map((entry) => {
         const option = document.createElement("option");
@@ -88,6 +99,7 @@ export function mountTaskDialog(
         return option;
       }),
     );
+    if (entries.some((entry) => entry.name === selected)) entrySelect.value = selected;
     fillTypes();
     const usable = state.kind === "ready" && entries.length > 0;
     entrySelect.disabled = !usable;
@@ -102,6 +114,7 @@ export function mountTaskDialog(
         ? (state.entries.find((item) => item.name === entrySelect.value) ?? state.entries[0])
         : undefined;
     const types = entry?.types ?? [];
+    const selected = typeSelect.value;
     typeSelect.replaceChildren(
       ...types.map((type) => {
         const option = document.createElement("option");
@@ -110,7 +123,9 @@ export function mountTaskDialog(
         return option;
       }),
     );
-    typeField.hidden = types.length <= 1;
+    if (types.includes(selected)) typeSelect.value = selected;
+    typeField.hidden = types.length <= 1 && !types.some((type) => type.includes("*"));
+    updateConcrete();
   }
   entrySelect.addEventListener("change", fillTypes);
   function update() {
@@ -161,7 +176,15 @@ export function mountTaskDialog(
     const state = controller.entriesState;
     if (state.kind !== "ready" || !state.entries.length) return;
     const entry = state.entries.find((item) => item.name === entrySelect.value) ?? state.entries[0];
-    const type = entry.types.includes(typeSelect.value) ? typeSelect.value : entry.types[0];
+    const pattern = entry.types.includes(typeSelect.value) ? typeSelect.value : entry.types[0];
+    const type = pattern.includes("*") ? concreteInput.value.trim() : pattern;
+    const matches =
+      pattern === "*" || (pattern.endsWith(".*") ? type.startsWith(pattern.slice(0, -1)) : type === pattern);
+    if (!DESKTOP_TASK_TYPE_PATTERN.test(type) || !matches) {
+      error.textContent = "请填写符合所选模式的具体事件类型；不能提交通配符。";
+      error.hidden = false;
+      return;
+    }
     const input: DesktopTaskInput = { type, summary: summaryInput.value, detail: detailInput.value };
     controller.submitTask(input);
   });
@@ -171,6 +194,7 @@ export function mountTaskDialog(
     controller.reset();
     summaryInput.value = "";
     detailInput.value = "";
+    concreteInput.value = "";
   });
   dialog.addEventListener("cancel", (event) => {
     if (controller.submitState.kind === "busy") event.preventDefault();
