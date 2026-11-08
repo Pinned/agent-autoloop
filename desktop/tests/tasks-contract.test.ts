@@ -1,3 +1,5 @@
+// Failure modes: hub timestamps silently disappear through a mismatched field name;
+// unsafe fields or oversized display data cross the main-to-renderer boundary.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
@@ -164,17 +166,17 @@ test("strict shape checking refuses extra fields, wrong shapes and over-limit li
   assert.equal(flag.state.snapshot.hasMore, false);
 });
 
-test("the projection maps the hub's snake_case run and drops every link", () => {
+test("the projection preserves the hub's camelCase timestamps and drops every link", () => {
   const hubRun = {
     id: 9,
     rule: "发布规则",
     agent: "codex",
     state: "failed",
     attempts: 3,
-    created_at: "2026-11-02T01:02:03.000Z",
-    claimed_at: null,
-    finished_at: null,
-    not_before: "2026-11-03T00:00:00.000Z",
+    createdAt: "2026-11-02T01:02:03.000Z",
+    claimedAt: "2026-11-02T01:03:00.000Z",
+    finishedAt: "2026-11-02T01:04:00.000Z",
+    notBefore: "2026-11-03T00:00:00.000Z",
     summary: "半路失败",
     error: "agent 退出",
     stopping: true,
@@ -200,7 +202,8 @@ test("the projection maps the hub's snake_case run and drops every link", () => 
   });
   assert.equal(snapshot.runs[0].id, 9);
   assert.equal(snapshot.runs[0].createdAt, "2026-11-02T01:02:03.000Z");
-  assert.equal(snapshot.runs[0].claimedAt, null);
+  assert.equal(snapshot.runs[0].claimedAt, "2026-11-02T01:03:00.000Z");
+  assert.equal(snapshot.runs[0].finishedAt, "2026-11-02T01:04:00.000Z");
   assert.equal(snapshot.runs[0].notBefore, "2026-11-03T00:00:00.000Z");
   assert.equal(snapshot.runs[0].stopping, true);
   assert.deepEqual(snapshot.runs[0].events, [
@@ -215,6 +218,28 @@ test("the projection maps the hub's snake_case run and drops every link", () => 
   // The projected snapshot is exactly the shape the renderer's check accepts.
   const answer = desktopTasksOf({ kind: "ready", snapshot });
   assert.equal(answer.state.kind, "ready");
+});
+
+test("timestamp projection keeps nulls and refuses to guess snake_case aliases", () => {
+  const snapshot = projectDesktopTasksSnapshot({
+    now: "t",
+    timezone: "Z",
+    runs: [
+      viewRun({
+        createdAt: null,
+        claimedAt: null,
+        finishedAt: null,
+        notBefore: null,
+        created_at: "wrong-created",
+        claimed_at: "wrong-claimed",
+        finished_at: "wrong-finished",
+        not_before: "wrong-delay",
+      }),
+    ],
+  });
+  const run = snapshot.runs[0];
+  assert.deepEqual([run.createdAt, run.claimedAt, run.finishedAt, run.notBefore], [null, null, null, null]);
+  assert.doesNotThrow(() => desktopTasksOf({ kind: "ready", snapshot }));
 });
 
 test("the projection caps runs and events and derives hasMore honestly", () => {
