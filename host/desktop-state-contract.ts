@@ -2,9 +2,24 @@
 // No Node or business-runtime imports. Every renderer-facing string lives in the frozen tables below.
 // The snapshot is a display-safe projection of the hub's GET /v1/state: no keys, no paths, and
 // never a card link (those embed credentials); main projects, the renderer strictly re-validates.
-export const DESKTOP_TODAY_VERSION = 1 as const;
-export const DESKTOP_TODAY_RESPONSE_MAX_BYTES = 96 * 1024;
+export const DESKTOP_TODAY_VERSION = 2 as const;
+// Enough for 40 full protocol cards, 12 run summaries, and worst-case JSON escaping.
+// Every Unicode code point consumes at most 6 serialized bytes (including control/lone-surrogate escapes).
+// 40 * (200 + 4000 + 200) * 6 + 12 * (200 + 200 + 2000) * 6 < 1.22 MiB;
+// 1.5 MiB leaves ample bounded space for identifiers, metadata, and JSON structure.
+export const DESKTOP_TODAY_RESPONSE_MAX_BYTES = 1536 * 1024;
+// Each card kind gets its own allowance; runs are samples of the same hub state, not totals.
 export const DESKTOP_TODAY_CARDS_MAX = 20 as const;
+export const DESKTOP_TODAY_RUNS_MAX = 6 as const;
+export type DesktopTodayRunState = "queued" | "claimed" | "unknown" | "done";
+export type DesktopTodayRun = {
+  id: number;
+  rule: string;
+  agent: string;
+  state: DesktopTodayRunState;
+  summary: string;
+};
+export type DesktopTodaySpending = { rounds: number; cost: number; missingCost: number };
 export type DesktopTodayCardKind = "ask" | "notice";
 export type DesktopTodayCard = {
   id: number;
@@ -23,18 +38,26 @@ export type DesktopTodayTotals = {
   attention: number;
 };
 export type DesktopTodaySnapshot = {
-  version: 1;
+  version: 2;
   now: string;
   timezone: string;
   totals: DesktopTodayTotals;
   cards: DesktopTodayCard[];
+  askTotal: number;
+  noticeTotal: number;
+  spendingToday: DesktopTodaySpending;
+  activeRuns: DesktopTodayRun[];
+  recentRuns: DesktopTodayRun[];
+  activeTruncated: boolean;
+  recentTruncated: boolean;
+  historyTruncated: boolean;
 };
 export type DesktopTodayState =
   | { kind: "unavailable"; message: string }
   | { kind: "no-hub"; message: string }
   | { kind: "error"; message: string }
   | { kind: "ready"; snapshot: DesktopTodaySnapshot };
-export type DesktopTodayResponse = { version: 1; ok: true; state: DesktopTodayState };
+export type DesktopTodayResponse = { version: 2; ok: true; state: DesktopTodayState };
 
 export const DESKTOP_TODAY_MESSAGES = Object.freeze({
   unavailable: "本机运行服务未运行，暂无今天数据。可前往执行机页启动后再刷新。",
@@ -44,6 +67,8 @@ export const DESKTOP_TODAY_MESSAGES = Object.freeze({
 export type DesktopTodayMessageCode = keyof typeof DESKTOP_TODAY_MESSAGES;
 
 const cardKinds: readonly DesktopTodayCardKind[] = ["ask", "notice"];
+const activeStates = ["queued", "claimed", "unknown"] as const;
+const hubRunStates = [...activeStates, "done", "nothing", "failed", "cancelled"] as const;
 const countFields: readonly string[] = ["running", "queued", "retrying", "unknown", "done", "doneToday", "attention"];
 function invalid(): never {
   throw new Error("invalid-request");
@@ -77,6 +102,15 @@ function text(value: unknown, maximum: number): string {
   return value;
 }
 
+// Card protocol limits count Unicode code points, unlike the task display byte limits.
+function protocolText(value: unknown, maximum: number): string {
+  if (typeof value !== "string") invalid();
+  let length = 0;
+  for (const character of value) {
+    if (++length > maximum) invalid();
+  }
+  return value;
+}
 function parseCard(value: unknown): DesktopTodayCard {
   const item = record(value, ["id", "kind", "title", "text", "by"]);
   const id = count(item.id);
@@ -84,28 +118,97 @@ function parseCard(value: unknown): DesktopTodayCard {
   return {
     id,
     kind: oneOf(item.kind, cardKinds),
-    title: text(item.title, 400),
-    text: text(item.text, 4000),
+    title: protocolText(item.title, 200),
+    text: protocolText(item.text, 4000),
     by: item.by === null ? null : text(item.by, 200),
   };
 }
 
+function boolean(value: unknown): boolean {
+  if (typeof value !== "boolean") invalid();
+  return value;
+}
+
+// Hub records are supersets. Read only own data fields, never evaluate accessors or dropped fields.
+function displayRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Object.getPrototypeOf(value) !== Object.prototype) invalid();
+  return value as Record<string, unknown>;
+}
+function field(value: Record<string, unknown>, name: string): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(value, name);
+  if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) invalid();
+  return descriptor.value;
+}
+function list(value: unknown, maximum: number): unknown[] {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype || value.length > maximum) invalid();
+  if (Reflect.ownKeys(value).length !== value.length + 1) invalid();
+  for (let index = 0; index < value.length; index++) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) invalid();
+  }
+  return value;
+}
+function parseSpending(value: unknown): DesktopTodaySpending {
+  const item = record(value, ["rounds", "cost", "missingCost"]);
+  const rounds = count(item.rounds);
+  const missingCost = count(item.missingCost);
+  if (typeof item.cost !== "number" || !Number.isFinite(item.cost) || item.cost < 0 || missingCost > rounds) invalid();
+  return { rounds, cost: item.cost, missingCost };
+}
+function parseRun(value: unknown, states: readonly DesktopTodayRunState[]): DesktopTodayRun {
+  const item = record(value, ["id", "rule", "agent", "state", "summary"]);
+  return {
+    id: count(item.id),
+    rule: text(item.rule, 200),
+    agent: text(item.agent, 200),
+    state: oneOf(item.state, states),
+    summary: text(item.summary, 2000),
+  };
+}
 function parseSnapshot(value: unknown): DesktopTodaySnapshot {
-  const item = record(value, ["version", "now", "timezone", "totals", "cards"]);
+  const item = record(value, [
+    "version",
+    "now",
+    "timezone",
+    "totals",
+    "cards",
+    "askTotal",
+    "noticeTotal",
+    "spendingToday",
+    "activeRuns",
+    "recentRuns",
+    "activeTruncated",
+    "recentTruncated",
+    "historyTruncated",
+  ]);
   if (item.version !== DESKTOP_TODAY_VERSION) invalid();
   const totals = record(item.totals, countFields);
-  const cards = item.cards;
-  if (!Array.isArray(cards) || cards.length > DESKTOP_TODAY_CARDS_MAX) invalid();
+  const cards = list(item.cards, DESKTOP_TODAY_CARDS_MAX * 2).map(parseCard);
+  const askTotal = count(item.askTotal);
+  const noticeTotal = count(item.noticeTotal);
+  for (const kind of cardKinds) {
+    const shown = cards.filter((card) => card.kind === kind).length;
+    const total = kind === "ask" ? askTotal : noticeTotal;
+    if (shown !== Math.min(total, DESKTOP_TODAY_CARDS_MAX)) invalid();
+  }
   const snapshot: DesktopTodaySnapshot = {
-    version: 1,
+    version: 2,
     now: text(item.now, 64),
     timezone: text(item.timezone, 64),
     totals: Object.fromEntries(
       countFields.map((field) => [field, count(totals[field])]),
     ) as unknown as DesktopTodayTotals,
-    cards: cards.map(parseCard),
+    cards,
+    askTotal,
+    noticeTotal,
+    spendingToday: parseSpending(item.spendingToday),
+    activeRuns: list(item.activeRuns, DESKTOP_TODAY_RUNS_MAX).map((run) => parseRun(run, activeStates)),
+    recentRuns: list(item.recentRuns, DESKTOP_TODAY_RUNS_MAX).map((run) => parseRun(run, ["done"])),
+    activeTruncated: boolean(item.activeTruncated),
+    recentTruncated: boolean(item.recentTruncated),
+    historyTruncated: boolean(item.historyTruncated),
   };
-  withinBytes(snapshot, DESKTOP_TODAY_RESPONSE_MAX_BYTES);
+  withinBytes({ version: 2, ok: true, state: { kind: "ready", snapshot } }, DESKTOP_TODAY_RESPONSE_MAX_BYTES);
   return snapshot;
 }
 
@@ -117,12 +220,12 @@ export function parseDesktopTodayResponse(value: unknown): DesktopTodayResponse 
   const kind = Object.getOwnPropertyDescriptor(item.state, "kind")?.value;
   if (kind === "ready") {
     const ready = record(item.state, ["kind", "snapshot"]);
-    return { version: 1, ok: true, state: { kind: "ready", snapshot: parseSnapshot(ready.snapshot) } };
+    return { version: 2, ok: true, state: { kind: "ready", snapshot: parseSnapshot(ready.snapshot) } };
   }
   const messageCode = oneOf(kind, ["unavailable", "no-hub", "error"] as const);
   const failed = record(item.state, ["kind", "message"]);
   if (failed.message !== DESKTOP_TODAY_MESSAGES[messageCode]) invalid();
-  return { version: 1, ok: true, state: { kind: messageCode, message: failed.message } };
+  return { version: 2, ok: true, state: { kind: messageCode, message: failed.message } };
 }
 
 /**
@@ -131,35 +234,81 @@ export function parseDesktopTodayResponse(value: unknown): DesktopTodayResponse 
  * A card link is deliberately never projected — it embeds a credential.
  */
 export function projectDesktopTodaySnapshot(value: unknown): DesktopTodaySnapshot {
-  if (!value || typeof value !== "object" || Object.getPrototypeOf(value) !== Object.prototype) invalid();
-  const source = value as Record<string, unknown>;
-  const totals = source.totals;
-  if (!totals || typeof totals !== "object") invalid();
-  const counted = totals as Record<string, unknown>;
-  const cards = source.cards;
-  if (!Array.isArray(cards)) invalid();
-  // Hub cards carry many more fields than the desktop view; select before validating.
-  const selected = cards.slice(0, DESKTOP_TODAY_CARDS_MAX).map((card) => {
-    if (!card || typeof card !== "object") invalid();
-    const view = card as Record<string, unknown>;
-    return { id: view.id, kind: view.kind, title: view.title, text: view.text, by: view.by };
+  const source = displayRecord(value);
+  const counted = displayRecord(field(source, "totals"));
+  const today = displayRecord(field(displayRecord(field(source, "spending")), "today"));
+  const cards = list(field(source, "cards"), 1_000_000_000);
+  const runs = list(field(source, "runs"), 1_000_000_000);
+  const hasMore = boolean(field(source, "hasMore"));
+  const selectedCards: Record<DesktopTodayCardKind, DesktopTodayCard[]> = { ask: [], notice: [] };
+  const cardTotals: Record<DesktopTodayCardKind, number> = { ask: 0, notice: 0 };
+  for (const card of cards) {
+    const view = displayRecord(card);
+    const kind = oneOf(field(view, "kind"), cardKinds);
+    cardTotals[kind]++;
+    if (selectedCards[kind].length < DESKTOP_TODAY_CARDS_MAX) {
+      selectedCards[kind].push(
+        parseCard({
+          id: field(view, "id"),
+          kind,
+          title: field(view, "title"),
+          text: field(view, "text"),
+          by: field(view, "by"),
+        }),
+      );
+    }
+  }
+  const activeRuns: DesktopTodayRun[] = [];
+  const recentRuns: DesktopTodayRun[] = [];
+  let activeCount = 0;
+  let recentCount = 0;
+  for (const run of runs) {
+    const view = displayRecord(run);
+    const state = oneOf(field(view, "state"), hubRunStates);
+    if (state === "nothing" || state === "failed" || state === "cancelled") continue;
+    const selected = state === "done" ? recentRuns : activeRuns;
+    if (state === "done") recentCount++;
+    else activeCount++;
+    if (selected.length < DESKTOP_TODAY_RUNS_MAX) {
+      selected.push(
+        parseRun(
+          {
+            id: field(view, "id"),
+            rule: field(view, "rule"),
+            agent: field(view, "agent"),
+            state,
+            summary: field(view, "summary"),
+          },
+          state === "done" ? ["done"] : activeStates,
+        ),
+      );
+    }
+  }
+  return parseSnapshot({
+    version: 2,
+    now: field(source, "now"),
+    timezone: field(source, "timezone"),
+    totals: Object.fromEntries(countFields.map((name) => [name, field(counted, name)])),
+    cards: [...selectedCards.ask, ...selectedCards.notice],
+    askTotal: cardTotals.ask,
+    noticeTotal: cardTotals.notice,
+    spendingToday: {
+      rounds: field(today, "rounds"),
+      cost: field(today, "cost"),
+      missingCost: field(today, "missingCost"),
+    },
+    activeRuns,
+    recentRuns,
+    activeTruncated: activeCount > DESKTOP_TODAY_RUNS_MAX,
+    recentTruncated: recentCount > DESKTOP_TODAY_RUNS_MAX,
+    // Older history may contain any terminal state; it does not imply more done runs.
+    historyTruncated: hasMore,
   });
-  const snapshot: DesktopTodaySnapshot = {
-    version: 1,
-    now: text(source.now, 64),
-    timezone: text(source.timezone, 64),
-    totals: Object.fromEntries(
-      countFields.map((field) => [field, count(counted[field])]),
-    ) as unknown as DesktopTodayTotals,
-    cards: selected.map(parseCard),
-  };
-  withinBytes(snapshot, DESKTOP_TODAY_RESPONSE_MAX_BYTES);
-  return snapshot;
 }
 
 /** Main-side construction with the same validation the renderer will apply on receipt. */
 export function desktopTodayOf(state: DesktopTodayState): DesktopTodayResponse {
   if (state.kind === "ready")
-    return { version: 1, ok: true, state: { kind: "ready", snapshot: parseSnapshot(state.snapshot) } };
-  return parseDesktopTodayResponse({ version: 1, ok: true, state });
+    return { version: 2, ok: true, state: { kind: "ready", snapshot: parseSnapshot(state.snapshot) } };
+  return parseDesktopTodayResponse({ version: 2, ok: true, state });
 }

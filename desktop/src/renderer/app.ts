@@ -1,4 +1,5 @@
 import type { DesktopBridge, Theme, ThemeState } from "../policy.ts";
+import { desktopRuntimeStatusText } from "../../../host/desktop-run-contract.ts";
 import { createRendererSetup } from "./setup-controller.ts";
 import { mountSetupView } from "./setup-view.ts";
 import { createRendererToday } from "./today-controller.ts";
@@ -17,46 +18,11 @@ declare global {
   }
 }
 const pages = [
-  {
-    id: "today",
-    title: "今天",
-    description: "把需要你关心的进展和决策放在一起。",
-    empty: "还没有今天数据",
-    detail: "本机中台运行中会展示真实进展与待决策卡片；未运行时给出固定提示，不展示模拟数据。",
-    icon: "today",
-  },
-  {
-    id: "tasks",
-    title: "任务",
-    description: "查看工作的来龙去脉，知道下一步由谁推进。",
-    empty: "任务服务尚未接入",
-    detail: "这里暂时不能创建或查询任务。接入服务后，只展示真实任务及其执行记录。",
-    icon: "tasks",
-  },
-  {
-    id: "automation",
-    title: "自动化",
-    description: "让可信规则安排重复工作，把判断留给你。",
-    empty: "自动化服务尚未接入",
-    detail: "这里暂时不能配置或执行自动化规则，不会在后台模拟触发事件。",
-    icon: "automation",
-  },
-  {
-    id: "workers",
-    title: "执行机",
-    description: "了解哪些设备可以接活，以及它们的真实状态。",
-    empty: "远程执行机列表尚未接入",
-    detail: "远程执行机列表、任务分配数与心跳数据尚未接入；此处不显示模拟设备或示例数字。",
-    icon: "workers",
-  },
-  {
-    id: "settings",
-    title: "设置",
-    description: "调整桌面体验与本机角色配置，其他业务连接将在后续提供。",
-    empty: "",
-    detail: "",
-    icon: "settings",
-  },
+  { id: "today", title: "今天", description: "让 Agent 继续推进，只把需要你的事情带回来。", icon: "today" },
+  { id: "tasks", title: "任务", description: "查看工作的来龙去脉，知道下一步由谁推进。", icon: "tasks" },
+  { id: "automation", title: "自动化", description: "让可信规则安排重复工作，把判断留给你。", icon: "automation" },
+  { id: "workers", title: "执行机", description: "查看此电脑的运行状态，管理本机启动与停止。", icon: "workers" },
+  { id: "settings", title: "设置", description: "调整桌面体验与本机角色配置。", icon: "settings" },
 ];
 const paths: Record<string, string> = {
   today: "M4 5h16v15H4z M8 3v4 M16 3v4 M4 10h16",
@@ -90,6 +56,7 @@ const run = createRendererRun(
   window.desktop,
   () => ({ setupLocked: setup.state.kind === "unknown-locked", setupBusy: setup.busy }),
   () => {
+    updateRuntimeStatus();
     if (currentPage === "workers") runCard?.update();
     // A running local hub is the one moment today's data can change on its own.
     if (currentPage === "today" && run.state.kind === "ready" && run.state.snapshot.status === "running")
@@ -126,6 +93,21 @@ window.desktop.onNavigate((target) => {
   // Landing on today should show the card that just asked for a decision, not the last render.
   if (id === "today") today.refresh();
 });
+function updateRuntimeStatus() {
+  const status = document.querySelector<HTMLElement>("#runtime-status")!;
+  const role = document.querySelector<HTMLElement>("#runtime-role")!;
+  const state = run.state;
+  if (state.kind !== "ready") {
+    delete status.dataset.status;
+    status.textContent = state.kind === "loading" ? "正在读取本机状态" : state.message;
+    role.textContent = "";
+    return;
+  }
+  status.textContent = desktopRuntimeStatusText(state.snapshot);
+  status.dataset.status = state.snapshot.status;
+  role.textContent =
+    state.snapshot.role === "hub-worker" ? "中台＋本机执行机" : state.snapshot.role === "worker" ? "纯执行机" : "";
+}
 function openSetup() {
   if (!setupView) setupView = mountSetupView(main, setup, () => render(currentPage));
   setup.open();
@@ -163,11 +145,11 @@ function render(id: string, focus = true) {
     if (button.dataset.page === id) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   }
-  main.innerHTML = `<header class="page-head"><div class="eyebrow">AUTOLOOP / 工作空间</div><h1 id="page-title">${page.title}</h1><p>${page.description}</p></header>`;
+  main.innerHTML = `<header class="page-head"><div class="page-head-copy"><div class="eyebrow">WORKSPACE / COMMAND CENTER</div><h1 id="page-title">${page.title}</h1><p>${page.description}</p></div><div class="page-head-actions"></div></header>`;
   if (id === "settings") {
     main.insertAdjacentHTML(
       "beforeend",
-      `<section class="panel" aria-labelledby="appearance-title"><h2 id="appearance-title">桌面外观</h2><div class="setting-row"><div><label for="theme">主题</label><p>跟随系统，或固定为浅色、深色。</p></div><select id="theme"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></div></section><section class="panel"><h2>窗口与托盘</h2><p class="muted">关闭窗口只会收起到托盘。从托盘或应用菜单可恢复窗口；退出应用需要再次确认。</p></section><section class="pending"><h2>其他业务设置待接入</h2><p>Agent 登录、连接验证与凭据管理尚未开放。本机角色配置可通过上方入口保存。</p></section>`,
+      `<section class="panel" aria-labelledby="appearance-title"><h2 id="appearance-title">桌面外观</h2><div class="setting-row"><div><label for="theme">主题</label><p>跟随系统，或固定为浅色、深色。</p></div><select id="theme"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></div></section><section class="panel"><h2>窗口与托盘</h2><p class="muted">关闭窗口只会收起到托盘。从托盘或应用菜单可恢复窗口；退出应用需要再次确认。</p></section>`,
     );
     const select = document.querySelector<HTMLSelectElement>("#theme")!;
     select.value = theme.preference;
@@ -184,17 +166,20 @@ function render(id: string, focus = true) {
     });
   } else if (id === "today") {
     // Today shows real local-hub data or a fixed not-running line; never placeholder numbers.
-    const actions = document.createElement("div");
-    actions.className = "page-actions";
+    const actions = main.querySelector<HTMLElement>(".page-head-actions")!;
     const button = document.createElement("button");
     button.textContent = "＋ 新建任务";
     button.type = "button";
     button.addEventListener("click", openTaskDialog);
     actions.append(button);
-    main.querySelector(".page-head")!.after(actions);
     const host = document.createElement("div");
     main.append(host);
-    todayView = mountTodayView(host, today, () => render("workers"));
+    todayView = mountTodayView(
+      host,
+      today,
+      () => render("workers"),
+      () => render("tasks"),
+    );
     today.refresh();
   } else if (id === "automation") {
     // The hub's own entries, read and replaced whole; no mock rules and no background triggers.
@@ -206,23 +191,17 @@ function render(id: string, focus = true) {
     main.append(tasksPage.root);
     tasksPage.update();
     tasks.refresh();
-  } else {
-    main.insertAdjacentHTML(
-      "beforeend",
-      `<div class="notice"><span class="connection">待接入</span><span>当前没有业务数据，不代表任务数量为零或设备离线。</span></div><section class="empty"><div class="empty-icon">${icon(page.icon)}</div><h2>${page.empty}</h2><p>${page.detail}</p><span class="empty-foot">不展示演示任务；页面数据接入将在后续迭代提供</span></section>`,
-    );
   }
   if (id === "workers") {
-    // The local runtime card sits above the remote-worker placeholder; only real states, no mock devices.
     const host = document.createElement("div");
-    main.querySelector(".notice")!.after(host);
+    main.append(host);
     runCard = mountRunCard(host, run, openSetup, {
       setupBusy: () => setup.busy,
       setupLocked: () => setup.state.kind === "unknown-locked",
     });
     run.init();
   }
-  if (id === "today" || id === "settings") {
+  if (id === "settings") {
     const section = document.createElement("section");
     section.className = "panel setup-entry";
     const title = document.createElement("h2");
@@ -232,15 +211,13 @@ function render(id: string, focus = true) {
     description.textContent =
       setup.state.kind === "idle"
         ? "本机配置尚未检查。可配置为中台＋本机 worker，或纯 worker。"
-        : "查看本次会话的配置检查结果；这里只保存配置，不自动启动服务。";
+        : "配置此电脑的运行角色；保存配置后，可前往执行机页启动。";
     const button = document.createElement("button");
     button.textContent = "配置此电脑";
     button.type = "button";
     button.addEventListener("click", openSetup);
     section.append(title, description, button);
-    // On today the entry panel is secondary to the live data; on settings it stays up top.
-    if (id === "today") main.append(section);
-    else main.querySelector(".page-head")!.after(section);
+    main.querySelector(".page-head")!.after(section);
   }
   if (focus) main.focus();
 }
@@ -250,6 +227,7 @@ navigation.innerHTML = pages
 for (const button of navigation.querySelectorAll<HTMLButtonElement>("button"))
   button.addEventListener("click", () => render(button.dataset.page!));
 document.querySelector("#new-task")!.addEventListener("click", openTaskDialog);
+document.querySelector("#view-connection")!.addEventListener("click", () => render("workers"));
 document.querySelector("#hide-window")!.addEventListener("click", () => {
   window.desktop.window("hide").catch(report);
 });
@@ -260,4 +238,5 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
   window.desktop.getTheme().then(applyTheme).catch(report);
 });
 render("today", false);
+run.init();
 window.desktop.getTheme().then(applyTheme).catch(report);

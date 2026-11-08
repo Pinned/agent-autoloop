@@ -1,4 +1,4 @@
-// Prevent untrusted IPC, arbitrary file navigation, unsafe window flags and implicit use of real user data.
+// Prevent untrusted IPC, arbitrary file navigation, unsafe window flags, implicit real data use and developer banners in the product UI.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -8,6 +8,25 @@ import { pathToFileURL } from "node:url";
 import { channels, assertSender, parseTheme, parseWindowAction, isolatedHome, webPreferences } from "../src/policy.ts";
 import { createLifecycle } from "../src/lifecycle.ts";
 import { loadTheme, saveTheme } from "../src/preferences.ts";
+
+test("product shell has no development banners and keeps real runtime navigation and safe exit", () => {
+  const html = readFileSync(new URL("../src/renderer/index.html", import.meta.url), "utf8");
+  const app = readFileSync(new URL("../src/renderer/app.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(html, /开发版|已接入|待接入|release-note/);
+  assert.doesNotMatch(app, /尚未接入|后续迭代|不展示演示|其他业务设置待接入/);
+  const setup = readFileSync(new URL("../src/renderer/setup-view.ts", import.meta.url), "utf8");
+  const runtime = readFileSync(new URL("../../host/desktop-run-contract.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(setup, /开发版|尚未交付|任务页面仍待接入/);
+  assert.doesNotMatch(runtime, /尚未提供|隔离运行目录/);
+  assert.match(setup, /page-head-copy/);
+  assert.match(setup, /保存不会启动运行服务/);
+  assert.match(html, /id="runtime-status"/);
+  assert.match(html, /id="view-connection"/);
+  assert.match(html, /id="quit-app"/);
+  assert.match(app, /page-head-copy/);
+  assert.match(app, /page-head-actions/);
+  assert.match(app, /if \(id === "settings"\) \{/);
+});
 
 const page = pathToFileURL(join(tmpdir(), "desktop renderer", "index.html")).href;
 const mainFrame = { url: page };
