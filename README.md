@@ -129,15 +129,15 @@ Electron 桌面版正在分步开发，目标是在 App 内运行中台或纯执
 
 每套模板都带规则、任务 Skill 和启用说明。
 
-| 想做什么 | 已经封装好的流程 |
-|---|---|
-| [每日早报](examples/recipes/morning-brief/README.md) | 默认每天 8 点整理本地笔记和 Git 提交，写入 `briefs/YYYY-MM-DD.md` |
-| [跟进 GitHub Issue](examples/recipes/github-issues/README.md) | 每 5 分钟查新 Issue，在本地改代码并通知你查看；不提交、不推送、不回复 Issue |
-| [线上告警排查](examples/recipes/ops-alerts/README.md) | 接收报错、对照代码查原因，需要重启时发卡片询问，回答后继续 |
-| [用户反馈处理](examples/recipes/feedback/README.md) | 重读反馈当前状态、修复、交付核实、准备回复；需要决定时飞书问你，回答后继续 |
-| [网站巡检](examples/recipes/website-watch/README.md) | 每 5 分钟检查状态和关键内容，首次异常交给 Agent，持续异常不重复通知，恢复后更新原卡片 |
-| [飞书周报与业务摘要](examples/recipes/feishu-brief/README.md) | 周日 18 点按你的权限读汇报和指定表格，生成本地摘要；飞书只发简短摘要，完整稿留在本机 |
-| [PR 自动交付](skills/agent-autoloop/SKILL.md#交付流水线) | 打上 `deliver` 标签后，审查、等 CI、合并、等发布并核对线上版本 |
+| 想做什么                                                      | 已经封装好的流程                                                                      |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| [每日早报](examples/recipes/morning-brief/README.md)          | 默认每天 8 点整理本地笔记和 Git 提交，写入 `briefs/YYYY-MM-DD.md`                     |
+| [跟进 GitHub Issue](examples/recipes/github-issues/README.md) | 每 5 分钟查新 Issue，在本地改代码并通知你查看；不提交、不推送、不回复 Issue           |
+| [线上告警排查](examples/recipes/ops-alerts/README.md)         | 接收报错、对照代码查原因，需要重启时发卡片询问，回答后继续                            |
+| [用户反馈处理](examples/recipes/feedback/README.md)           | 重读反馈当前状态、修复、交付核实、准备回复；需要决定时飞书问你，回答后继续            |
+| [网站巡检](examples/recipes/website-watch/README.md)          | 每 5 分钟检查状态和关键内容，首次异常交给 Agent，持续异常不重复通知，恢复后更新原卡片 |
+| [飞书周报与业务摘要](examples/recipes/feishu-brief/README.md) | 周日 18 点按你的权限读汇报和指定表格，生成本地摘要；飞书只发简短摘要，完整稿留在本机  |
+| [PR 自动交付](skills/agent-autoloop/SKILL.md#交付流水线)      | 打上 `deliver` 标签后，审查、等 CI、合并、等发布并核对线上版本                        |
 
 **启用：** 打开对应说明，把任务 Skill 放进所用 Agent 的 skills 目录，把示例规则合入 `~/.agent-autoloop/rules.json`，替换电脑名和路径，再运行 `agent-autoloop check`。
 
@@ -149,25 +149,25 @@ Electron 桌面版正在分步开发，目标是在 App 内运行中台或纯执
 
 内置插件随程序安装，填好配置即可启用；第三方插件用 `agent-autoloop add <git 地址>` 安装。
 
-| 方向 | 内置 | 配置 |
-|---|---|---|
-| **事件**：怎么发现新活 | [GitHub Webhook](plugins/github/source.ts)、[HTTP 接口](docs/protocol.md#来源把世界变成事件)、[定时规则](skills/agent-autoloop/SKILL.md#改规则)、[Issue 轮询脚本](examples/watch-github-issues.sh) | [说明](skills/agent-autoloop/SKILL.md#接一个事件插件) |
-| **Agent**：谁来干活 | [Claude Code](plugins/claude/agent.ts)、[Codex](plugins/codex/agent.ts)、[ACP](plugins/acp/agent.ts)、[通用命令](plugins/command/agent.ts) | [说明](skills/agent-autoloop/SKILL.md#接一个-agent) |
-| **通道**：去哪找你拍板 | [桌面通知](plugins/desktop/channel.ts)（默认开启）、[飞书](plugins/feishu/channel.ts)、[钉钉 / 企微 / Slack / Discord](plugins/webhook/templates.ts) | [说明](skills/agent-autoloop/SKILL.md#接一个通道) |
-| **交付**：把 CI/CD 也做成插件 | [`delivery`](plugins/delivery/delivery.ts) | [说明](skills/agent-autoloop/SKILL.md#交付流水线) |
+| 方向                          | 内置                                                                                                                                                                                               | 配置                                                  |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| **事件**：怎么发现新活        | [GitHub Webhook](plugins/github/source.ts)、[HTTP 接口](docs/protocol.md#来源把世界变成事件)、[定时规则](skills/agent-autoloop/SKILL.md#改规则)、[Issue 轮询脚本](examples/watch-github-issues.sh) | [说明](skills/agent-autoloop/SKILL.md#接一个事件插件) |
+| **Agent**：谁来干活           | [Claude Code](plugins/claude/agent.ts)、[Codex](plugins/codex/agent.ts)、[ACP](plugins/acp/agent.ts)、[通用命令](plugins/command/agent.ts)                                                         | [说明](skills/agent-autoloop/SKILL.md#接一个-agent)   |
+| **通道**：去哪找你拍板        | [桌面通知](plugins/desktop/channel.ts)（默认开启）、[飞书](plugins/feishu/channel.ts)、[钉钉 / 企微 / Slack / Discord](plugins/webhook/templates.ts)                                               | [说明](skills/agent-autoloop/SKILL.md#接一个通道)     |
+| **交付**：把 CI/CD 也做成插件 | [`delivery`](plugins/delivery/delivery.ts)                                                                                                                                                         | [说明](skills/agent-autoloop/SKILL.md#交付流水线)     |
 
 **实测情况：** Claude Code、Codex 和 ACP（官方 Codex ACP 适配器）跑通了多轮问答和跨进程会话续接；飞书跑通了发送、按钮回调和卡片更新；四种 Webhook 模板只在本地模拟服务上验证过。这些文字通道靠回答链接拍板，要把 `hub.publicUrl` 配成手机或电脑能打开的地址。
 
 **其他命令行 Agent 一行接入。** 设置 `use: "command"` 并传入命令数组，`{prompt}` 作为独立参数传递，不会被当成 shell 代码执行。下面的命令整理自各家官方文档，我们还没有逐个跑过：
 
-| Agent | 接入命令 |
-|---|---|
+| Agent                                                                                                         | 接入命令                          |
+| ------------------------------------------------------------------------------------------------------------- | --------------------------------- |
 | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/cli-help.md#dsh-headless) | `dsh --profile headless {prompt}` |
-| [pi](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md) | `pi --print {prompt}` |
-| [OpenClaw](https://docs.openclaw.ai/cli/agent) | `openclaw agent exec {prompt}` |
-| [Hermes](https://hermes-agent.nousresearch.com/docs/user-guide/cli) | `hermes chat -q {prompt}` |
-| [Cursor](https://cursor.com/docs/cli/reference/parameters) | `agent -p --trust {prompt}` |
-| [WorkBuddy / CodeBuddy](https://www.codebuddy.ai/docs/cli/headless) | `codebuddy -p {prompt}` |
+| [pi](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md)                        | `pi --print {prompt}`             |
+| [OpenClaw](https://docs.openclaw.ai/cli/agent)                                                                | `openclaw agent exec {prompt}`    |
+| [Hermes](https://hermes-agent.nousresearch.com/docs/user-guide/cli)                                           | `hermes chat -q {prompt}`         |
+| [Cursor](https://cursor.com/docs/cli/reference/parameters)                                                    | `agent -p --trust {prompt}`       |
+| [WorkBuddy / CodeBuddy](https://www.codebuddy.ai/docs/cli/headless)                                           | `codebuddy -p {prompt}`           |
 
 **交付流水线。** 给 GitHub PR 打上 `deliver` 标签后，它会自己跟进到上线：**审代码 → 等 CI → 合并 PR → 等部署 → 核对线上版本**。审查和交付配置只从 `main` 读取，绝不在接单电脑上检出或运行 PR 里的代码；排队、并发和重试直接复用内核。
 
@@ -186,12 +186,12 @@ Electron 桌面版正在分步开发，目标是在 App 内运行中台或纯执
 
 在程序目录 `~/.agent-autoloop/app` 下运行：
 
-| 验证什么 | 命令 |
-|---|---|
-| 任何一轮的来龙去脉 | `agent-autoloop why 1` |
+| 验证什么                                                | 命令                              |
+| ------------------------------------------------------- | --------------------------------- |
+| 任何一轮的来龙去脉                                      | `agent-autoloop why 1`            |
 | 20 万步模拟断网、丢包、崩溃和重复提交，一个种子就能复现 | `node sim/random.ts 24301 200000` |
-| 强杀进程 1000 次，已确认的记录一条不丢 | `node sim/crash.ts 1000 12648430` |
-| 下面的性能数字 | `npm run benchmark` |
+| 强杀进程 1000 次，已确认的记录一条不丢                  | `node sim/crash.ts 1000 12648430` |
+| 下面的性能数字                                          | `npm run benchmark`               |
 
 ```text
 第 1 轮 · 演示
@@ -203,18 +203,21 @@ Electron 桌面版正在分步开发，目标是在 App 内运行中台或纯执
 
 ### 实测性能
 
-Apple M5 Pro、24 GB、Node 24.21.0。写入逐条提交，事务落盘后才应答。`npm run benchmark` 的达标线按这台机器定，换台机器可能报未达标。
+本机实测：Apple M4、32 GB、Node 24.22.2。写入逐条提交，事务落盘后才应答。`npm run benchmark` 的达标线按这台机器定，门禁是本机回归检测器，不是跨机器认证，换台机器需重新校准。冷启动在同机呈双峰波动（约 108 与 208 ms），数字给出多轮区间。
 
-| 指标 | 实测 |
-|---|---:|
-| 冷启动 | 88.78 ms |
-| 空闲内存 | 59.94 MB RSS |
-| 1000 个同时等待的长轮询 | 170.49 MB RSS |
-| 持久化写入 | 2394 条/秒 |
-| 派活 p99 | 1.82 ms |
-| 110 万条事实时的启动 | 99.8 ms |
-| 内核行数（含空行和注释） | 1651 |
-| 运行时依赖 | 0 |
+| 指标                     |                   实测 |
+| ------------------------ | ---------------------: |
+| 冷启动                   | 108~208 ms（双峰波动） |
+| 空闲内存                 |         124~125 MB RSS |
+| 100 个同时等待的长轮询   |         179~182 MB RSS |
+| 持久化写入               |        1930~2020 条/秒 |
+| 派活 p99                 |             2.0~2.7 ms |
+| 内核行数（含空行和注释） |                   1704 |
+| 运行时依赖               |                      0 |
+
+历史实测（Apple M5 Pro、24 GB、Node 24.21.0）：冷启动 88.78 ms、空闲内存 59.94 MB RSS、1000 个同时等待的长轮询 170.49 MB RSS、持久化写入 2394 条/秒、派活 p99 1.82 ms、110 万条事实时的启动 99.8 ms、内核行数 1651。跨机器数字不可直接比较：Node 空进程的基线内存和页会计都随机器与版本变化。
+
+当前 `npm run benchmark` 和 `npm run test:nightly` 检查 100 个同时等待的长轮询，并要求最终 100 个成功响应；这不是启动 100 个 Agent。负载 RSS 单独观察；冷启动门禁 300 ms、空闲 RSS 门禁 150 MB、写入门禁 1500 条/秒、派活 p99 门禁 10 ms，在本机实测水位上留 20%~45% 余量，抖动不误报、真实回归仍拦截。
 
 历史变大后，状态汇总会变慢，日志和索引也继续占磁盘；格式变化后的首次启动要从日志全量重建，110 万条用时 43.1 秒。[完整数据和测法](docs/protocol.md#历史增长实测)。
 
@@ -237,21 +240,21 @@ Apple M5 Pro、24 GB、Node 24.21.0。写入逐条提交，事务落盘后才应
 <details>
 <summary><strong>仓库目录</strong></summary>
 
-| 位置 | 放什么 |
-|---|---|
-| `kernel/` | 内核：决策、事实日志、状态投影、到期任务、规则匹配、接口行为与卡片表单 |
-| `host/` | 运行外壳：Node HTTP、文件与 SQLite 连接、时钟、配置、后台服务和插件加载 |
-| `protocol/` | 通信格式、JSON Schema、输入校验、HTTP 客户端和一致性检查 |
-| `worker/` | 接单程序：领活、运行 Agent、心跳与停止、读取和提交回执 |
-| `cli/`、`bin/` | 用户命令及启动入口，包括状态、回答、`why`、MCP、更新与卸载 |
-| `plugins/` | 内置 Agent、事件、通道和交付插件 |
-| `examples/recipes/` | 完整场景：规则、任务 Skill 和启用说明 |
-| `examples/plugins/`、`examples/skills/`、`examples/*.sh` | 最小插件模板、独立任务手册和 Shell 示例 |
-| `skills/agent-autoloop/` | 中台的正式配置与操作手册，安装时也提供给 Agent 使用 |
-| `docs/` | 通信协议、插件开发说明与中英文架构图 |
-| `tests/`、`sim/` | 日常行为测试，以及模拟、穷举、强杀和变异检查 |
-| `scripts/`、`.github/workflows/` | 性能与真机验证、安装冒烟脚本，以及 Linux / macOS CI |
-| 根目录文档与 `install.sh` | 中英文 README、安装说明、安全边界、开发约定、许可证与安装脚本 |
+| 位置                                                     | 放什么                                                                  |
+| -------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `kernel/`                                                | 内核：决策、事实日志、状态投影、到期任务、规则匹配、接口行为与卡片表单  |
+| `host/`                                                  | 运行外壳：Node HTTP、文件与 SQLite 连接、时钟、配置、后台服务和插件加载 |
+| `protocol/`                                              | 通信格式、JSON Schema、输入校验、HTTP 客户端和一致性检查                |
+| `worker/`                                                | 接单程序：领活、运行 Agent、心跳与停止、读取和提交回执                  |
+| `cli/`、`bin/`                                           | 用户命令及启动入口，包括状态、回答、`why`、MCP、更新与卸载              |
+| `plugins/`                                               | 内置 Agent、事件、通道和交付插件                                        |
+| `examples/recipes/`                                      | 完整场景：规则、任务 Skill 和启用说明                                   |
+| `examples/plugins/`、`examples/skills/`、`examples/*.sh` | 最小插件模板、独立任务手册和 Shell 示例                                 |
+| `skills/agent-autoloop/`                                 | 中台的正式配置与操作手册，安装时也提供给 Agent 使用                     |
+| `docs/`                                                  | 通信协议、插件开发说明与中英文架构图                                    |
+| `tests/`、`sim/`                                         | 日常行为测试，以及模拟、穷举、强杀和变异检查                            |
+| `scripts/`、`.github/workflows/`                         | 性能与真机验证、安装冒烟脚本，以及 Linux / macOS CI                     |
+| 根目录文档与 `install.sh`                                | 中英文 README、安装说明、安全边界、开发约定、许可证与安装脚本           |
 
 读代码可以从 `bin/agent-autoloop.ts` → `cli/main.ts` 开始，再按功能进入 `host/`、`worker/` 或 `plugins/`；内核设计先看[协议](docs/protocol.md)。同名文件分属不同层：`host/http.ts` 转换 Node 请求，`kernel/http.ts` 定义接口行为；`protocol/rules.ts` 校验输入，`kernel/rules.ts` 定义规则类型和匹配。
 

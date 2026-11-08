@@ -131,15 +131,15 @@ Besides `ask`, receipts can send notifications (`notice`), resolve open cards (`
 
 Each recipe includes rules, a task Skill, and setup instructions (written in Chinese).
 
-| Task | Included workflow |
-|---|---|
-| [Morning brief](examples/recipes/morning-brief/README.md) | Summarize local notes and Git commits at 8 AM by default; write `briefs/YYYY-MM-DD.md` |
-| [GitHub issues](examples/recipes/github-issues/README.md) | Poll every five minutes, edit code locally, and notify you to review; no commits, pushes, or issue replies |
-| [Production alerts](examples/recipes/ops-alerts/README.md) | Receive an error, investigate local code, ask before restarting, and continue after your answer |
-| [User feedback](examples/recipes/feedback/README.md) | Re-read current feedback, fix, deliver and verify, then prepare a reply; ask you in Feishu and resume after your answer |
-| [Website watch](examples/recipes/website-watch/README.md) | Check status and expected content every five minutes; wake the agent on a new incident, keep ongoing failures quiet, and update the card on recovery |
-| [Feishu weekly and business brief](examples/recipes/feishu-brief/README.md) | Read selected reports and tables with your permissions at 6 PM Sunday; summarize locally and send only a short summary to Feishu |
-| [PR delivery](skills/agent-autoloop/SKILL.md#交付流水线) | Add `deliver` to a PR to review it, wait for CI, merge, wait for deployment, and verify the live version |
+| Task                                                                        | Included workflow                                                                                                                                    |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Morning brief](examples/recipes/morning-brief/README.md)                   | Summarize local notes and Git commits at 8 AM by default; write `briefs/YYYY-MM-DD.md`                                                               |
+| [GitHub issues](examples/recipes/github-issues/README.md)                   | Poll every five minutes, edit code locally, and notify you to review; no commits, pushes, or issue replies                                           |
+| [Production alerts](examples/recipes/ops-alerts/README.md)                  | Receive an error, investigate local code, ask before restarting, and continue after your answer                                                      |
+| [User feedback](examples/recipes/feedback/README.md)                        | Re-read current feedback, fix, deliver and verify, then prepare a reply; ask you in Feishu and resume after your answer                              |
+| [Website watch](examples/recipes/website-watch/README.md)                   | Check status and expected content every five minutes; wake the agent on a new incident, keep ongoing failures quiet, and update the card on recovery |
+| [Feishu weekly and business brief](examples/recipes/feishu-brief/README.md) | Read selected reports and tables with your permissions at 6 PM Sunday; summarize locally and send only a short summary to Feishu                     |
+| [PR delivery](skills/agent-autoloop/SKILL.md#交付流水线)                    | Add `deliver` to a PR to review it, wait for CI, merge, wait for deployment, and verify the live version                                             |
 
 **To enable one:** open its instructions, put the task Skill in your agent's skills directory, merge the sample rules into `~/.agent-autoloop/rules.json`, replace worker names and paths, then run `agent-autoloop check`.
 
@@ -151,25 +151,25 @@ More: [Claude-to-Codex browser handoff](examples/recipes/browser-handoff/README.
 
 Built-in plugins ship with the program and are enabled through configuration. Use `agent-autoloop add <git URL>` for third-party plugins.
 
-| Side | Built in | Setup |
-|---|---|---|
-| **Events**: how work is found | [GitHub Webhook](plugins/github/source.ts), [HTTP API](docs/protocol.md#来源把世界变成事件), [cron rules](skills/agent-autoloop/SKILL.md#改规则), [issue polling script](examples/watch-github-issues.sh) | [Guide](skills/agent-autoloop/SKILL.md#接一个事件插件) |
-| **Agents**: who does the work | [Claude Code](plugins/claude/agent.ts), [Codex](plugins/codex/agent.ts), [ACP](plugins/acp/agent.ts), [generic command](plugins/command/agent.ts) | [Guide](skills/agent-autoloop/SKILL.md#接一个-agent) |
-| **Channels**: how cards reach you | [Desktop notifications](plugins/desktop/channel.ts) (on by default), [Feishu](plugins/feishu/channel.ts), [DingTalk / WeCom / Slack / Discord](plugins/webhook/templates.ts) | [Guide](skills/agent-autoloop/SKILL.md#接一个通道) |
-| **Delivery**: CI/CD as a plugin | [`delivery`](plugins/delivery/delivery.ts) | [Guide](skills/agent-autoloop/SKILL.md#交付流水线) |
+| Side                              | Built in                                                                                                                                                                                                  | Setup                                                  |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| **Events**: how work is found     | [GitHub Webhook](plugins/github/source.ts), [HTTP API](docs/protocol.md#来源把世界变成事件), [cron rules](skills/agent-autoloop/SKILL.md#改规则), [issue polling script](examples/watch-github-issues.sh) | [Guide](skills/agent-autoloop/SKILL.md#接一个事件插件) |
+| **Agents**: who does the work     | [Claude Code](plugins/claude/agent.ts), [Codex](plugins/codex/agent.ts), [ACP](plugins/acp/agent.ts), [generic command](plugins/command/agent.ts)                                                         | [Guide](skills/agent-autoloop/SKILL.md#接一个-agent)   |
+| **Channels**: how cards reach you | [Desktop notifications](plugins/desktop/channel.ts) (on by default), [Feishu](plugins/feishu/channel.ts), [DingTalk / WeCom / Slack / Discord](plugins/webhook/templates.ts)                              | [Guide](skills/agent-autoloop/SKILL.md#接一个通道)     |
+| **Delivery**: CI/CD as a plugin   | [`delivery`](plugins/delivery/delivery.ts)                                                                                                                                                                | [Guide](skills/agent-autoloop/SKILL.md#交付流水线)     |
 
 **What has been tested:** Claude Code, Codex, and ACP (with the official Codex ACP adapter) have run multi-turn Q&A and session resumption across processes. Feishu has run real delivery, button callbacks, and card updates. The four webhook templates have only been checked against local mock servers. These text channels answer through a link, so `hub.publicUrl` must be reachable from your phone or computer.
 
 **Other CLI agents connect in one line.** Set `use: "command"` and pass a command array; `{prompt}` is a single argument, never evaluated as shell code. These commands come from each tool's official docs, and we have not run each of them yet:
 
-| Agent | Command |
-|---|---|
+| Agent                                                                                                         | Command                           |
+| ------------------------------------------------------------------------------------------------------------- | --------------------------------- |
 | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/cli-help.md#dsh-headless) | `dsh --profile headless {prompt}` |
-| [pi](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md) | `pi --print {prompt}` |
-| [OpenClaw](https://docs.openclaw.ai/cli/agent) | `openclaw agent exec {prompt}` |
-| [Hermes](https://hermes-agent.nousresearch.com/docs/user-guide/cli) | `hermes chat -q {prompt}` |
-| [Cursor](https://cursor.com/docs/cli/reference/parameters) | `agent -p --trust {prompt}` |
-| [WorkBuddy / CodeBuddy](https://www.codebuddy.ai/docs/cli/headless) | `codebuddy -p {prompt}` |
+| [pi](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md)                        | `pi --print {prompt}`             |
+| [OpenClaw](https://docs.openclaw.ai/cli/agent)                                                                | `openclaw agent exec {prompt}`    |
+| [Hermes](https://hermes-agent.nousresearch.com/docs/user-guide/cli)                                           | `hermes chat -q {prompt}`         |
+| [Cursor](https://cursor.com/docs/cli/reference/parameters)                                                    | `agent -p --trust {prompt}`       |
+| [WorkBuddy / CodeBuddy](https://www.codebuddy.ai/docs/cli/headless)                                           | `codebuddy -p {prompt}`           |
 
 **Delivery pipeline.** Add the `deliver` label to a GitHub PR and it follows through to release: **review → wait for CI → merge → wait for deploy → verify the live version**. Settings are read only from `main`, and PR code is never checked out or run on the worker machine. Queueing, concurrency, and retries come from the kernel.
 
@@ -188,12 +188,12 @@ The kernel is about 1,650 lines with zero runtime dependencies. It reads no cloc
 
 Run these from `~/.agent-autoloop/app`:
 
-| What it checks | Command |
-|---|---|
-| The full story of any round | `agent-autoloop why 1` |
+| What it checks                                                                                                        | Command                           |
+| --------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| The full story of any round                                                                                           | `agent-autoloop why 1`            |
 | 200,000 simulated steps of network loss, dropped packets, crashes, and duplicate requests, reproducible from one seed | `node sim/random.ts 24301 200000` |
-| 1,000 process kills with no acknowledged record lost | `node sim/crash.ts 1000 12648430` |
-| The benchmarks below | `npm run benchmark` |
+| 1,000 process kills with no acknowledged record lost                                                                  | `node sim/crash.ts 1000 12648430` |
+| The benchmarks below                                                                                                  | `npm run benchmark`               |
 
 ```text
 第 1 轮 · 演示
@@ -205,18 +205,21 @@ Run these from `~/.agent-autoloop/app`:
 
 ### Benchmarks
 
-Apple M5 Pro, 24 GB, Node 24.21.0. Each write is a separate request, acknowledged only after its transaction is durable. The pass marks in `npm run benchmark` are set for this machine, so another machine may report a miss.
+Measured on this machine: Apple M4, 32 GB, Node 24.22.2. Each write is a separate request, acknowledged only after its transaction is durable. The pass marks in `npm run benchmark` are set for this machine: the marks are a local regression detector, not a cross-machine certificate, so another machine needs its own calibration. Cold start is bimodal on this machine (~108 and ~208 ms), so the numbers are given as multi-run ranges.
 
-| Metric | Measured |
-|---|---:|
-| Cold start | 88.78 ms |
-| Idle memory | 59.94 MB RSS |
-| 1,000 concurrent waiting polls | 170.49 MB RSS |
-| Durable writes | 2,394 events/s |
-| Dispatch p99 | 1.82 ms |
-| Startup at 1.1 million facts | 99.8 ms |
-| Kernel lines (with comments and blanks) | 1,651 |
-| Runtime dependencies | 0 |
+| Metric                                  |             Measured |
+| --------------------------------------- | -------------------: |
+| Cold start                              | 108-208 ms (bimodal) |
+| Idle memory                             |       124-125 MB RSS |
+| 100 concurrent waiting polls            |       179-182 MB RSS |
+| Durable writes                          | 1,930-2,020 events/s |
+| Dispatch p99                            |           2.0-2.7 ms |
+| Kernel lines (with comments and blanks) |                1,704 |
+| Runtime dependencies                    |                    0 |
+
+Historical measurements (Apple M5 Pro, 24 GB, Node 24.21.0): cold start 88.78 ms, idle memory 59.94 MB RSS, 1,000 concurrent waiting polls 170.49 MB RSS, durable writes 2,394 events/s, dispatch p99 1.82 ms, startup at 1.1 million facts 99.8 ms, kernel lines 1,651. Cross-machine numbers are not directly comparable: the baseline memory of a bare Node process and page accounting both vary by machine and version.
+
+The current `npm run benchmark` and `npm run test:nightly` check 100 concurrent waiting polls and require 100 successful responses; they do not start 100 agents. Loaded RSS is reported separately; the pass marks are 300 ms cold start, 150 MB idle RSS, 1,500 events/s durable writes, and 10 ms dispatch p99 — 20-45% headroom over this machine's measured watermarks, so jitter never files a false alarm while a real regression still trips.
 
 As history grows, the status summary slows down and the log and indexes keep using disk. The first start after a format change rebuilds from the log, which took 43.1 seconds for 1.1 million facts. [Full numbers and method](docs/protocol.md#历史增长实测) (in Chinese).
 
@@ -239,21 +242,21 @@ For automated workloads, providers generally recommend using API keys rather tha
 <details>
 <summary><strong>Repository layout</strong></summary>
 
-| Location | Contents |
-|---|---|
-| `kernel/` | Decisions, fact log, projections, deadlines, rule matching, endpoint behavior, and card forms |
-| `host/` | Node HTTP, files and SQLite connections, clock, configuration, background services, and plugin loading |
-| `protocol/` | Wire formats, JSON Schema, input validation, HTTP client, and conformance checks |
-| `worker/` | Claim work, run agents, handle heartbeats and cancellation, read and submit receipts |
-| `cli/`, `bin/` | User commands and entry point: status, answers, `why`, MCP, updates, and uninstall |
-| `plugins/` | Built-in agent, event, channel, and delivery plugins |
-| `examples/recipes/` | Complete recipes with rules, a task Skill, and setup instructions |
-| `examples/plugins/`, `examples/skills/`, `examples/*.sh` | Minimal plugin templates, standalone task guides, and Shell examples |
-| `skills/agent-autoloop/` | The hub's configuration and operation manual, also made available to agents during installation |
-| `docs/` | Protocol, plugin guide, and Chinese / English architecture diagrams |
-| `tests/`, `sim/` | Everyday behavior tests, simulation, enumeration, crash tests, and mutation checks |
-| `scripts/`, `.github/workflows/` | Performance and real-agent checks, installation smoke scripts, and Linux / macOS CI |
-| Root documents and `install.sh` | Chinese / English READMEs, installation, security, development guidelines, license, and installer |
+| Location                                                 | Contents                                                                                               |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `kernel/`                                                | Decisions, fact log, projections, deadlines, rule matching, endpoint behavior, and card forms          |
+| `host/`                                                  | Node HTTP, files and SQLite connections, clock, configuration, background services, and plugin loading |
+| `protocol/`                                              | Wire formats, JSON Schema, input validation, HTTP client, and conformance checks                       |
+| `worker/`                                                | Claim work, run agents, handle heartbeats and cancellation, read and submit receipts                   |
+| `cli/`, `bin/`                                           | User commands and entry point: status, answers, `why`, MCP, updates, and uninstall                     |
+| `plugins/`                                               | Built-in agent, event, channel, and delivery plugins                                                   |
+| `examples/recipes/`                                      | Complete recipes with rules, a task Skill, and setup instructions                                      |
+| `examples/plugins/`, `examples/skills/`, `examples/*.sh` | Minimal plugin templates, standalone task guides, and Shell examples                                   |
+| `skills/agent-autoloop/`                                 | The hub's configuration and operation manual, also made available to agents during installation        |
+| `docs/`                                                  | Protocol, plugin guide, and Chinese / English architecture diagrams                                    |
+| `tests/`, `sim/`                                         | Everyday behavior tests, simulation, enumeration, crash tests, and mutation checks                     |
+| `scripts/`, `.github/workflows/`                         | Performance and real-agent checks, installation smoke scripts, and Linux / macOS CI                    |
+| Root documents and `install.sh`                          | Chinese / English READMEs, installation, security, development guidelines, license, and installer      |
 
 Start reading at `bin/agent-autoloop.ts` → `cli/main.ts`, then follow the feature into `host/`, `worker/`, or `plugins/`. Read the [protocol](docs/protocol.md) for kernel design. Similarly named files serve different layers: `host/http.ts` adapts Node requests while `kernel/http.ts` defines endpoint behavior; `protocol/rules.ts` validates input while `kernel/rules.ts` defines rule types and matching.
 
