@@ -64,26 +64,26 @@ export function createTaskSource(options: TaskSourceOptions): {
       const gate = await endpoint();
       if (gate === "unavailable")
         return desktopTaskEntriesOf({
-          version: 1,
+          version: 2,
           ok: false,
           error: { code: "unavailable", message: DESKTOP_TASK_MESSAGES.unavailable },
         });
       if (gate === "no-hub")
         return desktopTaskEntriesOf({
-          version: 1,
+          version: 2,
           ok: false,
           error: { code: "no-hub", message: DESKTOP_TASK_MESSAGES["no-hub"] },
         });
-      if (gate === "error") return desktopTaskEntriesOf({ version: 1, ok: false, error: { ...failure } });
+      if (gate === "error") return desktopTaskEntriesOf({ version: 2, ok: false, error: { ...failure } });
       try {
         const response = await fetchImpl(`${gate.origin}/v1/ui/rules`, {
           headers: { authorization: `Bearer ${gate.owner}` },
           signal: AbortSignal.timeout(timeoutMs),
         });
-        if (!response.ok) return desktopTaskEntriesOf({ version: 1, ok: false, error: { ...failure } });
-        return desktopTaskEntriesOf({ version: 1, ok: true, data: projectDesktopTaskEntries(await response.json()) });
+        if (!response.ok) return desktopTaskEntriesOf({ version: 2, ok: false, error: { ...failure } });
+        return desktopTaskEntriesOf({ version: 2, ok: true, data: projectDesktopTaskEntries(await response.json()) });
       } catch {
-        return desktopTaskEntriesOf({ version: 1, ok: false, error: { ...failure } });
+        return desktopTaskEntriesOf({ version: 2, ok: false, error: { ...failure } });
       }
     },
     async create(input: DesktopTaskInput) {
@@ -92,17 +92,17 @@ export function createTaskSource(options: TaskSourceOptions): {
       const gate = await endpoint();
       if (gate === "unavailable")
         return desktopTaskCreateOf({
-          version: 1,
+          version: 2,
           ok: false,
           error: { code: "unavailable", message: DESKTOP_TASK_MESSAGES.unavailable },
         });
       if (gate === "no-hub")
         return desktopTaskCreateOf({
-          version: 1,
+          version: 2,
           ok: false,
           error: { code: "no-hub", message: DESKTOP_TASK_MESSAGES["no-hub"] },
         });
-      if (gate === "error") return desktopTaskCreateOf({ version: 1, ok: false, error: { ...failure } });
+      if (gate === "error") return desktopTaskCreateOf({ version: 2, ok: false, error: { ...failure } });
       try {
         const response = await fetchImpl(`${gate.origin}/v1/ui/tasks`, {
           method: "POST",
@@ -113,44 +113,44 @@ export function createTaskSource(options: TaskSourceOptions): {
         const payload: unknown = await response.json().catch(() => null);
         // A 400 is the door's own refusal text; it is the one message passed through verbatim.
         if (!response.ok) {
-          if (response.status !== 400) return desktopTaskCreateOf({ version: 1, ok: false, error: { ...failure } });
+          if (response.status !== 400) return desktopTaskCreateOf({ version: 2, ok: false, error: { ...failure } });
           const message =
             typeof payload === "object" &&
             payload !== null &&
             typeof (payload as Record<string, unknown>).error === "string"
               ? ((payload as Record<string, unknown>).error as string)
               : DESKTOP_TASK_MESSAGES.error;
-          return desktopTaskCreateOf({ version: 1, ok: false, error: { code: "invalid", message } });
+          return desktopTaskCreateOf({ version: 2, ok: false, error: { code: "invalid", message } });
         }
-        return desktopTaskCreateOf({ version: 1, ok: true, result: projectDesktopTaskResult(payload) });
+        return desktopTaskCreateOf({ version: 2, ok: true, result: projectDesktopTaskResult(payload) });
       } catch {
-        return desktopTaskCreateOf({ version: 1, ok: false, error: { ...failure } });
+        return desktopTaskCreateOf({ version: 2, ok: false, error: { ...failure } });
       }
     },
     async rules() {
       const gate = await endpoint();
       if (gate === "unavailable")
         return desktopRulesGetOf({
-          version: 1,
+          version: 2,
           ok: false,
           error: { code: "unavailable", message: DESKTOP_RULES_MESSAGES.unavailable },
         });
       if (gate === "no-hub")
         return desktopRulesGetOf({
-          version: 1,
+          version: 2,
           ok: false,
           error: { code: "no-hub", message: DESKTOP_RULES_MESSAGES["no-hub"] },
         });
-      if (gate === "error") return desktopRulesGetOf({ version: 1, ok: false, error: { ...rulesFailure } });
+      if (gate === "error") return desktopRulesGetOf({ version: 2, ok: false, error: { ...rulesFailure } });
       try {
         const response = await fetchImpl(`${gate.origin}/v1/ui/rules`, {
           headers: { authorization: `Bearer ${gate.owner}` },
           signal: AbortSignal.timeout(timeoutMs),
         });
-        if (!response.ok) return desktopRulesGetOf({ version: 1, ok: false, error: { ...rulesFailure } });
-        return desktopRulesGetOf({ version: 1, ok: true, data: projectDesktopRulesData(await response.json()) });
+        if (!response.ok) return desktopRulesGetOf({ version: 2, ok: false, error: { ...rulesFailure } });
+        return desktopRulesGetOf({ version: 2, ok: true, data: projectDesktopRulesData(await response.json()) });
       } catch {
-        return desktopRulesGetOf({ version: 1, ok: false, error: { ...rulesFailure } });
+        return desktopRulesGetOf({ version: 2, ok: false, error: { ...rulesFailure } });
       }
     },
     async save(entries: DesktopRuleEntry[]) {
@@ -159,17 +159,17 @@ export function createTaskSource(options: TaskSourceOptions): {
       const gate = await endpoint();
       if (gate === "unavailable")
         return desktopRulesSaveOf({
-          version: 1,
+          version: 2,
           ok: false,
           error: { code: "unavailable", message: DESKTOP_RULES_MESSAGES.unavailable },
         });
       if (gate === "no-hub")
         return desktopRulesSaveOf({
-          version: 1,
+          version: 2,
           ok: false,
           error: { code: "no-hub", message: DESKTOP_RULES_MESSAGES["no-hub"] },
         });
-      if (gate === "error") return desktopRulesSaveOf({ version: 1, ok: false, error: { ...rulesFailure } });
+      if (gate === "error") return desktopRulesSaveOf({ version: 2, ok: false, error: { ...rulesFailure } });
       try {
         const response = await fetchImpl(`${gate.origin}/v1/ui/rules`, {
           method: "PUT",
@@ -180,23 +180,23 @@ export function createTaskSource(options: TaskSourceOptions): {
         const payload: unknown = await response.json().catch(() => null);
         if (!response.ok) {
           // A 400 is the door's own refusal text; it is the one message passed through verbatim.
-          if (response.status !== 400) return desktopRulesSaveOf({ version: 1, ok: false, error: { ...rulesFailure } });
+          if (response.status !== 400) return desktopRulesSaveOf({ version: 2, ok: false, error: { ...rulesFailure } });
           const message =
             typeof payload === "object" &&
             payload !== null &&
             typeof (payload as Record<string, unknown>).error === "string"
               ? ((payload as Record<string, unknown>).error as string)
               : DESKTOP_RULES_MESSAGES.error;
-          return desktopRulesSaveOf({ version: 1, ok: false, error: { code: "invalid", message } });
+          return desktopRulesSaveOf({ version: 2, ok: false, error: { code: "invalid", message } });
         }
         // The door answers with the list it actually kept, so the editor shows the truth, not the wish.
         return desktopRulesSaveOf({
-          version: 1,
+          version: 2,
           ok: true,
           data: projectDesktopRulesData(payload),
         });
       } catch {
-        return desktopRulesSaveOf({ version: 1, ok: false, error: { ...rulesFailure } });
+        return desktopRulesSaveOf({ version: 2, ok: false, error: { ...rulesFailure } });
       }
     },
   };

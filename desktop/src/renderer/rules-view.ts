@@ -78,6 +78,30 @@ export function mountRulesView(controller: ReturnType<typeof createRendererRules
   parallelInput.type = "number";
   parallelInput.min = "1";
   parallelInput.max = "64";
+  const groupField = field("分组（可选，留空随规则名）", "rules-group");
+  const groupInput = groupField.querySelector("input")!;
+  const tellField = document.createElement("label");
+  tellField.className = "setup-field";
+  const tellLabel = document.createElement("span");
+  tellLabel.textContent = "收尾通知";
+  const tellInput = document.createElement("select");
+  tellInput.id = "rules-tell";
+  for (const [value, label] of [
+    ["", "默认（需要才说）"],
+    ["always", "总是"],
+    ["needed", "需要才说（显式）"],
+    ["never", "从不"],
+  ]) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    tellInput.append(option);
+  }
+  tellField.append(tellLabel, tellInput);
+  const emitsSourceField = field("输出事件来源（可选）", "rules-emits-source");
+  const emitsSourceInput = emitsSourceField.querySelector("input")!;
+  const emitsTypesField = field("输出事件类型（可选，空格或逗号分隔）", "rules-emits-types");
+  const emitsTypesInput = emitsTypesField.querySelector("input")!;
   const formError = document.createElement("p");
   formError.className = "setup-error";
   formError.hidden = true;
@@ -100,6 +124,10 @@ export function mountRulesView(controller: ReturnType<typeof createRendererRules
     promptField,
     skillField,
     parallelField,
+    groupField,
+    tellField,
+    emitsSourceField,
+    emitsTypesField,
     formError,
     formActions,
   );
@@ -154,6 +182,14 @@ export function mountRulesView(controller: ReturnType<typeof createRendererRules
       cwd: cwdInput.value,
       prompt: promptInput.value,
       skill: skillInput.value,
+      group: groupInput.value,
+      tell: tellInput.value,
+      ...((emitsSourceInput.value.trim() || emitsTypesInput.value.trim()) && {
+        emits: {
+          source: emitsSourceInput.value.trim(),
+          types: emitsTypesInput.value.split(/[\s,，]+/).filter(Boolean),
+        },
+      }),
       ...(parallel && { parallel: Number(parallel) }),
     };
     try {
@@ -178,6 +214,10 @@ export function mountRulesView(controller: ReturnType<typeof createRendererRules
     promptInput.value = source?.prompt ?? "";
     skillInput.value = source?.skill ?? "";
     parallelInput.value = source?.parallel !== undefined ? String(source.parallel) : "";
+    groupInput.value = source?.group ?? "";
+    tellInput.value = source?.tell ?? "";
+    emitsSourceInput.value = source?.emits?.source ?? "";
+    emitsTypesInput.value = source?.emits?.types.join(" ") ?? "";
     formError.hidden = true;
     dialog.showModal();
   }
@@ -210,6 +250,9 @@ export function mountRulesView(controller: ReturnType<typeof createRendererRules
     if (entry.prompt) parts.push(`提示词 ${[...entry.prompt].length} 字`);
     if (entry.skill) parts.push(`技能 ${entry.skill}`);
     if (entry.parallel !== undefined) parts.push(`并行 ${entry.parallel}`);
+    if (entry.group !== undefined) parts.push(`分组 ${entry.group}`);
+    if (entry.tell !== undefined) parts.push(`通知 ${entry.tell}`);
+    if (entry.emits !== undefined) parts.push(`输出 ${entry.emits.source}: ${entry.emits.types.join("、")}`);
     meta.textContent = parts.join(" · ");
     item.append(head, types, meta);
     // Editing an entry is always possible: the first touch starts the edit by itself.

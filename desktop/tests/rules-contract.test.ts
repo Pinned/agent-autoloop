@@ -27,8 +27,76 @@ const roundTrip = (): DesktopRuleEntry => ({
   prompt: "照着发布流程走",
   skill: "release",
   parallel: 3,
+  group: "值班规则",
+  tell: "never",
+  emits: { source: "local", types: ["result.*"] },
 });
 const dataOf = (entries: unknown) => ({ entries, agents: [{ id: "claude", name: "Claude", use: "edit" }], seq: 7 });
+
+test("strict entry lists and nested filters reject accessors without executing them", () => {
+  let reads = 0;
+  const poison = [entry()];
+  Object.defineProperty(poison, "0", {
+    enumerable: true,
+    get() {
+      reads++;
+      return entry();
+    },
+  });
+  assert.throws(() => parseDesktopRulesEntries(poison));
+  assert.equal(reads, 0);
+  const types = ["task.*"];
+  Object.defineProperty(types, "0", {
+    enumerable: true,
+    get() {
+      reads++;
+      return "task.*";
+    },
+  });
+  assert.throws(() => parseDesktopRuleEntry(entry({ emits: { source: "local", types } })));
+  assert.equal(reads, 0);
+  for (const bad of [
+    new Array(1),
+    Object.assign([entry()], { extra: true }),
+    Object.assign([entry()], { [Symbol("extra")]: true }),
+  ])
+    assert.throws(() => parseDesktopRulesEntries(bad));
+});
+
+test("every rules response array rejects getters, holes, extra keys and custom prototypes", () => {
+  for (const parse of [parseDesktopRulesGetResponse, parseDesktopRulesSaveResponse]) {
+    for (const field of ["entries", "agents", "types", "emits"] as const) {
+      const item =
+        field === "entries" ? roundTrip() : field === "agents" ? { id: "a", name: "A", use: "command" } : "task.*";
+      let reads = 0;
+      const accessor = [item];
+      Object.defineProperty(accessor, "0", {
+        enumerable: true,
+        get() {
+          reads++;
+          return item;
+        },
+      });
+      const custom = [item];
+      Object.setPrototypeOf(custom, Object.create(Array.prototype));
+      for (const array of [
+        accessor,
+        new Array(1),
+        Object.assign([item], { extra: 1 }),
+        Object.assign([item], { [Symbol("extra")]: 1 }),
+        custom,
+      ]) {
+        const data = dataOf([roundTrip()]);
+        if (field === "entries") data.entries = array;
+        else if (field === "agents") data.agents = array as never;
+        else if (field === "types") (data.entries as DesktopRuleEntry[])[0].types = array as never;
+        else (data.entries as DesktopRuleEntry[])[0].emits!.types = array as never;
+        assert.throws(() => parse({ version: 2, ok: true, data }), `accepted ${field}`);
+        assert.equal(reads, 0);
+      }
+    }
+  }
+});
 
 test("a well-formed entry round-trips with optional fields and wildcards", () => {
   const expected = roundTrip();
@@ -88,10 +156,10 @@ test("local length bounds refuse oversized text before anything leaves the proce
 test("the saved list is the whole replacement, bounded and entry-checked", () => {
   const entries = parseDesktopRulesEntries([entry(), entry({ name: "发布规则" })]);
   assert.equal(entries.length, 2);
-  assert.throws(() => parseDesktopRulesEntries([]), { message: "入口要是一个不为空的列表" });
-  assert.throws(() => parseDesktopRulesEntries("nope"), { message: "入口要是一个不为空的列表" });
+  assert.deepEqual(parseDesktopRulesEntries([]), []);
+  assert.throws(() => parseDesktopRulesEntries("nope"), { message: "入口要是一个列表，最多 100 项" });
   assert.throws(() => parseDesktopRulesEntries(Array.from({ length: 101 }, () => entry())), {
-    message: "入口要是一个不为空的列表",
+    message: "入口要是一个列表，最多 100 项",
   });
 });
 
@@ -118,13 +186,13 @@ test("the projected data keeps only the fields the editor needs, strictly typed"
 
 test("both responses parse strictly and refuse poison shapes", () => {
   const data = projectDesktopRulesData(dataOf([roundTrip()]));
-  const ok = desktopRulesSaveOf({ version: 1, ok: true, data });
+  const ok = desktopRulesSaveOf({ version: 2, ok: true, data });
   assert.ok(ok.ok);
   assert.equal(ok.data.seq, 7);
-  const again = parseDesktopRulesSaveResponse({ version: 1, ok: true, data });
+  const again = parseDesktopRulesSaveResponse({ version: 2, ok: true, data });
   assert.ok(again.ok);
   const refusal = desktopRulesGetOf({
-    version: 1,
+    version: 2,
     ok: false,
     error: { code: "unavailable", message: DESKTOP_RULES_MESSAGES.unavailable },
   });
@@ -132,17 +200,17 @@ test("both responses parse strictly and refuse poison shapes", () => {
   assert.equal(refusal.error.code, "unavailable");
   for (const poison of [
     null,
-    { version: 1, ok: true },
-    { version: 1, ok: 1, data },
-    { version: 2, ok: true, data },
-    { version: 1, ok: false, error: { code: "error", message: "自造文案" } },
-    { version: 1, ok: false, error: { code: "made-up", message: DESKTOP_RULES_MESSAGES.error } },
+    { version: 2, ok: true },
+    { version: 2, ok: 1, data },
+    { version: 99, ok: true, data },
+    { version: 2, ok: false, error: { code: "error", message: "自造文案" } },
+    { version: 2, ok: false, error: { code: "made-up", message: DESKTOP_RULES_MESSAGES.error } },
   ]) {
     assert.throws(() => parseDesktopRulesGetResponse(poison), Error, `unexpected pass: ${JSON.stringify(poison)}`);
     assert.throws(() => parseDesktopRulesSaveResponse(poison), Error, `unexpected pass: ${JSON.stringify(poison)}`);
   }
   // A read never carries a door refusal, so the invalid code is poison there — and only there.
-  const doorText = { version: 1, ok: false, error: { code: "invalid", message: "自造文案" } };
+  const doorText = { version: 2, ok: false, error: { code: "invalid", message: "自造文案" } };
   assert.throws(() => parseDesktopRulesGetResponse(doorText), Error);
   const door = parseDesktopRulesSaveResponse(doorText);
   if (door.ok) throw new Error("expected refusal");
@@ -153,7 +221,7 @@ test("a projected answer larger than the bound is refused as a whole", () => {
   const big = dataOf(
     Array.from({ length: 100 }, (_, index) => entry({ name: `规则${index}`, prompt: "x".repeat(1400) })),
   );
-  assert.throws(() => desktopRulesGetOf({ version: 1, ok: true, data: projectDesktopRulesData(big) }), {
+  assert.throws(() => desktopRulesGetOf({ version: 2, ok: true, data: projectDesktopRulesData(big) }), {
     message: "响应过大",
   });
 });

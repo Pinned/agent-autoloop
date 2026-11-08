@@ -193,6 +193,9 @@ const fullPage = {
       prompt: "照发布流程走",
       skill: "release",
       parallel: 2,
+      group: "发布规则",
+      tell: "never",
+      emits: { source: "local", types: ["result.*"] },
     },
   ],
   agents: [{ id: "codex", name: "Codex", use: "full" }],
@@ -249,7 +252,6 @@ test("an entry list that breaks the door's limits is refused before any request 
     return Promise.resolve(new Response("{}"));
   });
   for (const bad of [
-    [],
     "nope",
     [{ name: "", types: ["t"], to: "c", cwd: "~/" }],
     [{ name: "x", types: [], to: "c", cwd: "~/" }],

@@ -23,7 +23,7 @@ const flush = async () => {
 };
 
 const dataReady = (overrides: Record<string, unknown> = {}): DesktopRulesGetResponse => ({
-  version: 1,
+  version: 2,
   ok: true,
   data: {
     entries: [
@@ -36,7 +36,7 @@ const dataReady = (overrides: Record<string, unknown> = {}): DesktopRulesGetResp
   },
 });
 const savedOk = (entries: readonly unknown[]): DesktopRulesSaveResponse => ({
-  version: 1,
+  version: 2,
   ok: true,
   data: { entries: entries as readonly DesktopRuleEntry[], agents: [], seq: 6 },
 });
@@ -115,7 +115,7 @@ test("fixed-message load states are passed through verbatim", async () => {
   for (const kind of ["unavailable", "no-hub"] as const) {
     const f = fixture();
     f.controller.refresh();
-    f.answerGet({ version: 1, ok: false, error: { code: kind, message: DESKTOP_RULES_MESSAGES[kind] } });
+    f.answerGet({ version: 2, ok: false, error: { code: kind, message: DESKTOP_RULES_MESSAGES[kind] } });
     await flush();
     assert.equal(f.controller.loadState.kind, kind);
     assert.equal(loadMessage(f), DESKTOP_RULES_MESSAGES[kind]);
@@ -125,9 +125,9 @@ test("fixed-message load states are passed through verbatim", async () => {
 test("malformed and rejected load results degrade to the fixed error", async () => {
   for (const poison of [
     null,
-    { version: 1, ok: true },
-    { version: 1, ok: true, data: { entries: "x" } },
-    { version: 1, ok: true, data: { entries: [{ name: "x", types: ["t"], to: "c", extra: 1 }] } },
+    { version: 2, ok: true },
+    { version: 2, ok: true, data: { entries: "x" } },
+    { version: 2, ok: true, data: { entries: [{ name: "x", types: ["t"], to: "c", extra: 1 }] } },
   ]) {
     const f = fixture();
     f.controller.refresh();
@@ -215,7 +215,7 @@ test("a failed save keeps the draft for a retry, and the door's text is shown ve
   f.controller.beginEdit();
   f.controller.updateEntry(0, { name: "值班规则", types: ["task.ops"], to: "claude", cwd: "~/别处" });
   f.controller.save();
-  f.answerPut({ version: 1, ok: false, error: { code: "invalid", message: "入口缺少 name" } });
+  f.answerPut({ version: 2, ok: false, error: { code: "invalid", message: "入口缺少 name" } });
   await flush();
   assert.deepEqual(f.controller.saveState, { kind: "failed", message: "入口缺少 name" });
   assert.ok(f.controller.draft !== null);

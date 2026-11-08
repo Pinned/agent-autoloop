@@ -29,12 +29,12 @@ const entry = (overrides: Partial<DesktopTaskEntry> = {}): DesktopTaskEntry => (
   ...overrides,
 });
 const entriesReady = (entries: DesktopTaskEntry[]): DesktopTaskEntriesResponse => ({
-  version: 1,
+  version: 2,
   ok: true,
   data: { entries },
 });
 const createOk = (overrides: Record<string, unknown> = {}): DesktopTaskCreateResponse => ({
-  version: 1,
+  version: 2,
   ok: true,
   result: { event: 1, duplicate: false, routed: ["值班规则"], ...overrides },
 });
@@ -89,6 +89,17 @@ const submitMessage = (f: Fixture): string => {
   return state.message;
 };
 
+test("wildcard candidates load, but task submission needs a concrete type", async () => {
+  const f = fixture();
+  f.controller.loadEntries();
+  f.answerEntries(entriesReady([entry({ types: ["task.*", "*"] })]));
+  await flush();
+  assert.equal(f.controller.entriesState.kind, "ready");
+  f.controller.submitTask({ type: "task.*", summary: "目标", detail: "" });
+  assert.equal(f.createCalls(), 0);
+  assert.equal(f.controller.submitState.kind, "failed");
+});
+
 test("loadEntries is single-flight and a ready list is frozen state", async () => {
   const f = fixture();
   f.controller.loadEntries();
@@ -115,7 +126,7 @@ test("fixed-message entry states are passed through verbatim", async () => {
   for (const kind of ["unavailable", "no-hub", "error"] as const) {
     const f = fixture();
     f.controller.loadEntries();
-    f.answerEntries({ version: 1, ok: false, error: { code: kind, message: DESKTOP_TASK_MESSAGES[kind] } });
+    f.answerEntries({ version: 2, ok: false, error: { code: kind, message: DESKTOP_TASK_MESSAGES[kind] } });
     await flush();
     assert.equal(f.controller.entriesState.kind, kind);
     assert.equal(entriesMessage(f), DESKTOP_TASK_MESSAGES[kind]);
@@ -125,10 +136,10 @@ test("fixed-message entry states are passed through verbatim", async () => {
 test("malformed and rejected entry results degrade to the fixed error", async () => {
   for (const poison of [
     null,
-    { version: 1, ok: true },
-    { version: 1, ok: true, data: {} },
-    { version: 1, ok: true, data: { entries: [entry({ types: "task.ops" as never })] } },
-    { version: 1, ok: false, error: { code: "error", message: "自造文案" } },
+    { version: 2, ok: true },
+    { version: 2, ok: true, data: {} },
+    { version: 2, ok: true, data: { entries: [entry({ types: "task.ops" as never })] } },
+    { version: 2, ok: false, error: { code: "error", message: "自造文案" } },
   ]) {
     const f = fixture();
     f.controller.loadEntries();
@@ -166,7 +177,7 @@ test("a create rejection shows the door's text, other failures the fixed text", 
   const door = fixture();
   door.controller.submitTask({ type: "task.ops", summary: "x", detail: "" });
   door.answerCreate({
-    version: 1,
+    version: 2,
     ok: false,
     error: { code: "invalid", message: "没有任务入口接 task.ops，先在入口设置里加一个。" },
   });
@@ -177,8 +188,8 @@ test("a create rejection shows the door's text, other failures the fixed text", 
   });
   for (const poison of [
     null,
-    { version: 1, ok: true, result: { event: "ui-x", duplicate: "yes", routed: [] } },
-    { version: 1, ok: false, error: { code: "error", message: "自造文案" } },
+    { version: 2, ok: true, result: { event: "ui-x", duplicate: "yes", routed: [] } },
+    { version: 2, ok: false, error: { code: "error", message: "自造文案" } },
   ]) {
     const f = fixture();
     f.controller.submitTask({ type: "task.ops", summary: "x", detail: "" });
