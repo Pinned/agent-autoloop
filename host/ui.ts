@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { RULES_FILE } from "./home.ts";
 import * as hub from "./runtime.ts";
+import { requireOwner, uiRead } from "./ui-read.ts";
 import { writeLocalEntries, writeSection, type Entry, type Section } from "./rules-io.ts";
 import { checkedLocalEntriesBody, createLocalEntriesReader } from "./local-entries.ts";
 import { assertRulesBaseline } from "./rules-baseline.ts";
@@ -54,13 +55,6 @@ const denied = (error: unknown) =>
       headers: HEADERS,
     },
   );
-
-function requireOwner(request: Request) {
-  const given = /^Bearer (.+)$/.exec(request.headers.get("authorization") ?? "");
-  const name = given && hub.whose("owner", given[1]);
-  if (!name) throw new AuthError("要用本人的密钥（Bearer）");
-  return name;
-}
 
 // Original declarations are checked against the same applied configuration the hub uses.
 const readLocalEntries = createLocalEntriesReader({
@@ -299,7 +293,10 @@ async function readBody(request: Request): Promise<unknown> {
 
 async function api(request: Request): Promise<Response> {
   const { pathname } = new URL(request.url);
-  requireOwner(request);
+  const latest = hub.getView();
+  requireOwner(request, latest);
+  const read = uiRead(request, latest);
+  if (read !== null) return read;
   if (pathname === "/v1/ui/rules" && request.method === "GET")
     return Response.json(localEntries(), { headers: HEADERS });
   if (pathname === "/v1/ui/config" && request.method === "GET")
@@ -364,7 +361,13 @@ async function api(request: Request): Promise<Response> {
 export async function uiRoutes(request: Request): Promise<Response | null> {
   const { pathname } = new URL(request.url);
   if (pathname in TYPES) return asset(pathname);
-  if (pathname === "/v1/ui/rules" || pathname === "/v1/ui/tasks" || /^\/v1\/ui\/config(\/|$)/.test(pathname)) {
+  if (
+    pathname === "/v1/ui/rules" ||
+    pathname === "/v1/ui/tasks" ||
+    pathname === "/v1/ui/task-runs" ||
+    /^\/v1\/ui\/task-runs\/([^/]+)$/.test(pathname) ||
+    /^\/v1\/ui\/config(\/|$)/.test(pathname)
+  ) {
     try {
       return await api(request);
     } catch (error) {
