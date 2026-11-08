@@ -2,6 +2,30 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:agent-autoloop:protocol:v1",
   "$defs": {
+    "protocolDescription": {
+      "type": "object",
+      "properties": {
+        "version": { "const": 1 },
+        "capabilities": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": { "type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" }
+        }
+      },
+      "required": ["version", "capabilities"],
+      "additionalProperties": false
+    },
+    "credentialIdentity": {
+      "type": "object",
+      "properties": {
+        "version": { "const": 1 },
+        "kind": { "enum": ["owner", "worker"] },
+        "name": { "type": "string", "maxLength": 128, "pattern": "^[a-z][a-z0-9-]*$" }
+      },
+      "required": ["version", "kind", "name"],
+      "additionalProperties": false
+    },
     "event": {
       "type": "object",
       "properties": {

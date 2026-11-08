@@ -34,6 +34,13 @@ function visit(schema: any, item: any, path: string): string[] {
   }
   if (Array.isArray(item)) {
     if (outside(item.length, schema.minItems, schema.maxItems)) return [path];
+    // Failure mode: declaring uniqueItems without enforcing it accepts duplicate capabilities.
+    // The published protocol currently uses uniqueness only for strings; do not pretend Set
+    // implements JSON object equality. Fail explicitly if a future schema needs other item types.
+    if (schema.uniqueItems === true) {
+      if (schema.items?.type !== "string") throw new Error("uniqueItems 目前只支持 string items");
+      if (new Set(item).size !== item.length) return [path];
+    }
     return item.flatMap((child, index) => (schema.items ? visit(schema.items, child, `${path}[${index}]`) : []));
   }
   if (item === null || typeof item !== "object") return [];

@@ -1,6 +1,7 @@
 // The doors: every request the hub takes, which key it asks for, and which input it becomes. Nothing is decided here.
 import { cardPage, PAGE_HEADERS, wordsPage } from "./card-page.ts";
-import { whose, type Environment } from "./credentials.ts";
+import { identityToken, uniqueIdentity, whose, type Environment } from "./credentials.ts";
+import { validateCredentialIdentity, validateProtocolDescription } from "../protocol/handshake.ts";
 import { AuthError, Conflict, InputError, NotFound } from "./errors.ts";
 import type { Row, View } from "./evolve.ts";
 import { agentsOf, cancels, cardView, configuration } from "./query.ts";
@@ -245,8 +246,38 @@ async function route(call: Call): Promise<Response> {
   return json({ error: "没有这个地址" }, 404);
 }
 
+// Probe GETs must branch before callFrom: discovery reads no services, identity only the latest keys.
+// Reject even a bare query delimiter and declared nonempty/transfer-encoded bodies without reading them.
+// Exact methods and paths only; all other classifications retain the existing 404 route behavior.
 export function createHandler(services: Services) {
   return async function handle(request: Request): Promise<Response> {
+    const path = new URL(request.url).pathname;
+    if (
+      request.method === "GET" &&
+      (path === "/v1/protocol" || path === "/v1/credentials/owner" || path === "/v1/credentials/worker")
+    ) {
+      const length = request.headers.get("content-length");
+      if (
+        request.url.split("#", 1)[0].includes("?") ||
+        request.headers.has("transfer-encoding") ||
+        (length !== null && !/^0+$/.test(length))
+      ) {
+        return json({ error: "协议探测请求不能带查询或正文" }, 400);
+      }
+      if (path === "/v1/protocol") {
+        return json(
+          validateProtocolDescription({
+            version: 1,
+            capabilities: ["credentials.owner.v1", "credentials.worker.v1"],
+          }),
+        );
+      }
+      const kind = path === "/v1/credentials/owner" ? "owner" : "worker";
+      const token = identityToken(request.headers.get("authorization"));
+      const name = token === null ? null : uniqueIdentity(services.view(), kind, token);
+      if (name === null) return json({ error: "密钥身份无效" }, 401);
+      return json(validateCredentialIdentity({ version: 1, kind, name }, kind));
+    }
     const call = callFrom(services, request);
     try {
       return await route(call);
