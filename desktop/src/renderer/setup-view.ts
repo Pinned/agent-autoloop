@@ -51,11 +51,13 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
     const title = element("h1", "配置此电脑");
     title.id = "setup-title";
     title.tabIndex = -1;
-    header.append(
+    const copy = element("div", "", "page-head-copy");
+    copy.append(
       element("div", "AUTOLOOP / 本机配置", "eyebrow"),
       title,
       element("p", "只保存本机配置，不自动启动服务或验证远端连接。"),
     );
+    header.append(copy);
     root.append(header);
     const panel = element("section", "", "panel setup-panel");
     panel.setAttribute("aria-labelledby", "setup-title");
@@ -171,16 +173,12 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
           );
         }
         form.append(
-          element("p", "保存不会启动运行服务。纯 worker 配置保存不代表已连接中台；任务页面仍待接入。", "muted"),
+          element("p", "保存不会启动运行服务。纯执行机配置保存后，请前往执行机页启动并检查运行状态。", "muted"),
         );
       }
       if (wizard.checkError === "unavailable")
         form.append(
-          element(
-            "p",
-            "此操作只使用已有运行时缓存，不会自动下载。当前缓存或开发版能力可能尚未提供，不能据此判断 Agent 安装情况。",
-            "muted",
-          ),
+          element("p", "此检查只使用已有运行资源，不会自动下载。运行资源不可用时，无法确认 Agent 安装情况。", "muted"),
         );
       if (wizard.error) {
         const error = element("p", wizard.error, "setup-error");
@@ -251,7 +249,7 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
           panel.append(
             element(
               "p",
-              "核查只使用已有运行时缓存，不会自动下载；正式打包的配置能力尚未交付。此提示不代表已检查远端连接。",
+              "核查只使用已有运行资源，不会自动下载。运行资源不可用时无法核查本机配置；此检查不验证远端连接。",
               "muted",
             ),
           );

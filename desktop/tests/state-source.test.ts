@@ -28,6 +28,9 @@ const hubPayload = {
   timezone: "Asia/Shanghai",
   totals: { running: 1, queued: 0, retrying: 0, unknown: 0, done: 2, doneToday: 1, attention: 0 },
   cards: [],
+  spending: { today: { rounds: 1, cost: 0.5, missingCost: 0 } },
+  runs: [],
+  hasMore: false,
 };
 
 function source(
@@ -118,6 +121,9 @@ test("running hub-worker fetches the local state endpoint with the owner credent
   if (parsed.state.kind === "ready") {
     assert.equal(parsed.state.snapshot.totals.doneToday, 1);
     assert.deepEqual(parsed.state.snapshot.cards, []);
+    assert.deepEqual(parsed.state.snapshot.spendingToday, { rounds: 1, cost: 0.5, missingCost: 0 });
+    assert.deepEqual(parsed.state.snapshot.activeRuns, []);
+    assert.equal(parsed.state.snapshot.askTotal, 0);
   }
   assert.equal(seen.length, 1);
   assert.equal(seen[0].url, "http://127.0.0.1:3350/v1/state");

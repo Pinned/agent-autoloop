@@ -29,10 +29,13 @@ const hubPayload = (overrides: Record<string, unknown> = {}) => ({
     { id: 9, kind: "ask", title: "选择发布方式", text: "请决定今天是否发布。", by: "值班规则" },
     { id: 8, kind: "notice", title: "夜间同步完成", text: "已同步 3 条结果。", by: null },
   ],
+  spending: { today: { rounds: 3, cost: 0.25, missingCost: 1 } },
+  runs: [{ id: 1, rule: "同步", agent: "claude", state: "claimed", summary: "推进中" }],
+  hasMore: false,
   ...overrides,
 });
 const readyResponse = (payload: Record<string, unknown>): DesktopTodayResponse => ({
-  version: 1,
+  version: 2,
   ok: true,
   state: { kind: "ready", snapshot: projectDesktopTodaySnapshot(payload) },
 });
@@ -97,13 +100,28 @@ test("a ready payload is adopted as frozen state and notifies exactly twice", as
   assert.throws(() => {
     (state.snapshot as { totals: { doneToday: number } }).totals.doneToday = 99;
   }, TypeError);
+  assert.throws(() => {
+    state.snapshot.spendingToday.cost = 99;
+  }, TypeError);
+  assert.throws(() => {
+    state.snapshot.activeRuns[0].summary = "篡改";
+  }, TypeError);
+  assert.throws(() => {
+    state.snapshot.cards.pop();
+  }, TypeError);
+  assert.throws(() => {
+    state.snapshot.activeRuns.pop();
+  }, TypeError);
+  assert.throws(() => {
+    state.snapshot.recentRuns.push(state.snapshot.activeRuns[0]);
+  }, TypeError);
 });
 
 test("fixed-message states are passed through verbatim", async () => {
   for (const kind of ["unavailable", "no-hub", "error"] as const) {
     const f = fixture();
     f.controller.refresh();
-    f.answer({ version: 1, ok: true, state: { kind, message: DESKTOP_TODAY_MESSAGES[kind] } });
+    f.answer({ version: 2, ok: true, state: { kind, message: DESKTOP_TODAY_MESSAGES[kind] } });
     await flush();
     assert.equal(f.controller.state.kind, kind);
     assert.equal(messageOf(f.controller.state), DESKTOP_TODAY_MESSAGES[kind]);
@@ -113,12 +131,13 @@ test("fixed-message states are passed through verbatim", async () => {
 test("malformed and rejected results degrade to the fixed error, never unvalidated data", async () => {
   for (const poison of [
     null,
-    { version: 1, ok: true },
-    { version: 1, ok: true, state: { kind: "error", message: "自造文案" } },
+    { version: 1, ok: true, state: { kind: "unavailable", message: DESKTOP_TODAY_MESSAGES.unavailable } },
+    { version: 2, ok: true },
+    { version: 2, ok: true, state: { kind: "error", message: "自造文案" } },
     {
-      version: 1,
+      version: 2,
       ok: true,
-      state: { kind: "ready", snapshot: { version: 1, now: "x", timezone: "y", totals: {}, cards: [] } },
+      state: { kind: "ready", snapshot: { version: 2, now: "x", timezone: "y", totals: {}, cards: [] } },
     },
   ]) {
     const f = fixture();
@@ -151,7 +170,7 @@ test("a throwing listener never corrupts the state transition", async () => {
 test("a new refresh after a settled one starts a second call", async () => {
   const f = fixture();
   f.controller.refresh();
-  f.answer({ version: 1, ok: true, state: { kind: "unavailable", message: DESKTOP_TODAY_MESSAGES.unavailable } });
+  f.answer({ version: 2, ok: true, state: { kind: "unavailable", message: DESKTOP_TODAY_MESSAGES.unavailable } });
   await flush();
   f.controller.refresh();
   assert.equal(f.calls(), 2);

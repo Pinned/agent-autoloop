@@ -35,7 +35,16 @@ export function createRendererToday(bridge: TodayBridge, onChange: () => void) {
       const snapshot: DesktopTodaySnapshot = {
         ...state.snapshot,
         totals: Object.freeze({ ...state.snapshot.totals }),
-        cards: state.snapshot.cards.map((card) => Object.freeze({ ...card })),
+        cards: Object.freeze(
+          state.snapshot.cards.map((card) => Object.freeze({ ...card })),
+        ) as unknown as DesktopTodaySnapshot["cards"],
+        spendingToday: Object.freeze({ ...state.snapshot.spendingToday }),
+        activeRuns: Object.freeze(
+          state.snapshot.activeRuns.map((run) => Object.freeze({ ...run })),
+        ) as unknown as DesktopTodaySnapshot["activeRuns"],
+        recentRuns: Object.freeze(
+          state.snapshot.recentRuns.map((run) => Object.freeze({ ...run })),
+        ) as unknown as DesktopTodaySnapshot["recentRuns"],
       };
       return Object.freeze({ kind: "ready", snapshot: Object.freeze(snapshot) });
     }

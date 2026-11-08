@@ -35,8 +35,8 @@ export const DESKTOP_RUNTIME_STATUS_MESSAGES = Object.freeze({
   draining: "正在停止本机 Agent 并排空",
   failed: "本机运行服务失败",
   unknown: "本机运行服务状态未确认",
-  unconfigured: "隔离运行目录未配置，请先完成设置（不会自动初始化）",
-  unavailable: "打包运行资源尚未提供，无法启动运行服务",
+  unconfigured: "本机配置未完成，请前往设置（不会自动初始化）",
+  unavailable: "本机运行资源不可用，无法启动运行服务",
 } satisfies Record<DesktopRuntimeStatus, string>);
 
 /** The one place tray, menus, dialogs and the renderer agree on a status line. */

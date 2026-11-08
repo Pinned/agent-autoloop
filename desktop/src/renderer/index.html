@@ -17,26 +17,24 @@
       <span>agent-autoloop <span class="muted">/ 指挥台</span></span
       ><button id="hide-window" aria-label="收起窗口，驻留托盘">收起窗口</button>
     </header>
-    <div class="release-note">开发版 · 今天、新建、自动化与任务记录已接本机中台；远程执行机待接入</div>
     <div class="shell">
       <aside class="sidebar">
         <div class="brand">
           <span class="logo" aria-hidden="true"></span>
-          <div>autoloop<small>工作有进展，决策找你</small></div>
+          <div>agent-autoloop<small>COMMAND CENTER</small></div>
         </div>
         <div class="nav-label">工作空间</div>
         <nav aria-label="主导航" id="navigation"></nav>
         <button id="new-task" class="new-task-button" type="button">＋ 新建任务</button>
         <div class="sidebar-footer">
-          <span class="connection">今天、新建、自动化与任务记录已接入</span>
-          <p>远程执行机待接入</p>
+          <span id="runtime-status" class="sidebar-status" role="status">正在读取本机状态</span>
+          <p id="runtime-role"></p>
+          <button id="view-connection" type="button">查看连接</button>
         </div>
       </aside>
       <main id="main" tabindex="-1" aria-labelledby="page-title"></main>
     </div>
-    <footer class="statusbar">
-      <span>开发版 · 今天、新建、自动化与任务记录为本机真实数据</span><button id="quit-app">退出应用…</button>
-    </footer>
+    <footer class="statusbar"><span>工作有进展，决策找你</span><button id="quit-app">退出应用…</button></footer>
     <div id="error" class="error" role="alert" hidden></div>
     <noscript>此桌面界面需要启用 JavaScript。</noscript>
   </body>

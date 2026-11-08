@@ -12,6 +12,10 @@
   --blue: #255bb7;
   --accent: #2869d7;
   --accent-bg: #e2ecff;
+  --green: #197543;
+  --amber: #865309;
+  --red: #b3342c;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 :root[data-theme="dark"] {
@@ -28,6 +32,9 @@
   --blue: #78a7ff;
   --accent: #4c8dff;
   --accent-bg: #18263e;
+  --green: #6cdaa0;
+  --amber: #f5be6c;
+  --red: #ff8b84;
 }
 * {
   box-sizing: border-box;
@@ -102,14 +109,6 @@ h2 {
   font-size: 11px;
   padding: 3px 8px;
   background: transparent;
-}
-.release-note {
-  min-height: 34px;
-  padding: 7px 18px;
-  font-size: 11px;
-  color: var(--muted);
-  border-bottom: 1px solid var(--soft);
-  background: var(--panel);
 }
 .shell {
   display: flex;
@@ -218,12 +217,31 @@ svg {
 main {
   flex: 1;
   min-width: 0;
-  padding: 26px 30px;
+  padding: 24px 28px 30px;
   overflow: auto;
   scrollbar-gutter: stable;
 }
 .page-head {
-  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 22px;
+}
+.page-head-copy {
+  min-width: 0;
+}
+.page-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.page-head-actions button {
+  border-color: var(--blue);
+  background: var(--accent-bg);
+  font-weight: 600;
 }
 .eyebrow {
   color: var(--faint);
@@ -472,94 +490,250 @@ main {
   color: var(--faint);
   margin-top: 12px;
 }
-.today-status {
-  font-size: 12px;
-  margin-top: 12px;
+.today-view {
+  min-width: 0;
 }
 .today-stats {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
-  margin-top: 14px;
 }
 .today-stat {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 10px 14px;
+  min-width: 0;
+  padding: 15px;
   border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--panel2);
-  min-width: 72px;
+  border-radius: 8px;
+  background: var(--panel);
 }
 .today-stat-value {
-  font-size: 16px;
-  font-weight: 650;
+  margin: 8px 0 3px;
+  font: 600 27px/1.4 var(--mono);
+  color: var(--text);
+  overflow-wrap: anywhere;
 }
 .today-stat-label {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
 }
-.today-cards-title {
-  margin-top: 22px;
+.today-stat-hint {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 6px;
 }
-.today-cards {
-  list-style: none;
-  margin: 12px 0 0;
-  padding: 0;
-  display: grid;
-  gap: 10px;
-}
-.today-card {
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--panel2);
-}
-.today-card-head {
+.today-status-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  margin-top: 14px;
 }
-.today-card-kind {
+.today-status {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.today-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.today-actions button,
+.today-task-link {
+  font-size: 12px;
+  padding: 5px 9px;
+}
+.today-section-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 24px 0 11px;
+}
+.today-section-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+.today-section-head .today-task-link {
+  margin-left: auto;
+}
+.today-task-link {
+  background: transparent;
+  border-color: transparent;
+}
+.today-task-link:hover {
+  border-color: var(--blue);
+}
+.today-card {
+  min-width: 0;
+  padding: 18px;
+  margin-bottom: 12px;
+}
+.today-decision {
+  border-left: 3px solid var(--amber);
+  background: color-mix(in srgb, var(--amber) 4%, var(--panel));
+}
+.today-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.today-card-head h3,
+.today-empty h3,
+.today-recent-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.today-card-head h3 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.today-card-kind,
+.today-run-state {
   flex-shrink: 0;
   padding: 2px 7px;
   border: 1px solid var(--border);
   border-radius: 4px;
   font-size: 10px;
+  font-weight: 600;
   color: var(--muted);
+  white-space: nowrap;
+}
+.today-card-kind.ask {
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 8%, transparent);
 }
 .today-card-text {
   font-size: 12px;
-  margin-top: 7px;
+  margin-top: 10px;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.today-card-by {
+.today-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  border-top: 1px solid var(--soft);
+  padding-top: 10px;
+  margin-top: 14px;
   font-size: 11px;
-  margin-top: 5px;
+  overflow-wrap: anywhere;
 }
-.today-card-empty {
+.today-run-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.today-run-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 15px;
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  background: var(--panel);
+}
+.today-run-row:first-child {
+  border-radius: 8px 8px 0 0;
+}
+.today-run-row:last-child {
+  border-bottom: 1px solid var(--border);
+  border-radius: 0 0 8px 8px;
+}
+.today-run-row:only-child {
+  border-radius: 8px;
+}
+.today-run-copy {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.today-run-title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 7px;
+  font-size: 13px;
+}
+.today-run-title strong {
+  font-weight: 550;
+}
+.today-run-id {
+  font: 12px var(--mono);
+}
+.today-run-meta,
+.today-run-summary {
+  font-size: 11px;
+  margin-top: 3px;
+}
+.today-run-summary {
+  white-space: pre-wrap;
+}
+.today-run-state.claimed {
+  color: var(--blue);
+  background: var(--accent-bg);
+}
+.today-run-state.done {
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 8%, transparent);
+}
+.today-run-state.unknown {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+}
+.today-list-note {
   font-size: 12px;
+  margin: 10px 0;
+}
+.today-recent-title {
+  margin: 18px 0 11px;
+}
+#today-notices > .today-section-head {
+  margin-top: 14px;
+}
+.today-empty {
+  padding: 48px 22px;
+  text-align: center;
+  background: var(--panel);
+  border: 1px dashed var(--border);
+  border-radius: 9px;
+}
+.today-empty p {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 7px;
 }
 .today-error {
   padding: 12px;
   margin-top: 10px;
   border: 1px solid var(--border);
-  border-left: 3px solid var(--blue);
-  background: var(--accent-bg);
+  border-left: 3px solid var(--red);
+  background: var(--panel);
   font-size: 12px;
 }
-.today-actions {
+.sidebar-status {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 20px;
+  align-items: center;
+  gap: 6px;
+  overflow-wrap: anywhere;
 }
-.today-note {
-  font-size: 11px;
-  color: var(--faint);
-  margin-top: 12px;
+.sidebar-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--muted);
+}
+.sidebar-status[data-status="running"] .sidebar-status-dot {
+  background: var(--green);
+}
+.sidebar-status[data-status="failed"] .sidebar-status-dot,
+.sidebar-status[data-status="unknown"] .sidebar-status-dot {
+  background: var(--amber);
 }
 .page-actions {
   display: flex;
@@ -766,6 +940,23 @@ main {
   display: none !important;
 }
 @media (max-width: 850px) {
+  .today-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .today-stat {
+    padding: 12px;
+  }
+  .page-head {
+    align-items: flex-start;
+  }
+  .page-head-actions {
+    flex-shrink: 1;
+  }
+  .today-status-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
   main {
     padding: 22px;
   }
@@ -780,6 +971,16 @@ main {
   }
 }
 @media (forced-colors: active) {
+  .today-decision {
+    border-left: 3px solid CanvasText;
+  }
+  .today-card-kind,
+  .today-run-state {
+    border-color: CanvasText;
+  }
+  .sidebar-status-dot {
+    background: CanvasText;
+  }
   nav button.active {
     outline: 2px solid Highlight;
   }
