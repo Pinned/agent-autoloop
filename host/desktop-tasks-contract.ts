@@ -5,7 +5,8 @@
 // same way). Main projects, the renderer strictly re-validates.
 export const DESKTOP_TASKS_VERSION = 1 as const;
 export const DESKTOP_TASKS_RESPONSE_MAX_BYTES = 160 * 1024;
-// The hub's own page is 60 runs plus its active ones; the desktop shows at most this many per read.
+// The hub's first page merges its latest 60 runs with all queued, claimed and unknown runs.
+// The desktop caps that potentially larger result at this many per read.
 export const DESKTOP_TASKS_RUNS_MAX = 100 as const;
 // The hub already caps a run's triggering events at 20; the projection keeps the same bound.
 export const DESKTOP_TASKS_EVENTS_MAX = 20 as const;
@@ -222,10 +223,10 @@ export function projectDesktopTasksSnapshot(value: unknown): DesktopTasksSnapsho
         agent: view.agent,
         state: view.state,
         attempts: view.attempts,
-        createdAt: view.created_at ?? null,
-        claimedAt: view.claimed_at ?? null,
-        finishedAt: view.finished_at ?? null,
-        notBefore: view.not_before ?? null,
+        createdAt: view.createdAt ?? null,
+        claimedAt: view.claimedAt ?? null,
+        finishedAt: view.finishedAt ?? null,
+        notBefore: view.notBefore ?? null,
         summary: view.summary,
         error: view.error,
         stopping: view.stopping,
