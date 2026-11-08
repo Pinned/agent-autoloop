@@ -128,7 +128,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   }
   // The renderer is pushed state through the two fixed event channels, and nothing else.
   assert.equal((main.match(/webContents\.send\(/g) ?? []).length, 2);
-  assert.match(main, /webContents\.send\(channels\.runtimeEvent, desktopRuntimeSnapshotOf\(state\)\)/);
+  assert.match(main, /webContents\.send\(channels\.runtimeEvent, desktopRuntimeEventOf\(state\)\)/);
   assert.match(main, /webContents\.send\(channels\.navigate, \{ page \}\)/);
   assert.match(main, /cachedOnly: true/);
   assert.match(main, /entryPath: join\(resources, "host", "desktop-setup\.ts"\)/);
