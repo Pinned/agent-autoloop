@@ -1022,6 +1022,19 @@ main {
   margin-top: 0;
   font-size: 12px;
 }
+/* This machine's own runtime reading: display facts only, never proof a drain is safe. */
+.local-reading .run-facts {
+  margin-top: 16px;
+}
+.local-reading .run-list {
+  margin-top: 14px;
+  gap: 6px;
+}
+.local-reading .run-line {
+  margin-top: 0;
+  justify-content: space-between;
+  font-size: 12px;
+}
 @media (max-width: 650px) {
   .setup-choices {
     grid-template-columns: 1fr;
