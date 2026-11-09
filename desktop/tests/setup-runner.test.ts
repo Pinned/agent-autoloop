@@ -69,6 +69,25 @@ function fixture(result: LocalProcessResult = completed()) {
   };
 }
 
+test("lifecycle discovery is an explicit main-only injection, never inherited environment", async (t) => {
+  process.env.DESKTOP_SETUP_DISCOVERY = "none";
+  t.after(() => delete process.env.DESKTOP_SETUP_DISCOVERY);
+  const normal = fixture();
+  await normal.runner.run(request());
+  assert.equal(normal.observed().env!.DESKTOP_SETUP_DISCOVERY, undefined);
+  let observed: LocalProcessOptions | undefined;
+  const runner = createSetupRunner({
+    installationDiscovery: "none",
+    prepare: async () => resources,
+    runProcess: async (options) => {
+      observed = options;
+      return completed();
+    },
+  });
+  await runner.run(request());
+  assert.equal(observed!.env!.DESKTOP_SETUP_DISCOVERY, "none");
+});
+
 test("construction is inert; all operations use fixed Node/driver and read-only or mutation mode", async () => {
   const inputs: DesktopSetupRequest[] = [
     request(),

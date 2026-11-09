@@ -43,7 +43,13 @@ test("business lifecycle drive runs through the shipped bridge and never fakes s
   assert.match(main, /runLifecycleWorkerDrive\(port, drive\.join, drive\.quitSentinel\)/);
   // Quitting still walks the confirmed lifecycle path; a failure reports, stops safely, exits non-zero.
   assert.match(main, /if \(lifecycle\) return true;/);
-  assert.match(main, /prepareQuit\(\(\) => controller\.stop\(\)\)[\s\S]*?finally\(\(\) => app\.exit\(1\)\)/);
+  // A failed drive stops safely first; exiting non-zero is the helper's job, and a stop that
+  // cannot be confirmed keeps the process and the evidence instead of faking success.
+  assert.match(
+    main,
+    /safelyAbortLifecycle\(\{\s*prepareQuit: \(\) => setup\.prepareQuit\(\(\) => controller\.stop\(\)\),\s*exit: \(code\) => app\.exit\(code\),\s*\}\)/,
+  );
+  assert.match(main, /未确认安全停止，保留进程与证据，不强制退出/);
   assert.match(pkg.scripts.lifecycle, /lifecycle-smoke\.mjs/);
 });
 
@@ -105,7 +111,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(main, /远程队列不会取消/);
   assert.match(main, /离线持久待同步/);
   assert.doesNotMatch(main, /restartPolicy|controller\.restart/);
-  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 18);
+  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 21);
   // Each handler is checked inside its own block: a cross-handler match would let a missing
   // sender check hide behind the next handler that has one.
   const blocks = main.split("ipcMain.handle(channels.").slice(1);
@@ -116,6 +122,9 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   };
   for (const name of [
     "setupStatus",
+    "launchStatus",
+    "probeHub",
+    "completeSetup",
     "setupCheck",
     "setupInit",
     "setupJoin",
@@ -148,7 +157,9 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(read("../src/task-action-ipc.ts"), /parseDesktopTaskActionInput\(args\[0\]\)/);
   // The renderer is pushed state through the two fixed event channels, and nothing else.
   assert.equal((main.match(/webContents\.send\(/g) ?? []).length, 2);
-  assert.match(main, /webContents\.send\(channels\.runtimeEvent, desktopRuntimeEventOf\(state\)\)/);
+  // Presentation wraps each snapshot once, then main posts that exact event; no second envelope.
+  assert.match(read("../src/runtime-presentation.ts"), /desktopRuntimeEventOf\(snapshot\(\)\)/);
+  assert.match(main, /webContents\.send\(channels\.runtimeEvent, event\)/);
   assert.match(main, /webContents\.send\(channels\.navigate, \{ page \}\)/);
   assert.match(main, /cachedOnly: true/);
   assert.match(main, /entryPath: join\(resources, "host", "desktop-setup\.ts"\)/);
@@ -171,11 +182,14 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
   const methods = [...source.matchAll(/^  (\w+):/gm)].map((match) => match[1]).sort();
   assert.deepEqual(methods, [
     "checkBuiltinAgents",
+    "completeSetup",
     "getTheme",
     "initHub",
     "joinWorker",
+    "launchStatus",
     "onNavigate",
     "onRuntimeEvent",
+    "probeHub",
     "rulesGet",
     "rulesPut",
     "runtimeGet",
@@ -350,11 +364,15 @@ test("the tray's live glance listens to the hub's own stream and never polls", (
   const main = read("../src/main.ts");
   // Facts are never parsed for display; only the id line is kept, and truth always re-reads state.
   assert.match(watcher, /\/v1\/stream\?after=/);
-  assert.match(watcher, /parseDesktopTodayResponse\(await options\.readToday\(\)\)/);
-  assert.match(watcher, /parseDesktopTasksResponse\(await options\.readTasks\(\)\)/);
+  // The tray re-reads both state doors after each stream wake; the raw value is parsed, never trusted.
+  assert.match(watcher, /const todayValue = await options\.readToday\(\);/);
+  assert.match(watcher, /parseDesktopTodayResponse\(todayValue\)/);
+  assert.match(watcher, /const tasksValue = await options\.readTasks\(\);/);
+  assert.match(watcher, /parseDesktopTasksResponse\(tasksValue\)/);
   assert.doesNotMatch(watcher, /setInterval/);
-  // The stream opens only for a running local hub with the loopback owner credential, like every reader.
-  assert.match(watcher, /status !== "running" \|\| role === "worker"/);
+  // The stream opens only for a running local hub with the loopback owner credential, like every reader;
+  // an executor-only role keeps it closed because it never holds the owner key.
+  assert.match(watcher, /state\.status === "running" && state\.role === "hub-worker"/);
   assert.match(watcher, /authorization: `Bearer \$\{gate\.owner\}`/);
   // Stopping one round goes through the hub's own cancel door, never a process handle.
   assert.match(watcher, /\/v1\/runs\/\$\{id\}\/cancel/);

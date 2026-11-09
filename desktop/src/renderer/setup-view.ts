@@ -1,7 +1,8 @@
 import type { createRendererSetup } from "./setup-controller.ts";
+import { parseDesktopJoinInput } from "../../../host/desktop-setup-contract.ts";
 
 type Controller = ReturnType<typeof createRendererSetup>;
-const roles = { "hub-worker": "中台＋本机 worker", worker: "纯 worker" };
+const roles = { "hub-worker": "中台＋执行机", worker: "执行机" };
 
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, text = "", className = "") {
   const node = document.createElement(tag);
@@ -12,6 +13,8 @@ function element<K extends keyof HTMLElementTagNameMap>(tag: K, text = "", class
 
 export function mountSetupView(root: HTMLElement, control: Controller, close: () => void) {
   let keyInput: HTMLInputElement | undefined;
+  let draftScope = "";
+  let renderedDraft: { url: string; worker: string } | undefined;
   function clearKey() {
     if (keyInput) keyInput.value = "";
     keyInput = undefined;
@@ -43,19 +46,47 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
     return input;
   }
   function render(focus = true) {
+    const state = control.state;
+    const currentWizard =
+      state.kind === "wizard"
+        ? state
+        : state.kind === "checking" || state.kind === "submitting" || state.kind === "probing"
+          ? state.wizard
+          : undefined;
+    const scope = currentWizard ? `${currentWizard.role}:${currentWizard.step}` : "";
+    // Keep unsent non-secret input only while redrawing the same unchanged draft.
+    // A controller validation result or a step/role change remains authoritative.
+    const preserveDraft =
+      scope === draftScope &&
+      renderedDraft &&
+      currentWizard &&
+      renderedDraft.url === currentWizard.draft.url &&
+      renderedDraft.worker === currentWizard.draft.worker;
+    let urlValue = preserveDraft ? root.querySelector<HTMLInputElement>("#setup-url")?.value : undefined;
+    // Unsent addresses are not necessarily non-secret. Reuse the authoritative URL
+    // grammar before restoring a DOM draft, even when sanitization left state unchanged.
+    if (urlValue) {
+      try {
+        parseDesktopJoinInput({ url: urlValue, worker: "validation-only", key: "validation-only" });
+      } catch {
+        urlValue = currentWizard?.draft.url;
+      }
+    }
+    const workerValue = preserveDraft ? root.querySelector<HTMLInputElement>("#setup-worker")?.value : undefined;
+    draftScope = scope;
+    renderedDraft = currentWizard ? { ...currentWizard.draft } : undefined;
     clearKey();
     root.replaceChildren();
     root.setAttribute("aria-labelledby", "setup-title");
-    const state = control.state;
     const header = element("header", "", "page-head");
     const title = element("h1", "配置此电脑");
     title.id = "setup-title";
     title.tabIndex = -1;
     const copy = element("div", "", "page-head-copy");
     copy.append(
-      element("div", "AUTOLOOP / 本机配置", "eyebrow"),
+      element("div", "桌面应用 / 本机配置", "eyebrow"),
       title,
-      element("p", "只保存本机配置，不自动启动服务或验证远端连接。"),
+      element("p", "先选择此电脑的角色并保存配置，再明确完成首次配置并请求启动。保存本身不会启动。"),
     );
     header.append(copy);
     root.append(header);
@@ -72,7 +103,12 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
       close();
     };
 
-    if (state.kind === "wizard" || state.kind === "checking" || state.kind === "submitting") {
+    if (
+      state.kind === "wizard" ||
+      state.kind === "checking" ||
+      state.kind === "submitting" ||
+      state.kind === "probing"
+    ) {
       const wizard = state.kind === "wizard" ? state : state.wizard;
       const busy = control.busy;
       panel.setAttribute("aria-busy", String(busy));
@@ -108,22 +144,22 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
         form.append(element("h2", roles[wizard.role]));
         if (wizard.role === "hub-worker") {
           form.append(
-            element("p", "中台默认使用本机回环地址与端口 3350。此处不修改端口、不开放外部访问。", "muted"),
-            element("p", "允许尚未发现 Agent 时保存配置；服务与 Agent 都不会在本次配置中启动。", "muted"),
+            element("p", "先只读检查有限的本机回环地址；不会扫描旧安装配置或读取密钥，不停止或接管已有服务。", "muted"),
+            element("p", "内置中台使用应用独立数据目录与可用端口。原任务与记录保留在原中台，不会自动迁移。", "muted"),
           );
         } else {
           field(
             form,
             "setup-url",
             "中台地址",
-            wizard.draft.url,
+            urlValue ?? wizard.draft.url,
             "使用 http:// 或 https://，不要包含用户名、密码、查询参数或片段。",
           );
           field(
             form,
             "setup-worker",
             "本机名称",
-            wizard.draft.worker,
+            workerValue ?? wizard.draft.worker,
             "以小写字母开头，仅使用小写字母、数字与连字符，例如 worker-1。",
           );
           form.append(element("p", "本步不连接中台。密钥在最后确认前填写。", "muted"));
@@ -136,7 +172,30 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
             element("p", `本机：${wizard.draft.worker}`, "muted"),
           );
         }
-        form.append(button("检查内置 Agent 安装", () => control.check(), busy));
+        if (wizard.role === "hub-worker") {
+          form.append(button("检查本机已有中台", () => control.probe(), busy));
+          if (control.probeResult) {
+            const outcomes = {
+              unavailable: "未获得响应（可能未运行或超时，不代表本机没有中台）",
+              unrecognized: "响应不是可识别的中台协议",
+              "credentials-required": "需要显式凭证，尚未认证（不代表没有中台）",
+              incompatible: "协议不兼容",
+            };
+            const list = element("ul", "", "setup-checks");
+            for (const candidate of control.probeResult.candidates)
+              list.append(element("li", `${candidate.url}：${outcomes[candidate.outcome]}`));
+            form.append(
+              list,
+              element(
+                "p",
+                "目前尚不支持本次接入已有中台。继续会准备应用独立内置中台，不读取已有凭证、不接管外部服务。",
+                "muted",
+              ),
+              element("p", "下次启动使用应用独立中台；原任务与记录保留在原中台，不会自动迁移。", "muted"),
+            );
+          }
+        }
+        form.append(button("检查执行程序安装", () => control.check(), busy));
         form.append(element("p", "只检查受限目录中的安装。未发现可能是漏报；Claude / Codex 登录均未验证。", "muted"));
         if (wizard.check && wizard.check !== "skipped") {
           const list = element("ul", "", "setup-checks");
@@ -166,9 +225,9 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
           keyInput = field(
             form,
             "setup-key",
-            "加入密钥",
+            "执行机加入密钥",
             "",
-            "仅用于这次保存。提交后立即清空输入，不验证远端密钥有效性。",
+            "使用独立执行机凭证，不要填写中台管理凭证。仅用于保存；提交后立即清空，不在此验证远端有效性。",
             true,
           );
         }
@@ -187,11 +246,13 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
         form.append(error);
       }
       status.textContent =
-        state.kind === "checking"
-          ? "正在检查安装，请等待。离开页面不会取消检查。"
-          : state.kind === "submitting"
-            ? "正在保存本机配置，请等待。隐藏窗口不会取消操作。"
-            : "";
+        state.kind === "probing"
+          ? "正在只读检查指定回环地址，不会接管或停止已有服务。"
+          : state.kind === "checking"
+            ? "正在检查安装，请等待。离开页面不会取消检查。"
+            : state.kind === "submitting"
+              ? "正在保存本机配置，请等待。隐藏窗口不会取消操作。"
+              : "";
       if (wizard.step > 1)
         actions.append(
           button(
@@ -205,7 +266,8 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
         );
       const submit = element("button", wizard.step === 3 ? "确认保存本机配置" : "下一步");
       submit.type = "submit";
-      submit.disabled = busy || (wizard.step === 3 && !wizard.check);
+      submit.disabled =
+        busy || (wizard.step === 3 && (!wizard.check || (wizard.role === "hub-worker" && !control.probeResult)));
       submit.className = "setup-primary";
       actions.append(submit, button("暂不配置", cancel, control.submitting));
       form.append(actions);
@@ -217,8 +279,9 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
           try {
             control.submit(input?.value);
           } finally {
+            // submit() may synchronously redraw and install a new secret control.
+            // Only erase the old captured control; never discard the new reference.
             if (input) input.value = "";
-            clearKey();
           }
         } else {
           const url = form.querySelector<HTMLInputElement>("#setup-url")?.value;
@@ -227,14 +290,37 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
         }
       });
     } else {
-      if (state.kind === "configured") {
+      if (state.kind === "prepared" || state.kind === "completing" || state.kind === "completed") {
+        panel.append(element("h2", state.mode === "embedded" ? roles["hub-worker"] : roles.worker));
+        if (state.kind === "prepared") {
+          status.textContent = "本机配置已保存，运行服务尚未因保存而启动。";
+          panel.append(
+            element(
+              "p",
+              "明确完成首次配置后，将请求启动；以后打开应用会按已保存策略启动。安装与登录情况不因完成配置而改变。",
+              "muted",
+            ),
+          );
+          actions.append(button("完成首次配置并请求启动", () => control.complete(), control.busy));
+        } else if (state.kind === "completing") {
+          status.textContent = "正在完成首次配置并请求启动，请等待。不要重复初始化或强制退出。";
+          panel.setAttribute("aria-busy", "true");
+        } else {
+          status.textContent = "首次配置已完成，已请求启动。实际是否运行请查看执行机页。";
+          panel.append(
+            element("p", "如果启动失败，可在执行机页重试启动；不要重新初始化。执行程序登录仍未验证。", "muted"),
+          );
+        }
+        if (state.mode === "embedded")
+          panel.append(element("p", "本次及下次使用应用独立中台。原任务与记录保留在原中台，不会自动迁移。", "muted"));
+      } else if (state.kind === "configured") {
         status.textContent = state.created ? "本机配置已保存。" : "这台电脑已有配置，本轮不提供覆盖或切换角色。";
         panel.append(
           element("h2", roles[state.role]),
           element("p", "本次未启动服务；Agent 登录未验证。这里不判断运行服务当前是否在线。", "muted"),
         );
         if (state.role === "worker") panel.append(element("p", "本次未连接中台、未验证密钥有效性。", "muted"));
-      } else if (state.kind === "reading-status") {
+      } else if (state.kind === "reading-status" || state.kind === "reading-launch") {
         status.textContent = "正在核查本机配置，请等待。";
         panel.setAttribute("aria-busy", "true");
       } else if (state.kind === "unknown-locked") {
@@ -258,7 +344,7 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
       } else {
         status.textContent = "本机配置尚未检查。";
       }
-      actions.append(button("返回工作空间", cancel));
+      actions.append(button("返回工作空间", cancel, control.submitting));
       panel.append(actions);
     }
     if (focus) (root.querySelector<HTMLElement>(".setup-error") ?? title).focus();

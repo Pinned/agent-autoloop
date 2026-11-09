@@ -77,6 +77,8 @@ export function lifecycleHubSetupScript(): string {
   return `(async () => {
   const status = await window.desktop.setupStatus();
   const init = await window.desktop.initHub();
+  const prepared = await window.desktop.launchStatus();
+  if (!prepared.ok || prepared.operation !== "launch-status" || !(prepared.data.completion === "prepared")) return { status, init: null };
   return { status, init };
 })()`;
 }
@@ -85,7 +87,9 @@ export function lifecycleHubSetupScript(): string {
 export function lifecycleHubRunScript(): string {
   return `(async () => {
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-  const start = await window.desktop.runtimeStart();
+  const start = await window.desktop.completeSetup();
+  const completed = await window.desktop.launchStatus();
+  if (!completed.ok || completed.operation !== "launch-status" || completed.data.completion !== "complete") return { start: null, running: null };
   const deadline = Date.now() + ${RUN_TIMEOUT_MS};
   let running = null;
   while (!running && Date.now() < deadline) {
@@ -170,7 +174,11 @@ export function lifecycleWorkerStartScript(join: DesktopJoinInput): string {
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const status = await window.desktop.setupStatus();
   const joined = await window.desktop.joinWorker(${input});
-  const start = await window.desktop.runtimeStart();
+  const prepared = await window.desktop.launchStatus();
+  if (!prepared.ok || prepared.operation !== "launch-status" || prepared.data.completion !== "prepared") return { status, joined, start: null, running: null };
+  const start = await window.desktop.completeSetup();
+  const completed = await window.desktop.launchStatus();
+  if (!completed.ok || completed.operation !== "launch-status" || completed.data.completion !== "complete") return { start: null, running: null };
   const deadline = Date.now() + ${RUN_TIMEOUT_MS};
   let running = null;
   while (!running && Date.now() < deadline) {

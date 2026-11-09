@@ -127,7 +127,9 @@ test("lifecycle scripts drive only the real renderer bridge with bounded polling
   }
   assert.match(lifecycleHubSetupScript(), /window\.desktop\.setupStatus\(\)/);
   assert.match(lifecycleHubSetupScript(), /window\.desktop\.initHub\(\)/);
-  assert.match(lifecycleHubRunScript(), /window\.desktop\.runtimeStart\(\)/);
+  assert.match(lifecycleHubRunScript(), /window\.desktop\.completeSetup\(\)/);
+  assert.doesNotMatch(lifecycleHubRunScript(), /window\.desktop\.runtimeStart\(\)/);
+  assert.match(lifecycleHubSetupScript(), /completion === "prepared"/);
   assert.match(lifecycleHubRunScript(), /get\.state\.status === "running"/);
   const awkward = `/tmp/rule cwd'with"quotes`;
   const business = lifecycleHubBusinessScript(awkward);

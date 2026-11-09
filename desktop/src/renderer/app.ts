@@ -38,6 +38,7 @@ const main = document.querySelector<HTMLElement>("#main")!;
 const navigation = document.querySelector<HTMLElement>("#navigation")!;
 let currentPage = "today";
 let setupView: ReturnType<typeof mountSetupView> | undefined;
+let initialSetupPresented = false;
 let runCard: ReturnType<typeof mountRunCard> | undefined;
 let todayView: ReturnType<typeof mountTodayView> | undefined;
 // App-level singletons: page switches never destroy the controllers or their subscriptions.
@@ -70,10 +71,27 @@ const setup = createRendererSetup(window.desktop, () => {
     error.textContent = "无法确认配置操作已安全完成。本次会话已锁定，请保留现场并人工检查，不要重复初始化或强制退出。";
     error.hidden = false;
   }
-  for (const button of navigation.querySelectorAll<HTMLButtonElement>("button")) button.disabled = setup.submitting;
-  // A finished configuration is exactly when the local runtime becomes startable.
+  const startupBusy =
+    setup.state.kind === "reading-launch" ||
+    (setup.launch?.completion === "first-run" && setup.state.kind === "reading-status");
+  for (const button of navigation.querySelectorAll<HTMLButtonElement>("button"))
+    button.disabled = setup.submitting || startupBusy;
+  if (
+    !initialSetupPresented &&
+    ((setup.launch && ["first-run", "prepared", "recovery", "invalid"].includes(setup.launch.completion)) ||
+      (!setup.launch && (setup.state.kind === "blocked" || setup.state.kind === "unknown-locked"))) &&
+    setup.state.kind !== "reading-status" &&
+    setup.state.kind !== "reading-launch"
+  ) {
+    initialSetupPresented = true;
+    // Present the authoritative result without invoking open() and retrying a failed read.
+    if (!setupView) setupView = mountSetupView(main, setup, () => render(currentPage));
+    setupView.render();
+  }
+  // Saving does not start a runtime. Completion only requests it; runtime is authoritative.
+  if (setup.state.kind === "prepared" || setup.state.kind === "completed") run.refresh();
   if (setup.state.kind === "configured") run.refresh();
-  setupView?.render();
+  setupView?.render(false);
 });
 taskGate = () => run.state.kind === "ready" && run.state.snapshot.status === "running" &&
   run.state.snapshot.role === "hub-worker" && !setup.busy && setup.state.kind !== "unknown-locked";
@@ -133,6 +151,11 @@ function applyTheme(state: ThemeState) {
   if (select) select.value = state.preference;
 }
 function render(id: string, focus = true) {
+  if (
+    setup.state.kind === "reading-launch" ||
+    (setup.launch?.completion === "first-run" && setup.state.kind === "reading-status")
+  )
+    return;
   if (setupView) {
     if (!setup.leave()) return;
     setupView.dispose();
@@ -149,7 +172,7 @@ function render(id: string, focus = true) {
     if (button.dataset.page === id) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   }
-  main.innerHTML = `<header class="page-head"><div class="page-head-copy"><div class="eyebrow">WORKSPACE / COMMAND CENTER</div><h1 id="page-title">${page.title}</h1><p>${page.description}</p></div><div class="page-head-actions"></div></header>`;
+  main.innerHTML = `<header class="page-head"><div class="page-head-copy"><div class="eyebrow">工作空间 / 本机工作台</div><h1 id="page-title">${page.title}</h1><p>${page.description}</p></div><div class="page-head-actions"></div></header>`;
   if (id === "settings") {
     main.insertAdjacentHTML(
       "beforeend",
@@ -213,9 +236,9 @@ function render(id: string, focus = true) {
     const description = document.createElement("p");
     description.className = "muted";
     description.textContent =
-      setup.state.kind === "idle"
-        ? "本机配置尚未检查。可配置为中台＋本机 worker，或纯 worker。"
-        : "配置此电脑的运行角色；保存配置后，可前往执行机页启动。";
+      setup.launch?.completion === "legacy"
+        ? "此电脑已有旧配置，但没有自动启动授权。请在执行机页明确启动；本轮不会覆盖旧配置。"
+        : "可选择中台＋执行机或执行机。保存配置与完成首次配置并请求启动是两个独立操作。";
     const button = document.createElement("button");
     button.textContent = "配置此电脑";
     button.type = "button";
@@ -242,5 +265,6 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
   window.desktop.getTheme().then(applyTheme).catch(report);
 });
 render("today", false);
+setup.bootstrap();
 run.init();
 window.desktop.getTheme().then(applyTheme).catch(report);

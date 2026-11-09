@@ -24,6 +24,8 @@ export function createSetupRunner(options: {
   enabled?: boolean;
   prepare(ownCleanup: (cleanup: SetupCleanup) => void): Promise<SetupResources>;
   runProcess?: typeof runLocalProcess;
+  /** Main-only lifecycle injection; never renderer input or inherited environment. */
+  installationDiscovery?: "none";
   timeoutMs?: number;
   stopTimeoutMs?: number;
 }) {
@@ -83,6 +85,7 @@ export function createSetupRunner(options: {
         TMP: resources.environmentHome,
         TEMP: resources.environmentHome,
         AGENT_AUTOLOOP_HOME: resources.home,
+        ...(options.installationDiscovery === "none" && { DESKTOP_SETUP_DISCOVERY: "none" }),
         // The hub port override (the CLI's `init --port` equivalent) is the one environment knob
         // the main process passes through; the entry point validates it and fails closed on junk.
         ...(process.env.DESKTOP_SETUP_PORT !== undefined && { DESKTOP_SETUP_PORT: process.env.DESKTOP_SETUP_PORT }),
@@ -95,7 +98,7 @@ export function createSetupRunner(options: {
         cwd: dirname(dirname(resources.entryPath)),
         env,
         input,
-        mode: parsed.operation === "status" || parsed.operation === "check" ? "read-only" : "mutation",
+        mode: ["status", "check", "launch-status", "probe"].includes(parsed.operation) ? "read-only" : "mutation",
         timeoutMs,
         stopTimeoutMs,
         maxOutputBytes: DESKTOP_SETUP_RESPONSE_MAX_BYTES,
@@ -118,7 +121,7 @@ export function createSetupRunner(options: {
       // Safe child termination does not establish whether a mutation committed.
       // Only a validated, explicit driver result can authorize another attempt.
       if (
-        (!validated && (parsed.operation === "init" || parsed.operation === "join")) ||
+        (!validated && ["init", "join", "complete"].includes(parsed.operation)) ||
         (!response.ok && response.error.code === "unknown")
       ) {
         retain(cleanups);

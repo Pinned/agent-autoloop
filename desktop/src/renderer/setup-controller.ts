@@ -9,6 +9,7 @@ import {
   type DesktopSetupResponse,
 } from "../../../host/desktop-setup-contract.ts";
 import type { DesktopBridge } from "../policy.ts";
+import type { DesktopHubProbe, DesktopLaunchStatus, DesktopLaunchMode } from "../../../host/desktop-launch-contract.ts";
 
 export type SetupRole = "hub-worker" | "worker";
 export type SetupDraft = Readonly<{ url: string; worker: string }>;
@@ -23,6 +24,11 @@ export type Wizard = Readonly<{
 export type SetupState =
   | { readonly kind: "idle" }
   | { readonly kind: "reading-status" }
+  | { readonly kind: "reading-launch" }
+  | { readonly kind: "probing"; readonly wizard: Wizard }
+  | { readonly kind: "prepared"; readonly mode: DesktopLaunchMode }
+  | { readonly kind: "completing"; readonly mode: DesktopLaunchMode }
+  | { readonly kind: "completed"; readonly mode: DesktopLaunchMode }
   | (Wizard & { readonly kind: "wizard" })
   | { readonly kind: "checking"; readonly wizard: Wizard }
   | { readonly kind: "submitting"; readonly wizard: Wizard }
@@ -31,7 +37,10 @@ export type SetupState =
   | { readonly kind: "mutation-unresolved"; readonly message: string }
   | { readonly kind: "unknown-locked"; readonly message: string };
 
-export type SetupBridge = Pick<DesktopBridge, "setupStatus" | "checkBuiltinAgents" | "initHub" | "joinWorker">;
+export type SetupBridge = Pick<
+  DesktopBridge,
+  "setupStatus" | "checkBuiltinAgents" | "initHub" | "joinWorker" | "launchStatus" | "probeHub" | "completeSetup"
+>;
 
 /** A single-flight, in-memory UI controller. No credentials are retained in state. */
 export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
@@ -41,6 +50,10 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
   let flightGeneration = 0;
   let flightSnapshot: Wizard | null = null;
   let lock: "mutation" | "unknown" | null = null;
+  let bootstrapped = false;
+  let launch: Readonly<DesktopLaunchStatus> | null = null;
+  let probeResult: Readonly<DesktopHubProbe> | null = null;
+  let completionMode: DesktopLaunchMode = "embedded";
 
   function notify() {
     // Rendering is not part of the bridge transaction, even if a listener throws.
@@ -96,17 +109,43 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
       if (lock === "mutation") {
         locked(true);
       } else if (
-        response.operation === "check" &&
+        (response.operation === "check" || response.operation === "probe") &&
         snapshot &&
         ["busy", "unavailable", "operation-failed"].includes(response.error.code)
       ) {
-        setWizard({ ...snapshot, check: null, checkError: response.error.code, error: response.error.message });
+        setWizard(
+          response.operation === "probe"
+            ? { ...snapshot, error: "本机中台检测未完成，请重试；尚不能保存中台配置。" }
+            : { ...snapshot, check: null, checkError: response.error.code, error: response.error.message },
+        );
       } else {
         blocked(response.error.code);
       }
       return;
     }
     switch (response.operation) {
+      case "launch-status":
+        launch = Object.freeze(response.data);
+        lock = null;
+        if (launch.completion === "first-run") start("status");
+        else if (launch.completion === "prepared") {
+          completionMode = launch.nextLaunch!;
+          set({ kind: "prepared", mode: completionMode });
+        } else if (launch.completion === "recovery" || launch.completion === "invalid") {
+          blocked(launch.completion === "recovery" ? "incomplete-setup" : "invalid-config");
+        } else set({ kind: "idle" });
+        break;
+      case "probe":
+        for (const candidate of response.data.candidates) Object.freeze(candidate);
+        Object.freeze(response.data.candidates);
+        probeResult = Object.freeze(response.data);
+        setWizard({ ...snapshot!, error: null });
+        break;
+      case "complete":
+        completionMode = response.data.nextLaunch;
+        launch = Object.freeze({ completion: "complete", nextLaunch: completionMode, current: completionMode });
+        set({ kind: "completed", mode: completionMode });
+        break;
       case "status":
         lock = null;
         if (response.data.configuration === "configured") {
@@ -127,20 +166,28 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
       }
       case "init":
       case "join":
-        set({ kind: "configured", role: response.data.role, created: true });
+        completionMode = response.data.role === "worker" ? "worker" : "embedded";
+        launch = Object.freeze({ completion: "prepared", nextLaunch: completionMode, current: completionMode });
+        set({ kind: "prepared", mode: completionMode });
         break;
     }
   }
   function start(operation: DesktopSetupOperation, snapshot: Wizard | null = null, input?: DesktopJoinInput) {
-    const write = operation === "init" || operation === "join";
+    const write = operation === "init" || operation === "join" || operation === "complete";
     // Reserve and publish before any bridge/listener code can re-enter.
     flight = operation;
     flightGeneration = generation;
     flightSnapshot = snapshot;
     set(
-      operation === "status"
-        ? { kind: "reading-status" }
-        : { kind: write ? "submitting" : "checking", wizard: snapshot! },
+      operation === "launch-status"
+        ? { kind: "reading-launch" }
+        : operation === "complete"
+          ? { kind: "completing", mode: completionMode }
+          : operation === "probe"
+            ? { kind: "probing", wizard: snapshot! }
+            : operation === "status"
+              ? { kind: "reading-status" }
+              : { kind: write ? "submitting" : "checking", wizard: snapshot! },
     );
     function finish(value: unknown, rejected: boolean) {
       let response: DesktopSetupResponse | null = null;
@@ -168,6 +215,15 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
     let result: Promise<DesktopSetupResponse>;
     try {
       switch (operation) {
+        case "launch-status":
+          result = bridge.launchStatus();
+          break;
+        case "probe":
+          result = bridge.probeHub();
+          break;
+        case "complete":
+          result = bridge.completeSetup();
+          break;
         case "status":
           result = bridge.setupStatus();
           break;
@@ -206,7 +262,30 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
       return flight !== null;
     },
     get submitting(): boolean {
-      return flight === "init" || flight === "join";
+      return flight === "init" || flight === "join" || flight === "complete";
+    },
+    get launch(): Readonly<DesktopLaunchStatus> | null {
+      return launch;
+    },
+    get probeResult(): Readonly<DesktopHubProbe> | null {
+      return probeResult;
+    },
+    bootstrap(): void {
+      if (bootstrapped || flight !== null || lock !== null) return;
+      bootstrapped = true;
+      start("launch-status");
+    },
+    probe(): void {
+      const current = editable();
+      if (!current || current.role !== "hub-worker" || current.step !== 3) return;
+      probeResult = null;
+      start("probe", wizard(current));
+    },
+    complete(): boolean {
+      if (flight !== null || lock !== null || state.kind !== "prepared") return false;
+      completionMode = state.mode;
+      start("complete");
+      return true;
     },
     open(): void {
       if (flight !== null) {
@@ -214,18 +293,24 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
         if (flightGeneration !== generation && lock !== "unknown") {
           flightGeneration = generation;
           if (flight === "status") set({ kind: "reading-status" });
+          else if (flight === "launch-status") set({ kind: "reading-launch" });
+          else if (flight === "probe") set({ kind: "probing", wizard: flightSnapshot! });
           else if (flight === "check") set({ kind: "checking", wizard: flightSnapshot! });
         }
         notify();
-      } else if (lock === null && (state.kind === "idle" || (state.kind === "blocked" && state.retry))) start("status");
-      else notify();
+      } else if (lock === null && (state.kind === "idle" || (state.kind === "blocked" && state.retry))) {
+        // A new status/read round must never inherit a previous wizard's probe.
+        probeResult = null;
+        start(state.kind === "blocked" && bootstrapped ? "launch-status" : "status");
+      } else notify();
     },
     leave(): boolean {
-      if (flight === "init" || flight === "join") return false;
+      if (flight === "init" || flight === "join" || flight === "complete" || flight === "launch-status") return false;
       generation++;
       if (lock === "mutation") locked(true);
       else if (lock === "unknown") locked(false);
-      else if (state.kind !== "configured") set({ kind: "idle" });
+      else if (state.kind !== "configured" && state.kind !== "prepared" && state.kind !== "completed")
+        set({ kind: "idle" });
       return true;
     },
     chooseRole(role: SetupRole): void {
@@ -290,6 +375,11 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
     submit(key?: string): boolean {
       const current = editable();
       if (!current || current.step !== 3 || current.check === null) return false;
+      if (current.role === "hub-worker" && probeResult === null) {
+        setWizard({ ...current, error: "请先检查本机已有中台；检测仅限指定回环地址，不会接管外部服务。" });
+        notify();
+        return false;
+      }
       let input: DesktopJoinInput | undefined;
       if (current.role === "worker") {
         try {
@@ -307,7 +397,8 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
     },
     recheck(): void {
       if (flight !== null || lock === "unknown") return;
-      if (state.kind === "mutation-unresolved" || state.kind === "blocked") start("status");
+      if (state.kind === "mutation-unresolved" || state.kind === "blocked")
+        start(bootstrapped || launch ? "launch-status" : "status");
     },
   };
 }
