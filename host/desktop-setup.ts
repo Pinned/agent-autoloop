@@ -192,6 +192,23 @@ export function desktopSetupPort(env: Record<string, string | undefined> = proce
   return port >= 1024 && port <= 65535 ? given : null;
 }
 
+/**
+ * The driver runs only on the independent runtime the app downloads and verifies, never on
+ * Electron's embedded Node or whatever `node` the PATH happens to offer. The major must match
+ * `desktop/scripts/runtime.mjs`'s NODE_VERSION: bumping the pinned runtime without this would
+ * leave every real user unable to finish first run.
+ */
+export const DESKTOP_SUPPORTED_NODE_MAJOR = 24;
+
+export function desktopSetupRuntimeSupported(
+  versions: { node?: string; electron?: string } = process.versions,
+  platform: string = process.platform,
+): boolean {
+  if (versions.electron) return false;
+  if (Number((versions.node ?? "").split(".")[0]) !== DESKTOP_SUPPORTED_NODE_MAJOR) return false;
+  return platform === "darwin" || platform === "linux";
+}
+
 export type DesktopSetupDependencies = {
   home: string;
   discovery: SetupDiscovery;
@@ -364,14 +381,7 @@ async function main() {
     const request = parseDesktopSetupRequest(value);
     response = desktopSetupFailure(request.operation, "operation-failed");
     const home = process.env.AGENT_AUTOLOOP_HOME;
-    if (
-      process.versions.electron ||
-      Number(process.versions.node.split(".")[0]) !== 24 ||
-      (process.platform !== "darwin" && process.platform !== "linux") ||
-      !home ||
-      !path.isAbsolute(home) ||
-      process.env.AGENT_AUTOLOOP_RULES
-    ) {
+    if (!desktopSetupRuntimeSupported() || !home || !path.isAbsolute(home) || process.env.AGENT_AUTOLOOP_RULES) {
       response = desktopSetupFailure(request.operation, "unavailable");
     } else {
       const driver = createDesktopSetupDriver({

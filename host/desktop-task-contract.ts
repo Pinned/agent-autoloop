@@ -248,7 +248,10 @@ export function parseDesktopTaskCreateRequest(value: unknown): DesktopTaskInput 
 }
 
 export function parseDesktopTaskOutcome(value: unknown): DesktopTaskOutcome {
-  const outcome = value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, "outcome")?.value : undefined;
+  // Keep the peeked value unknown so the branches below narrow to the literal unions instead of
+  // indexing the message map with an `any` that no longer type-checks under TS 7.
+  const outcome: unknown =
+    value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, "outcome")?.value : undefined;
   if (outcome === "accepted") {
     const accepted = strictTaskRecord(value, ["version", "outcome", "receipt"]);
     if (accepted.version !== 3) throw new Error("版本不对");
