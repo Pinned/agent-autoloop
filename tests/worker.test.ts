@@ -151,6 +151,13 @@ async function until(worker: { tick(): Promise<boolean> }, done: () => boolean, 
 const worker = (hub: ReturnType<typeof fakeHub>, more: object = {}) =>
   createWorker({ hub: hub as any, name: "w1", wait: 0, ...more });
 
+/** Results arrive in completion order, not launch order: jobs start concurrently, so index by run. */
+const resultOf = (hub: ReturnType<typeof fakeHub>, given: { run: number }) => {
+  const found = hub.results.find((result) => result.run === given.run);
+  assert.ok(found, `no result for run ${given.run}: ${JSON.stringify(hub.results)}`);
+  return found;
+};
+
 test("a job runs in its rule's folder with the prompt and context file, and without the hub's secrets", async () => {
   const hub = fakeHub();
   const script = `pwd > out.txt; printenv AGENT_AUTOLOOP_CONTEXT >> out.txt; printenv AGENT_AUTOLOOP_SECRET_X >> out.txt; printenv AGENT_AUTOLOOP_RUN >> out.txt; echo "$PROMPT_ARG" >> out.txt; cat "$AGENT_AUTOLOOP_CONTEXT" > ctx.txt; echo 改好了`;
@@ -171,27 +178,25 @@ test("a job runs in its rule's folder with the prompt and context file, and with
 
 test("a bad exit code, or no last message, is a failure saying why", async () => {
   const hub = fakeHub();
-  hub.jobs.push(
-    job({ command: ["/bin/sh", "-c", "echo boom >&2; exit 3"] }),
-    job({ command: ["/bin/sh", "-c", "true"] }),
-  );
+  const exited = job({ command: ["/bin/sh", "-c", "echo boom >&2; exit 3"] });
+  const silent = job({ command: ["/bin/sh", "-c", "true"] });
+  hub.jobs.push(exited, silent);
   const w = worker(hub);
   await until(w, () => hub.results.length === 2);
-  assert.equal(hub.results[0].outcome, "failed");
-  assert.match(hub.results[0].error, /退出码 3：boom/);
-  assert.deepEqual([hub.results[1].outcome, hub.results[1].error], ["failed", "没留下结果"]);
+  assert.equal(resultOf(hub, exited).outcome, "failed");
+  assert.match(resultOf(hub, exited).error, /退出码 3：boom/);
+  assert.deepEqual([resultOf(hub, silent).outcome, resultOf(hub, silent).error], ["failed", "没留下结果"]);
 });
 
 test("a last message saying it couldn't, or that there was nothing to do, is what it says", async () => {
   const hub = fakeHub();
-  hub.jobs.push(
-    job({ command: ["/bin/sh", "-c", "echo 没跑成：连不上数据库"] }),
-    job({ command: ["/bin/sh", "-c", "echo 没事可做：已经恢复了"] }),
-  );
+  const refused = job({ command: ["/bin/sh", "-c", "echo 没跑成：连不上数据库"] });
+  const idle = job({ command: ["/bin/sh", "-c", "echo 没事可做：已经恢复了"] });
+  hub.jobs.push(refused, idle);
   const w = worker(hub);
   await until(w, () => hub.results.length === 2);
-  assert.deepEqual([hub.results[0].outcome, hub.results[0].error], ["failed", "连不上数据库"]);
-  assert.deepEqual([hub.results[1].outcome, hub.results[1].summary], ["nothing", "已经恢复了"]);
+  assert.deepEqual([resultOf(hub, refused).outcome, resultOf(hub, refused).error], ["failed", "连不上数据库"]);
+  assert.deepEqual([resultOf(hub, idle).outcome, resultOf(hub, idle).summary], ["nothing", "已经恢复了"]);
 });
 
 test("a result waits for the hub and goes once; one it refuses is dropped, and said so", async () => {
@@ -308,11 +313,13 @@ test("a job the worker stopped before launching is launched when it comes back",
 
 test("a missing folder or an agent with no adapter comes back failed without launching anything", async () => {
   const hub = fakeHub();
-  hub.jobs.push(job({ cwd: join(home, "nowhere") }), job({ use: "nosuchagent" }));
+  const missing = job({ cwd: join(home, "nowhere") });
+  const unadapted = job({ use: "nosuchagent" });
+  hub.jobs.push(missing, unadapted);
   const w = worker(hub);
   await until(w, () => hub.results.length === 2);
-  assert.match(hub.results[0].error, /启动不了/);
-  assert.match(hub.results[1].error, /没有 nosuchagent 的插件/);
+  assert.match(resultOf(hub, missing).error, /启动不了/);
+  assert.match(resultOf(hub, unadapted).error, /没有 nosuchagent 的插件/);
 });
 
 test("a run told to stop stops, with its children, and only then is it reported", async () => {
