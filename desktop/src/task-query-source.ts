@@ -63,7 +63,11 @@ function queryString(input: RunListInput | RunSectionInput, section?: Section): 
   return raw ? `?${raw}` : "";
 }
 function cancelBody(body: ReadableStream<Uint8Array> | null): void {
-  if (body) void body.cancel().catch(() => {});
+  try {
+    if (body) void body.cancel().catch(() => {});
+  } catch {
+    // Cleanup is best effort even for injected implementations that throw synchronously.
+  }
 }
 
 export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuerySource {
@@ -118,6 +122,7 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
     prior?.stop();
 
     const controller = new AbortController();
+    const deadline = performance.now() + timeoutMs;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let settled = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -127,7 +132,15 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
     });
     const flight: Flight = { key, promise, stop: () => finish(failure("aborted"), true) };
     function cancelReader() {
-      if (reader) void reader.cancel().catch(() => {});
+      try {
+        if (reader) void reader.cancel().catch(() => {});
+      } catch {
+        // Never let cleanup prevent settlement or replace the classified result.
+      }
+    }
+    function inactive(): boolean {
+      if (!settled && performance.now() >= deadline) finish(failure("timeout"), true);
+      return settled;
     }
     function finish(result: TaskQueryResult<T>, abort = false) {
       if (settled) return;
@@ -154,9 +167,10 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
       if (!reader) throw new Error("missing-body");
       const buffer = new Uint8Array(max);
       let size = 0;
-      while (!settled) {
+      let chunks = 0;
+      while (!inactive()) {
         const next = await reader.read();
-        if (settled) throw new Error("obsolete-query");
+        if (inactive()) throw new Error("obsolete-query");
         if (next.done) break;
         if (!(next.value instanceof Uint8Array) || next.value.byteLength > max - size) {
           cancelReader();
@@ -165,7 +179,13 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
         // Copy into fixed storage: tiny/empty chunks cannot grow an unbounded chunk array.
         buffer.set(next.value, size);
         size += next.value.byteLength;
+        // Ready promises (including empty chunks) must not starve timeout/cancel macrotasks.
+        if (++chunks % 32 === 0) {
+          await new Promise<void>((yes) => setTimeout(yes, 0));
+          if (inactive()) throw new Error("obsolete-query");
+        }
       }
+      if (inactive()) throw new Error("obsolete-query");
       return buffer.subarray(0, size);
     }
     async function execute() {
@@ -177,7 +197,7 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
           cache: "no-store",
           signal: controller.signal,
         });
-        if (settled) {
+        if (inactive()) {
           cancelBody(response.body);
           return;
         }
@@ -185,7 +205,9 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
           let missing = false;
           try {
             const bytes = await readBytes(response, 1024);
+            if (inactive()) return;
             const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+            if (inactive()) return;
             missing =
               value !== null &&
               typeof value === "object" &&
@@ -194,9 +216,10 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
               Object.hasOwn(value, "error") &&
               (value as { error: unknown }).error === "run-not-found";
           } catch {
+            if (inactive()) return;
             cancelReader();
           }
-          finish(failure(missing ? "not-found" : "unsupported"));
+          if (!inactive()) finish(failure(missing ? "not-found" : "unsupported"));
           return;
         }
         if (response.status !== 200) {
@@ -209,19 +232,27 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
                 : response.status === 404 || response.status === 405
                   ? "unsupported"
                   : "error";
-          finish(failure(code));
+          if (!inactive()) finish(failure(code));
           return;
         }
         const bytes = await readBytes(response, slot === "list" ? LIST_MAX_BYTES : DETAIL_MAX_BYTES);
-        if (!settled) finish({ ok: true, data: prepared.parse(bytes) });
+        if (inactive()) return;
+        const data = prepared.parse(bytes);
+        if (!inactive()) finish({ ok: true, data });
       } catch {
+        if (inactive()) return;
         cancelReader();
-        finish(failure("error"));
+        if (!inactive()) finish(failure("error"));
       } finally {
-        reader?.releaseLock();
+        try {
+          reader?.releaseLock();
+        } catch {
+          // Lock release is independent of cancellation and public settlement.
+        }
       }
     }
-    void execute();
+    // Observe terminal cleanup failures without changing execute's normal error classification.
+    void execute().catch(() => {});
     return promise;
   }
 
