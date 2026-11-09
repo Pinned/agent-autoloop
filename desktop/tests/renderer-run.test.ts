@@ -4,6 +4,7 @@ import {
   DESKTOP_RUNTIME_ERROR_MESSAGES,
   desktopRuntimeSnapshotOf,
   type DesktopRuntimeAdmissionCode,
+  type DesktopRuntimeEvent,
   type DesktopRuntimeResponse,
   type DesktopRuntimeSnapshot,
 } from "../../host/desktop-run-contract.ts";
@@ -25,13 +26,13 @@ const flush = async () => {
 };
 const snap = (overrides: Partial<DesktopRuntimeSnapshot> = {}): DesktopRuntimeSnapshot =>
   desktopRuntimeSnapshotOf({ status: "stopped", role: null, pendingSync: null, error: null, ...overrides });
-const ok = (state: DesktopRuntimeSnapshot) => ({ version: 1, ok: true, state });
+const ok = (state: DesktopRuntimeSnapshot): DesktopRuntimeResponse => ({ version: 1, ok: true, state });
 const fail = (code: DesktopRuntimeAdmissionCode) => ({
   version: 1,
   ok: false as const,
   error: { code, message: DESKTOP_RUNTIME_ERROR_MESSAGES[code] },
 });
-const pushed = (state: DesktopRuntimeSnapshot) => ({ version: 1, state });
+const pushed = (state: DesktopRuntimeSnapshot): DesktopRuntimeEvent => ({ version: 1, state });
 
 function fixture(gate: RunGate = () => ({ setupLocked: false, setupBusy: false })) {
   const calls: ("get" | "start" | "stop")[] = [];
@@ -284,10 +285,10 @@ test("refresh re-reads after setup completes and ignores it while any flight is 
 
 // Confirmed operation facts are separate from the latest pushed state.
 test("synchronous setup gate reentry cannot replace an already reserved operation token", async () => {
-  let control!: ReturnType<typeof createRendererRun>; let listener!: (value: unknown) => void;
+  let control!: ReturnType<typeof createRendererRun>; let listener!: (event: DesktopRuntimeEvent) => void;
   let calls = 0; const pending = deferred<DesktopRuntimeResponse>();
   control = createRendererRun({ runtimeGet: () => pending.promise, runtimeStart: () => { calls++; return pending.promise; }, runtimeStop: () => { calls++; return pending.promise; },
-    onRuntimeEvent(next) { listener = next; return () => {}; },
+    onRuntimeEvent(next: (event: DesktopRuntimeEvent) => void) { listener = next; return () => {}; },
   }, () => { control.stop(); return { setupLocked: false, setupBusy: false }; }, () => {});
   listener(pushed(snap())); control.start(); assert.equal(calls, 1); assert.equal(control.busy, true);
   pending.resolve(ok(snap())); await flush(); assert.equal(control.operationResults.start, null);
@@ -343,14 +344,14 @@ test("malformed rejected and unknown operation results lock despite a newer good
   }
 });
 test("bridge reentry reserves flight before push and synchronous throw locks without releasing a later token", async () => {
-  let listener!: (value: unknown) => void;
+  let listener!: (event: DesktopRuntimeEvent) => void;
   let control!: ReturnType<typeof createRendererRun>;
   const pending = deferred<DesktopRuntimeResponse>(); let starts = 0; let stops = 0;
   control = createRendererRun({
     runtimeGet() { throw new Error("unused"); },
     runtimeStart() { starts++; listener(pushed(snap({ status: "running" }))); control.stop(); return pending.promise; },
     runtimeStop() { stops++; throw undefined; },
-    onRuntimeEvent(next) { listener = next; return () => {}; },
+    onRuntimeEvent(next: (event: DesktopRuntimeEvent) => void) { listener = next; return () => {}; },
   }, () => ({ setupLocked: false, setupBusy: false }), () => {});
   listener(pushed(snap())); control.start(); assert.equal(starts, 1); assert.equal(stops, 0);
   pending.resolve(ok(snap({ status: "failed" }))); await flush();
@@ -359,10 +360,10 @@ test("bridge reentry reserves flight before push and synchronous throw locks wit
 });
 test("notify reentry starts a new token and old completion never clears it or queues a second read", async () => {
   const gates: ReturnType<typeof deferred<DesktopRuntimeResponse>>[] = [];
-  let listener!: (value: unknown) => void; let control!: ReturnType<typeof createRendererRun>; let reenter = false;
+  let listener!: (event: DesktopRuntimeEvent) => void; let control!: ReturnType<typeof createRendererRun>; let reenter = false;
   const read = () => { const gate = deferred<DesktopRuntimeResponse>(); gates.push(gate); return gate.promise; };
   control = createRendererRun({ runtimeGet: read, runtimeStart: read, runtimeStop: read,
-    onRuntimeEvent(next) { listener = next; return () => {}; },
+    onRuntimeEvent(next: (event: DesktopRuntimeEvent) => void) { listener = next; return () => {}; },
   }, () => ({ setupLocked: false, setupBusy: false }), () => { if (reenter && !control.busy) { reenter = false; control.stop(); } });
   listener(pushed(snap())); control.start(); control.refresh(); reenter = true;
   gates[0].resolve(ok(snap({ status: "running" }))); await flush();

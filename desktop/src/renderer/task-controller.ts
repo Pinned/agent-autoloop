@@ -16,10 +16,16 @@ export type TaskEntriesState =
   | { readonly kind: "loading" }
   | { readonly kind: "unavailable" | "no-hub" | "error"; readonly message: string }
   | { readonly kind: "ready"; readonly entries: readonly DesktopTaskEntry[] };
+// One literal per member: a member that merges literals is not a discriminant under TS 7, so
+// excluding it in an if/else chain leaves `message` unreachable in the error branch.
 export type TaskSubmitState =
-  | { readonly kind: "idle" | "busy" }
+  | { readonly kind: "idle" }
+  | { readonly kind: "busy" }
   | { readonly kind: "done"; readonly result: DesktopTaskResult }
-  | { readonly kind: "failed" | "not-sent" | "rejected" | "uncertain"; readonly message: string };
+  | { readonly kind: "failed"; readonly message: string }
+  | { readonly kind: "not-sent"; readonly message: string }
+  | { readonly kind: "rejected"; readonly message: string }
+  | { readonly kind: "uncertain"; readonly message: string };
 export type TaskDraft = Readonly<{ entry: string; pattern: string; concrete: string; summary: string; detail: string }>;
 type TaskOperation = Readonly<{ input: Readonly<DesktopTaskInput>; draft: TaskDraft }>;
 

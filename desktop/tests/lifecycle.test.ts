@@ -26,7 +26,14 @@ import {
 } from "../src/lifecycle-drive.ts";
 
 const TASK_DEADLINE = 123456;
-const taskCreated = (routed: string[] = [LIFECYCLE_RULE_NAME]) => ({
+// An explicit discriminant: in an inferred array every `stage` widens to `string`, so
+// `third.stage === "ok"` would narrow nothing and read `routed` off cases that never carry it.
+type TaskCreatedCase = { stage: "create"; deadline: number; created: unknown };
+type BusinessCase =
+  | { stage: "agents" }
+  | { stage: "ok"; routed: string[]; summary: string; todayReady: boolean; stopped: { state: object } }
+  | TaskCreatedCase;
+const taskCreated = (routed: string[] = [LIFECYCLE_RULE_NAME]): TaskCreatedCase => ({
   stage: "create", deadline: TASK_DEADLINE,
   created: { version: 3, outcome: "accepted", receipt: { version: 2, ok: true, result: { event: 1, duplicate: false, routed } } },
 });
@@ -274,7 +281,7 @@ test("hub drive aborts on every unverified stage instead of continuing", async (
     await runLifecycleHubDrive(port, "/tmp/r");
     assert.equal(evaluations, 2); assert.equal(events.length, 1); assert.match(events[0], /^abort:/);
   }
-  const businessCases = [
+  const businessCases: BusinessCase[] = [
     { stage: "agents" },
     { stage: "ok", routed: [], summary: "", todayReady: true, stopped: { state: { status: "stopped", error: null } } },
     taskCreated([]),

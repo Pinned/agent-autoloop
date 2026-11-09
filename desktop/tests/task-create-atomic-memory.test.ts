@@ -121,7 +121,7 @@ test("entering fetch throw, HTTP refusal, body failure and damaged ACK are uncer
   const implementations = [
     () => { throw new Error("fetch entered"); },
     async () => http(false, { error: "do not retry" }),
-    async () => ({ ok: true, json: async () => { throw new Error("body"); } }) as Response,
+    async () => ({ ok: true, json: async () => { throw new Error("body"); } }) as unknown as Response,
     async () => http(true, { ...ack, extra: "private" }),
     async () => http(true, Object.defineProperty({ ...ack }, "hidden", { value: 1 })),
   ];
