@@ -248,8 +248,18 @@ test("the task source only ever fetches the two fixed hub task routes with the o
   assert.doesNotMatch(source, /from ["'].*host\/config\.ts/);
   assert.match(main, /createTaskSource\(\{ home: runtimeHome, getState: \(\) => controller\.getState\(\) \}\)/);
   // A malformed input is rejected before any request leaves the process.
-  assert.match(main, /parseDesktopTaskInput\(args\[0\]\)/);
-  assert.match(main, /ipcMain\.handle\(channels\.taskCreate, async \(event, \.\.\.args: unknown\[\]\) => \{/);
+  const handler = read("../src/task-create-control.ts");
+  const preload = read("../src/preload.ts");
+  assert.match(main, /ipcMain\.handle\(channels\.taskCreate, createTaskCreateHandler\(\{/);
+  assert.match(main, /assertSender: \(event: Parameters<typeof assertSender>\[0\]\) => assertSender\(event, window\.webContents, page\)/);
+  assert.match(handler, /options\.assertSender\(event\)/);
+  assert.match(handler, /args\.length !== 1/);
+  assert.match(handler, /parseDesktopTaskCreateRequest\(args\[0\]\)/);
+  assert.ok(handler.indexOf("options.assertSender(event)") < handler.indexOf("parseDesktopTaskCreateRequest(args[0])"));
+  assert.match(handler, /acquireTaskLease\(\)/);
+  assert.match(handler, /checkTaskLease\(ownLease\)/);
+  assert.match(main, /create: \(input, canSend\) => taskSource\.create\(input, canSend\)/);
+  assert.match(preload, /invoke\("desktop:task:create", \{ version: 3, input \}\)/);
 });
 
 test("the automation page edits the hub's own entries through the pure rules contract", () => {
@@ -300,7 +310,16 @@ test("the global new-task dialog is a native dialog driven by the pure task cont
   assert.doesNotMatch(view, /innerHTML|insertAdjacentHTML|console\./);
   assert.doesNotMatch(controller, /node:|from ["'].*host\/(?:config|runtime|setup)\.ts/);
   assert.match(controller, /from ["'].*host\/desktop-task-contract\.ts/);
-  // A finished submission refreshes today exactly once, even for duplicate acks.
+  // Closing only hides a bounded operation; retry requires an explicit eligible terminal reset.
+  assert.match(controller, /parseDesktopTaskOutcome\(value\)/);
+  assert.match(app, /taskControl\.gateChanged\(\)/);
+  assert.match(app, /run\.state\.snapshot\.role === "hub-worker"/);
+  assert.match(view, /controller\.operation/);
+  assert.match(view, /controller\.canBeginAnother/);
+  assert.match(view, /notifiedResult !== submission\.result/);
+  assert.ok(view.indexOf("notifiedResult = submission.result") < view.indexOf("try { onCreated(); }"));
+  assert.match(view, /try \{ onCreated\(\); \} catch/);
+  assert.doesNotMatch(view, /addEventListener\("close",[\s\S]*controller\.reset/);
   assert.match(view, /showModal\(\)/);
 });
 

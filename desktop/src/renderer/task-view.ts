@@ -69,10 +69,11 @@ export function mountTaskDialog(
   error.hidden = true;
   const actions = document.createElement("div");
   actions.className = "setup-actions";
-  let lastDone: { event: number; duplicate: boolean; routed: string[] } | null = null;
+  let renderedEntries: unknown;
+  let notifiedResult: unknown;
   const cancelButton = document.createElement("button");
   cancelButton.type = "button";
-  cancelButton.textContent = "取消";
+  cancelButton.textContent = "关闭（不撤销提交）";
   const submitButton = document.createElement("button");
   submitButton.type = "submit";
   submitButton.className = "setup-primary";
@@ -82,7 +83,11 @@ export function mountTaskDialog(
   doneButton.className = "setup-primary";
   doneButton.textContent = "完成";
   doneButton.hidden = true;
-  actions.append(cancelButton, submitButton, doneButton);
+  const anotherButton = document.createElement("button");
+  anotherButton.type = "button";
+  anotherButton.textContent = "显式另建一条";
+  anotherButton.hidden = true;
+  actions.append(cancelButton, submitButton, doneButton, anotherButton);
   form.append(title, intro, entryField, typeField, summaryField, detailField, status, error, actions);
   dialog.append(form);
   document.body.append(dialog);
@@ -129,23 +134,36 @@ export function mountTaskDialog(
   }
   entrySelect.addEventListener("change", fillTypes);
   function update() {
-    fillEntries();
     const state = controller.entriesState;
+    if (renderedEntries !== state && !controller.operation) {
+      renderedEntries = state;
+      fillEntries();
+    }
+    const operation = controller.operation;
+    if (operation) {
+      fillEntries();
+      entrySelect.value = operation.draft.entry || entrySelect.value;
+      fillTypes();
+      typeSelect.value = operation.draft.pattern;
+      concreteInput.value = operation.draft.concrete;
+      summaryInput.value = operation.draft.summary;
+      detailInput.value = operation.draft.detail;
+      updateConcrete();
+    }
+    for (const field of [entrySelect, typeSelect, concreteInput, summaryInput, detailInput])
+      field.disabled = !!operation || !controller.canSubmit || state.kind !== "ready";
+    anotherButton.hidden = !operation || controller.submitState.kind === "busy" || controller.submitState.kind === "uncertain";
+    anotherButton.disabled = !controller.canBeginAnother;
     if (state.kind === "loading") status.textContent = "正在读取任务入口。";
     else if (state.kind === "ready") status.textContent = state.entries.length ? "" : DESKTOP_TASK_MESSAGES.noEntry;
     else status.textContent = state.message;
     status.hidden = state.kind === "ready" && state.entries.length > 0;
     const submission = controller.submitState;
-    if (submission.kind === "done" && submission.result !== lastDone) {
-      // A fresh success is exactly the moment today's data changed on its own.
-      lastDone = submission.result;
-      onCreated();
-    }
     if (submission.kind === "idle") {
       error.hidden = true;
       submitButton.hidden = false;
       doneButton.hidden = true;
-      submitButton.disabled = controller.entriesState.kind !== "ready" || controller.entriesState.entries.length === 0;
+      submitButton.disabled = !controller.canSubmit || controller.entriesState.kind !== "ready" || controller.entriesState.entries.length === 0;
       submitButton.textContent = "创建并入队";
     } else if (submission.kind === "busy") {
       error.hidden = true;
@@ -164,10 +182,17 @@ export function mountTaskDialog(
           ? `已入队，交给规则：${routed.join("、")}。`
           : "已记录，但没有规则接住这个类型。";
       status.hidden = false;
+      if (notifiedResult !== submission.result) {
+        // Record first: refresh may synchronously reenter update or fail, but the ACK remains fact.
+        notifiedResult = submission.result;
+        try { onCreated(); } catch { /* A refresh failure is not a failed submission. */ }
+      }
     } else {
       error.textContent = submission.message;
       error.hidden = false;
-      submitButton.disabled = false;
+      submitButton.hidden = !!operation;
+      doneButton.hidden = !operation;
+      submitButton.disabled = !controller.canSubmit;
       submitButton.textContent = "创建并入队";
     }
   }
@@ -186,25 +211,30 @@ export function mountTaskDialog(
       return;
     }
     const input: DesktopTaskInput = { type, summary: summaryInput.value, detail: detailInput.value };
-    controller.submitTask(input);
+    if (!controller.canSubmit) return;
+    controller.submitTask(input, {
+      entry: entrySelect.value, pattern: typeSelect.value, concrete: concreteInput.value,
+      summary: summaryInput.value, detail: detailInput.value,
+    });
   });
   cancelButton.addEventListener("click", () => dialog.close());
   doneButton.addEventListener("click", () => dialog.close());
-  dialog.addEventListener("close", () => {
+  anotherButton.addEventListener("click", () => {
+    if (!controller.canBeginAnother) return;
     controller.reset();
+    if (controller.operation) return;
     summaryInput.value = "";
     detailInput.value = "";
     concreteInput.value = "";
+    controller.loadEntries();
+    update();
   });
-  dialog.addEventListener("cancel", (event) => {
-    if (controller.submitState.kind === "busy") event.preventDefault();
-  });
+  // Native close/Escape only hides. Pending and uncertain remain the same bounded operation.
   return {
     open() {
-      controller.reset();
-      controller.loadEntries();
+      if (!controller.operation) controller.loadEntries();
       update();
-      dialog.showModal();
+      if (!dialog.open) dialog.showModal();
     },
     /** Called by the controller's own notification; updating a closed dialog is a no-op visually. */
     update,

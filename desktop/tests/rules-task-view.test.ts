@@ -1,3 +1,4 @@
+// Prevent loss of advanced rule fields and wildcard/concrete-type regressions in production views.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mountRulesView } from "../src/renderer/rules-view.ts";
@@ -140,6 +141,9 @@ test("a wildcard needs a matching concrete type, preserves selection on refresh 
         ],
       },
       submitState: { kind: "idle" },
+      operation: null,
+      canSubmit: true,
+      canBeginAnother: false,
       busy: false,
       reset() {},
       loadEntries() {},

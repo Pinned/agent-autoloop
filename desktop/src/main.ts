@@ -32,7 +32,7 @@ import { createTasksSource, createTodaySource } from "./state-source.ts";
 import { createTaskSource } from "./task-source.ts";
 import { createHubWatcher, type HubGlance } from "./hub-watcher.ts";
 import { createNotifier } from "./notify.ts";
-import { parseDesktopTaskInput } from "../../host/desktop-task-contract.ts";
+import { createTaskCreateHandler } from "./task-create-control.ts";
 import { parseDesktopRulesEntries } from "../../host/desktop-rules-contract.ts";
 import { createSetupControl } from "./setup-control.ts";
 import { createSetupRunner } from "./setup-runner.ts";
@@ -572,12 +572,11 @@ if (ownsAppLock)
         return taskSource.entries();
       });
       // One task at a time through the hub's door; the input is validated before any request.
-      ipcMain.handle(channels.taskCreate, async (event, ...args: unknown[]) => {
-        assertSender(event, window.webContents, page);
-        if (args.length !== 1) throw new Error("invalid-request");
-        const input = parseDesktopTaskInput(args[0]);
-        return taskSource.create(input);
-      });
+      ipcMain.handle(channels.taskCreate, createTaskCreateHandler({
+        assertSender: (event: Parameters<typeof assertSender>[0]) => assertSender(event, window.webContents, page),
+        presentation,
+        create: (input, canSend) => taskSource.create(input, canSend),
+      }));
       // The automation page's editor: whole-list read and whole-list replace through the same door.
       ipcMain.handle(channels.rulesGet, async (event, ...args: unknown[]) => {
         assertSender(event, window.webContents, page);

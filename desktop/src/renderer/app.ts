@@ -45,10 +45,9 @@ const today = createRendererToday(window.desktop, () => {
   if (currentPage === "today") todayView?.update();
 });
 // The new-task dialog is app-level: one <dialog>, one entry list, one submission at a time.
-const taskPanel = mountTaskDialog(
-  createRendererTask(window.desktop, () => taskPanel.update()),
-  () => today.refresh(),
-);
+let taskGate = () => false;
+const taskControl = createRendererTask(window.desktop, () => taskPanel.update(), () => taskGate());
+const taskPanel = mountTaskDialog(taskControl, () => today.refresh());
 function openTaskDialog() {
   taskPanel.open();
 }
@@ -56,6 +55,7 @@ const run = createRendererRun(
   window.desktop,
   () => ({ setupLocked: setup.state.kind === "unknown-locked", setupBusy: setup.busy }),
   () => {
+    taskControl.gateChanged();
     updateRuntimeStatus();
     if (currentPage === "workers") runCard?.update();
     // A running local hub is the one moment today's data can change on its own.
@@ -64,6 +64,7 @@ const run = createRendererRun(
   },
 );
 const setup = createRendererSetup(window.desktop, () => {
+  taskControl.gateChanged();
   if (setup.state.kind === "unknown-locked") {
     const error = document.querySelector<HTMLElement>("#error")!;
     error.textContent = "无法确认配置操作已安全完成。本次会话已锁定，请保留现场并人工检查，不要重复初始化或强制退出。";
@@ -74,6 +75,9 @@ const setup = createRendererSetup(window.desktop, () => {
   if (setup.state.kind === "configured") run.refresh();
   setupView?.render();
 });
+taskGate = () => run.state.kind === "ready" && run.state.snapshot.status === "running" &&
+  run.state.snapshot.role === "hub-worker" && !setup.busy && setup.state.kind !== "unknown-locked";
+taskControl.gateChanged();
 // The automation page is app-level too: one entry list and one edit dialog, page switches only
 // re-attach the card, so an edit in progress is never lost to navigation.
 const rules = createRendererRules(window.desktop, () => {

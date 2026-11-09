@@ -1,3 +1,4 @@
+// Prevent out-of-gate dispatch, damaged ACK acceptance, config boundary regressions and rules/save changes.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -46,8 +47,7 @@ test("the door is closed unless the local hub is running, and worker machines ne
     if (listed.ok) throw new Error("expected refusal");
     assert.equal(listed.error.code, "unavailable");
     const created = await s.create({ type: "task.dev", summary: "x", detail: "" });
-    if (created.ok) throw new Error("expected refusal");
-    assert.equal(created.error.code, "unavailable");
+    assert.deepEqual(created, { version: 3, outcome: "not-sent", message: DESKTOP_TASK_MESSAGES["not-sent"] });
     const listedRules = await s.rules();
     if (listedRules.ok) throw new Error("expected refusal");
     assert.equal(listedRules.error.code, "unavailable");
@@ -63,8 +63,7 @@ test("the door is closed unless the local hub is running, and worker machines ne
   if (workerListed.ok) throw new Error("expected refusal");
   assert.equal(workerListed.error.code, "no-hub");
   const workerCreated = await worker.create({ type: "t", summary: "x", detail: "" });
-  if (workerCreated.ok) throw new Error("expected refusal");
-  assert.equal(workerCreated.error.code, "no-hub");
+  assert.deepEqual(workerCreated, { version: 3, outcome: "not-sent", message: DESKTOP_TASK_MESSAGES["not-sent"] });
   const workerRules = await worker.rules();
   if (workerRules.ok) throw new Error("expected refusal");
   assert.equal(workerRules.error.code, "no-hub");
@@ -88,11 +87,12 @@ test("entries and creation go to the fixed door routes with the owner credential
     assert.deepEqual(entries.data.entries[0], { name: "开发任务", types: ["task.dev"], to: "claude" });
   }
   const created = await s.create({ type: "task.dev", summary: "修复登录", detail: "尽快" });
-  assert.equal(created.ok, true);
-  if (created.ok) {
-    assert.equal(created.result.event, 7);
-    assert.deepEqual(created.result.routed, ["开发任务"]);
-  }
+  assert.equal(created.outcome, "accepted");
+  if (created.outcome !== "accepted") throw new Error("expected confirmed receipt");
+  assert.equal(created.receipt.version, 2);
+  assert.equal(created.receipt.ok, true);
+  assert.equal(created.receipt.result.event, 7);
+  assert.deepEqual(created.receipt.result.routed, ["开发任务"]);
   assert.equal(seen.length, 2);
   assert.equal(seen[0].url, "http://127.0.0.1:3350/v1/ui/rules");
   assert.equal(seen[1].url, "http://127.0.0.1:3350/v1/ui/tasks");
@@ -112,12 +112,12 @@ test("input that breaks the door's limits is refused before any request is sent"
     { type: "t", summary: "", detail: "" },
     { type: "t", summary: "x", detail: "", extra: true },
   ]) {
-    await assert.rejects(() => s.create(bad as never));
+    assert.deepEqual(await s.create(bad as never), { version: 3, outcome: "not-sent", message: DESKTOP_TASK_MESSAGES["not-sent"] });
   }
   assert.ok(!called);
 });
 
-test("the door's refusal text is passed through, other failures keep fixed messages", async () => {
+test("after dispatch HTTP refusal and unconfirmed ACKs are uncertain; bad config is not-sent", async () => {
   const refusal = source({ status: "running", role: "hub-worker" }, (url) => {
     if (String(url).endsWith("/v1/ui/rules")) return Promise.resolve(new Response(JSON.stringify(entriesPage)));
     return Promise.resolve(
@@ -125,11 +125,7 @@ test("the door's refusal text is passed through, other failures keep fixed messa
     );
   });
   const refused = await refusal.create({ type: "task.dev", summary: "x", detail: "" });
-  assert.equal(refused.ok, false);
-  if (!refused.ok) {
-    assert.equal(refused.error.code, "invalid");
-    assert.equal(refused.error.message, "没有任务入口接 task.dev，先在入口设置里加一个");
-  }
+  assert.deepEqual(refused, { version: 3, outcome: "uncertain", message: DESKTOP_TASK_MESSAGES.uncertain });
   for (const [name, fetchImpl] of [
     ["network", () => Promise.reject(new Error("down"))],
     ["status 500", () => Promise.resolve(new Response("boom", { status: 500 }))],
@@ -151,8 +147,8 @@ test("the door's refusal text is passed through, other failures keep fixed messa
       timeoutMs: 50,
     });
     const created = await s.create({ type: "task.dev", summary: "x", detail: "" });
-    assert.equal(created.ok, false, name);
-    if (!created.ok) assert.deepEqual(created.error, { code: "error", message: DESKTOP_TASK_MESSAGES.error });
+    const outcome = name === "bad config" ? "not-sent" : "uncertain";
+    assert.deepEqual(created, { version: 3, outcome, message: DESKTOP_TASK_MESSAGES[outcome] }, name);
     const listed = await s.entries();
     // The poisoned-ack fetch also serves a healthy rules page, so entries succeeds there.
     assert.equal(listed.ok, name === "poisoned ack" ? true : false, name);
