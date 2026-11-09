@@ -242,6 +242,11 @@ test("real app setup callback presents failed launch reads with explicit retry a
       initialSetupPresented: false,
       setupView: undefined,
       navigation: { querySelectorAll: () => [] },
+      // The real callback re-projects the navigation on every setup change; the stub keeps that
+      // path inert so this test observes only the setup read, never the page shell.
+      currentRole: () => null,
+      syncNavigation: () => {},
+      navigationDisabled: false,
       document: { querySelector: () => ({ textContent: "", hidden: true }) },
       mountSetupView: (_root: HTMLElement, control: ReturnType<typeof createRendererSetup>) => {
         mounts++;

@@ -16,18 +16,22 @@ import { createRendererTasks } from "./tasks-controller.ts";
 import { mountTasksView } from "./tasks-view.ts";
 import { createRendererSettings } from "./settings-controller.ts";
 import { mountSettingsView } from "./settings-view.ts";
+import {
+  eyebrowFor,
+  navLabelFor,
+  navigationSignature,
+  pagesFor,
+  type Page as NavigationPage,
+  type Role,
+} from "./navigation.ts";
 declare global {
   interface Window {
     desktop: DesktopBridge;
   }
 }
-const pages = [
-  { id: "today", title: "今天", description: "让 Agent 继续推进，只把需要你的事情带回来。", icon: "today" },
-  { id: "tasks", title: "任务", description: "查看工作的来龙去脉，知道下一步由谁推进。", icon: "tasks" },
-  { id: "automation", title: "自动化", description: "让可信规则安排重复工作，把判断留给你。", icon: "automation" },
-  { id: "workers", title: "执行机", description: "查看此电脑的运行状态，管理本机启动与停止。", icon: "workers" },
-  { id: "settings", title: "设置", description: "调整桌面体验与本机角色配置。", icon: "settings" },
-];
+// One definition per page; the role decides which of them exist. A pure worker has no hub of its
+// own, so the pages that would speak for a workspace it cannot see are not offered at all.
+type Page = NavigationPage;
 const paths: Record<string, string> = {
   today: "M4 5h16v15H4z M8 3v4 M16 3v4 M4 10h16",
   tasks: "M9 6h11 M9 12h11 M9 18h11 M3 6l1 1 2-2 M3 12l1 1 2-2 M3 18l1 1 2-2",
@@ -40,7 +44,43 @@ function icon(id: string) {
 }
 const main = document.querySelector<HTMLElement>("#main")!;
 const navigation = document.querySelector<HTMLElement>("#navigation")!;
+const navLabel = document.querySelector<HTMLElement>("#nav-label")!;
+const newTaskButton = document.querySelector<HTMLButtonElement>("#new-task")!;
 let currentPage = "today";
+// A page change is only a DOM rebuild; the role decides which pages exist at all.
+function markCurrent() {
+  for (const button of navigation.querySelectorAll<HTMLButtonElement>("button")) {
+    button.classList.toggle("active", button.dataset.page === currentPage);
+    if (button.dataset.page === currentPage) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  }
+}
+let navigationDisabled = false;
+function syncNavigation(role: Role) {
+  const pages = pagesFor(role);
+  const signature = navigationSignature(role);
+  if (navigation.dataset.signature !== signature) {
+    navigation.dataset.signature = signature;
+    navigation.innerHTML = pages
+      .map((page) => `<button data-page="${page.id}">${icon(page.icon)}<span>${page.nav}</span></button>`)
+      .join("");
+    for (const button of navigation.querySelectorAll<HTMLButtonElement>("button"))
+      button.addEventListener("click", () => render(button.dataset.page!));
+  }
+  navLabel.textContent = navLabelFor(role);
+  // Nothing to create locally: a pure worker only receives work from the hub it belongs to.
+  newTaskButton.hidden = role === "worker";
+  for (const button of navigation.querySelectorAll<HTMLButtonElement>("button"))
+    button.disabled = navigationDisabled;
+  markCurrent();
+  // A role change can strand the current page outside its own view. Leave the page only after this
+  // notification returns: a render here would re-enter the setup controller mid-change.
+  if (!pages.some((page) => page.id === currentPage))
+    queueMicrotask(() => {
+      const current = pagesFor(currentRole());
+      if (!current.some((page) => page.id === currentPage)) render(current[0].id);
+    });
+}
 let setupView: ReturnType<typeof mountSetupView> | undefined;
 let initialSetupPresented = false;
 let runCard: ReturnType<typeof mountRunCard> | undefined;
@@ -66,6 +106,8 @@ const run = createRendererRun(
   () => {
     taskControl.gateChanged();
     updateRuntimeStatus();
+    // The runtime's role is the authoritative one; the launch record covers a stopped machine.
+    syncNavigation(currentRole());
     if (currentPage === "workers") runCard?.update();
     // A running local hub is the one moment today's data can change on its own.
     if (currentPage === "today" && run.state.kind === "ready" && run.state.snapshot.status === "running")
@@ -85,8 +127,8 @@ const setup = createRendererSetup(window.desktop, () => {
   const startupBusy =
     setup.state.kind === "reading-launch" ||
     (setup.launch?.completion === "first-run" && setup.state.kind === "reading-status");
-  for (const button of navigation.querySelectorAll<HTMLButtonElement>("button"))
-    button.disabled = setup.submitting || startupBusy;
+  navigationDisabled = setup.submitting || startupBusy;
+  syncNavigation(currentRole());
   if (
     !initialSetupPresented &&
     ((setup.launch && ["first-run", "prepared", "recovery", "invalid"].includes(setup.launch.completion)) ||
@@ -127,28 +169,44 @@ const tasks = createRendererTasks(window.desktop, () => {
   if (currentPage === "tasks") tasksPage?.update();
 });
 const tasksPage = mountTasksView(tasks);
+// The running runtime's role is what this machine is now; a configured-but-stopped machine still
+// knows what it was set up as, and only then may the launch record stand in for it.
+function currentRole(): Role {
+  if (run.state.kind === "ready" && run.state.snapshot.role) return run.state.snapshot.role;
+  const launch = setup.launch;
+  if (launch && (launch.completion === "complete" || launch.completion === "prepared"))
+    return launch.nextLaunch === "worker" ? "worker" : launch.nextLaunch === "embedded" ? "hub-worker" : null;
+  return null;
+}
+function visiblePages(): readonly Page[] {
+  return pagesFor(currentRole());
+}
 // The tray's card and stop shortcuts land here: main names the page, the renderer stays the judge.
 window.desktop.onNavigate((target) => {
   const id = typeof target === "object" && target !== null ? (target as { page?: unknown }).page : "";
-  if (typeof id !== "string" || !pages.some((page) => page.id === id)) return;
+  if (typeof id !== "string" || !visiblePages().some((page) => page.id === id)) return;
   if (id !== currentPage) render(id);
   // Landing on today should show the card that just asked for a decision, not the last render.
   if (id === "today") today.refresh();
 });
 function updateRuntimeStatus() {
   const status = document.querySelector<HTMLElement>("#runtime-status")!;
+  const scope = document.querySelector<HTMLElement>("#runtime-scope")!;
   const role = document.querySelector<HTMLElement>("#runtime-role")!;
   const state = run.state;
   if (state.kind !== "ready") {
     delete status.dataset.status;
     status.textContent = state.kind === "loading" ? "正在读取本机状态" : state.message;
     role.textContent = "";
+    scope.textContent = "";
     return;
   }
   status.textContent = desktopRuntimeStatusText(state.snapshot);
   status.dataset.status = state.snapshot.status;
   role.textContent =
     state.snapshot.role === "hub-worker" ? "中台＋执行机" : state.snapshot.role === "worker" ? "纯执行机" : "";
+  // A pure worker's own words: it holds only this machine's work and cannot schedule anything global.
+  scope.textContent = state.snapshot.role === "worker" ? "仅本机 · 不可调度全局" : "";
 }
 function openSetup() {
   if (!setupView) setupView = mountSetupView(main, setup, () => render(currentPage));
@@ -183,7 +241,9 @@ const settings = createRendererSettings(
   },
 );
 settingsPage = mountSettingsView(settings, {
-  role: () => (run.state.kind === "ready" ? run.state.snapshot.role : null),
+  // A stopped machine still knows what it was set up as; the launch record stands in for the
+  // runtime until it reports a role of its own.
+  role: () => currentRole(),
   legacyConfig: () => setup.launch?.completion === "legacy",
   theme: () => theme.preference,
   setTheme: (next) => {
@@ -197,6 +257,11 @@ function render(id: string, focus = true) {
     (setup.launch?.completion === "first-run" && setup.state.kind === "reading-status")
   )
     return;
+  const role = currentRole();
+  const pages = pagesFor(role);
+  // A role change can strand the current page outside its own view; fall back to the first page
+  // this machine is allowed to see rather than rendering a page it no longer owns.
+  if (!pages.some((item) => item.id === id)) id = pages[0].id;
   if (setupView) {
     if (!setup.leave()) return;
     setupView.dispose();
@@ -209,12 +274,9 @@ function render(id: string, focus = true) {
   currentPage = id;
   main.setAttribute("aria-labelledby", "page-title");
   const page = pages.find((item) => item.id === id)!;
-  for (const button of navigation.querySelectorAll<HTMLButtonElement>("button")) {
-    button.classList.toggle("active", button.dataset.page === id);
-    if (button.dataset.page === id) button.setAttribute("aria-current", "page");
-    else button.removeAttribute("aria-current");
-  }
-  main.innerHTML = `<header class="page-head"><div class="page-head-copy"><div class="eyebrow">工作空间 / 本机工作台</div><h1 id="page-title">${page.title}</h1><p>${page.description}</p></div><div class="page-head-actions"></div></header>`;
+  markCurrent();
+  const eyebrow = eyebrowFor(role);
+  main.innerHTML = `<header class="page-head"><div class="page-head-copy"><div class="eyebrow">${eyebrow}</div><h1 id="page-title">${page.title}</h1><p>${page.description}</p></div><div class="page-head-actions"></div></header>`;
   if (id === "settings") {
     // The hub's own configuration, at the version it was read at; nothing here is stored locally.
     // The view is mounted before the first render() call below, so it is always present here.
@@ -266,12 +328,7 @@ function render(id: string, focus = true) {
   }
   if (focus) main.focus();
 }
-navigation.innerHTML = pages
-  .map((page) => `<button data-page="${page.id}">${icon(page.icon)}<span>${page.title}</span></button>`)
-  .join("");
-for (const button of navigation.querySelectorAll<HTMLButtonElement>("button"))
-  button.addEventListener("click", () => render(button.dataset.page!));
-document.querySelector("#new-task")!.addEventListener("click", openTaskDialog);
+newTaskButton.addEventListener("click", openTaskDialog);
 document.querySelector("#view-connection")!.addEventListener("click", () => render("workers"));
 document.querySelector("#hide-window")!.addEventListener("click", () => {
   window.desktop.window("hide").catch(report);
@@ -282,6 +339,8 @@ document.querySelector("#quit-app")!.addEventListener("click", () => {
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
   window.desktop.getTheme().then(applyTheme).catch(report);
 });
+// Build the role's own navigation first; the first page render follows the same projection.
+syncNavigation(currentRole());
 render("today", false);
 setup.bootstrap();
 run.init();
