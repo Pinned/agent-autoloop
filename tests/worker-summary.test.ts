@@ -9,7 +9,12 @@ import {
   parseDesktopWorkerSnapshot,
   parseDesktopWorkerSnapshotBytes,
 } from "../host/desktop-worker-contract.ts";
-import { aggregateWorkerSummary, type WorkerEvidence } from "../worker/summary.ts";
+import {
+  aggregateWorkerSummary,
+  summarizeHeld,
+  type HeldRecord,
+  type WorkerEvidence,
+} from "../worker/summary.ts";
 
 const evidence = (overrides: Partial<WorkerEvidence> = {}): WorkerEvidence => ({
   recordTrusted: true,
@@ -302,4 +307,82 @@ test("byte parser rejects oversize before decode, invalid UTF8 and non-DTO JSON"
   ]) {
     assert.throws(() => parseDesktopWorkerSnapshotBytes(bytes));
   }
+});
+
+// The held-record scan is the only producer of evidence: what it cannot read or recognise stays unknown.
+const record = (overrides: Partial<HeldRecord> = {}): HeldRecord => ({
+  run: 1,
+  attempt: 1,
+  turn: 1,
+  pid: 4242,
+  resultSaved: false,
+  stopIntentSaved: false,
+  ...overrides,
+});
+const probe = (group: "live" | "empty" | "unknown" = "live", linked = true) => ({
+  group: () => group,
+  linked: () => linked,
+});
+
+test("summarizeHeld maps one record to exactly one of the five buckets", () => {
+  const cases: [HeldRecord, "live" | "empty" | "unknown", boolean, string][] = [
+    [record({ turn: 0, pid: null }), "empty", false, "preparing"],
+    [record(), "live", true, "executing"],
+    [record({ stopIntentSaved: true }), "live", true, "stopping"],
+    [record({ resultSaved: true, pid: null }), "empty", false, "pendingSync"],
+  ];
+  for (const [item, group, linked, bucket] of cases)
+    assert.deepEqual(summarizeHeld([item], probe(group, linked), true), {
+      quality: "complete",
+      counts: { ...zero, held: 1, [bucket]: 1 },
+    }, `${bucket}: ${JSON.stringify(item)}`);
+});
+
+test("summarizeHeld reports a live group with no matching marker as uncertain, never executing", () => {
+  assert.deepEqual(summarizeHeld([record()], probe("live", false), true), {
+    quality: "complete",
+    counts: { ...zero, held: 1, uncertain: 1 },
+  });
+});
+
+test("summarizeHeld treats an unreadable process observation as unknown, not as an empty group", () => {
+  assert.deepEqual(summarizeHeld([record()], probe("unknown", true), true).counts, {
+    ...zero,
+    held: 1,
+    uncertain: 1,
+  });
+});
+
+test("summarizeHeld fails closed when the scan is incomplete or the probe throws", () => {
+  assert.deepEqual(summarizeHeld([record()], probe(), false), { quality: "unknown", counts: null });
+  assert.deepEqual(summarizeHeld([], probe(), false), { quality: "unknown", counts: null });
+  assert.deepEqual(
+    summarizeHeld([record()], {
+      group: () => {
+        throw new Error("ps unavailable");
+      },
+      linked: () => true,
+    }, true),
+    { quality: "unknown", counts: null },
+  );
+  assert.deepEqual(
+    summarizeHeld([record()], {
+      group: () => "live",
+      linked: () => {
+        throw new Error("ps unavailable");
+      },
+    }, true),
+    { quality: "unknown", counts: null },
+  );
+});
+
+test("summarizeHeld counts many records without carrying identity or process detail", () => {
+  const records = [record({ run: 1 }), record({ run: 2 }), record({ turn: 0, pid: null, run: 3 })];
+  const summary = summarizeHeld(records, probe(), true);
+  assert.deepEqual(summary, {
+    quality: "complete",
+    counts: { ...zero, held: 3, executing: 2, preparing: 1 },
+  });
+  assert.equal(JSON.stringify(summary).includes("4242"), false);
+  assert.equal(JSON.stringify(summary).includes("\"run\""), false);
 });
