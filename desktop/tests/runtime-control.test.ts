@@ -6,6 +6,7 @@ import { test, type TestContext } from "node:test";
 import { createRuntimeControl, SERVICE_ERROR } from "../src/runtime-control.ts";
 import { createLifecycle } from "../src/lifecycle.ts";
 import type { Supervisor, SupervisorState } from "../src/supervisor.ts";
+import type { DesktopWorkerSnapshot } from "../../host/desktop-worker-contract.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -32,9 +33,11 @@ async function fixture(t: TestContext) {
   let starts = 0;
   let stops = 0;
   let current = state("stopped");
+  let reading: DesktopWorkerSnapshot | null = null;
   let listener = (_state: SupervisorState) => {};
   const supervisor: Supervisor = {
     getState: () => current,
+    getReading: () => reading,
     subscribe: (next) => {
       listener = next;
       return () => {};
@@ -62,6 +65,9 @@ async function fixture(t: TestContext) {
     setState: (value: SupervisorState) => {
       current = value;
       listener(value);
+    },
+    setReading: (value: DesktopWorkerSnapshot | null) => {
+      reading = value;
     },
   };
 }

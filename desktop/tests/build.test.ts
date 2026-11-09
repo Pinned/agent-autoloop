@@ -111,7 +111,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(main, /远程队列不会取消/);
   assert.match(main, /离线持久待同步/);
   assert.doesNotMatch(main, /restartPolicy|controller\.restart/);
-  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 24);
+  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 25);
   // Each handler is checked inside its own block: a cross-handler match would let a missing
   // sender check hide behind the next handler that has one.
   const blocks = main.split("ipcMain.handle(channels.").slice(1);
@@ -133,6 +133,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
     "runtimeStop",
     "todayState",
     "workersGet",
+    "workersLocal",
     "tasksGet",
     "taskEntries",
     "taskCreate",
@@ -228,6 +229,7 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
     "todayState",
     "window",
     "workersGet",
+    "workersLocal",
   ]);
   assert.doesNotMatch(source, /invoke\((?:channel|name|value)/);
   // The only renderer-bound listeners are the two fixed push channels.
@@ -267,6 +269,24 @@ test("the workers page mounts the real local runtime card from the pure run cont
   // The renderer controller may touch the pure contract only, never config, runtime or setup host modules.
   assert.doesNotMatch(controller, /node:|from ["'].*host\/(?:config|runtime|setup)\.ts/);
   assert.match(controller, /from ["'].*host\/desktop-run-contract\.ts/);
+});
+
+test("the workers page mounts this machine's own reading as display data, pulled not pushed", () => {
+  const app = read("../src/renderer/app.ts");
+  const view = read("../src/renderer/local-reading-view.ts");
+  const controller = read("../src/renderer/local-reading-controller.ts");
+  assert.match(app, /mountLocalReadingView\(/);
+  assert.match(app, /localReading\.refresh\(\)/);
+  // The card is a pull: a runtime transition re-reads it and nothing polls the bridge.
+  assert.doesNotMatch(app, /setInterval|setTimeout/);
+  assert.doesNotMatch(controller, /setInterval|setTimeout/);
+  assert.match(controller, /workersLocal/);
+  // Only the erased DTO crosses; no config, runtime or supervisor module enters a renderer bundle.
+  assert.match(controller, /from ["'].*host\/desktop-worker-contract\.ts/);
+  assert.doesNotMatch(controller, /node:|from ["'].*host\/(?:config|runtime|setup)\.ts|from ["'].*\.\.\/supervisor\.ts/);
+  assert.doesNotMatch(view, /innerHTML|insertAdjacentHTML|console\./);
+  // A reading is display-only; the page must say so rather than implying a drain is proven safe.
+  assert.match(view, /不代表可以安全停止或排空/);
 });
 
 test("the today page mounts the real local-hub data panel from the pure today contract", () => {

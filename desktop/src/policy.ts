@@ -7,6 +7,7 @@ import type { DesktopRuntimeEvent, DesktopRuntimeResponse } from "../../host/des
 import type { DesktopTodayResponse } from "../../host/desktop-state-contract.ts";
 import type { DesktopTasksResponse } from "../../host/desktop-tasks-contract.ts";
 import type { DesktopWorkersResponse } from "../../host/desktop-workers-contract.ts";
+import type { DesktopWorkerSnapshot } from "../../host/desktop-worker-contract.ts";
 import type {
   DesktopTaskOutcome,
   DesktopTaskEntriesResponse,
@@ -44,6 +45,8 @@ export const channels = Object.freeze({
   todayState: "desktop:state:today",
   /** Agent and channel presence the hub already knows; never a remote environment probe. */
   workersGet: "desktop:workers:get",
+  /** What this machine's own runtime reported it holds; a display reading, not lifecycle proof. */
+  workersLocal: "desktop:workers:local",
   tasksGet: "desktop:tasks:get",
   taskDetail: "desktop:tasks:detail",
   taskEntries: "desktop:task:entries",
@@ -81,6 +84,11 @@ export interface DesktopBridge {
   todayState(): Promise<DesktopTodayResponse>;
   /** Read-only worker and channel presence from the local hub while it runs. */
   workersGet(): Promise<DesktopWorkersResponse>;
+  /**
+   * What this computer's own runtime reported it holds, or null when no confirmed running runtime
+   * has reported a reading. Display only: never proof that a drain or safe stop may proceed.
+   */
+  workersLocal(): Promise<DesktopWorkerSnapshot | null>;
   /** The runs page for the tasks list; `before` pages further into history. */
   tasksGet(before?: number): Promise<DesktopTasksResponse>;
   taskDetail<R extends Exclude<TaskHistoryRequest, { operation: "list" }>>(request: R): Promise<TaskHistoryResponse<R["operation"]>>;
