@@ -159,6 +159,8 @@ test("local entries preserve explicit options on rename, clear options, and rest
     const implicit = onDisk();
     implicit.rules.at(-1).group = "新默认名";
     writeFileSync(rulesFile, JSON.stringify(implicit));
+    // The hub must observe the new file before its declaration hash can match the effective config.
+    hub.tick();
     // An identical effective configuration can still gain an explicit declaration.
     const explicit = (await (await call("/v1/ui/rules")).json()).entries;
     assert.equal(explicit.at(-1).group, "新默认名");
