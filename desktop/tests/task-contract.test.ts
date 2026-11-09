@@ -219,3 +219,77 @@ test("projection never evaluates poisoned fields it does not select", () => {
   assert.deepEqual(projectDesktopTaskEntries(page), { entries: [{ name: "x", types: ["t.v"], to: "c" }] });
   assert.deepEqual(projectDesktopTaskResult(ack), { event: 3, duplicate: true, routed: [] });
 });
+
+import { parseDesktopTaskCreateRequest, parseDesktopTaskOutcome, taskOutcomeOf } from "../../host/desktop-task-contract.ts";
+
+function poisonedRecords(value: Record<string, unknown>, accessed: () => void) {
+  const key = Object.keys(value)[0];
+  const getter = { ...value };
+  Object.defineProperty(getter, key, { enumerable: true, get() { accessed(); return value[key]; } });
+  const hiddenExtra = { ...value };
+  Object.defineProperty(hiddenExtra, "extra", { value: 1 });
+  const hiddenRequired = { ...value };
+  Object.defineProperty(hiddenRequired, key, { enumerable: false });
+  return [
+    { ...value, extra: 1 },
+    { ...value, [Symbol("extra")]: 1 },
+    hiddenExtra,
+    hiddenRequired,
+    getter,
+    Object.assign(Object.create(null), value),
+    Object.assign(Object.create({ custom: true }), value),
+  ];
+}
+
+test("v3 request strictly validates envelope and input without invoking accessors", () => {
+  const input = { type: "task.dev", summary: "x", detail: "" };
+  const request = { version: 3, input };
+  assert.deepEqual(parseDesktopTaskCreateRequest(request), input);
+  let reads = 0;
+  const accessed = () => { reads++; };
+  for (const bad of [
+    null, [], input, { version: 2, input }, { version: 3 },
+    ...poisonedRecords(request, accessed),
+    ...poisonedRecords(input, accessed).map((input) => ({ version: 3, input })),
+    { version: 3, input: { ...input, summary: "" } },
+    { version: 3, input: { ...input, summary: "标".repeat(201) } },
+    { version: 3, input: { ...input, detail: "字".repeat(4001) } },
+  ]) assert.throws(() => parseDesktopTaskCreateRequest(bad));
+  assert.equal(reads, 0);
+});
+
+test("v3 outcomes require strict v2 success or the exact fixed refusal message", () => {
+  const receipt = { version: 2 as const, ok: true as const, result: { event: 7, duplicate: false, routed: ["r"] } };
+  const accepted = { version: 3 as const, outcome: "accepted" as const, receipt };
+  assert.deepEqual(taskOutcomeOf(accepted), accepted);
+  const parsed = parseDesktopTaskOutcome(JSON.parse(JSON.stringify(accepted)));
+  assert.deepEqual(parsed, accepted);
+  assert.notEqual(parsed, accepted);
+  if (parsed.outcome === "accepted") {
+    assert.notEqual(parsed.receipt, receipt);
+    assert.notEqual(parsed.receipt.result.routed, receipt.result.routed);
+  }
+  let reads = 0;
+  const accessed = () => { reads++; };
+  for (const bad of [
+    null, [], receipt, { ...accepted, version: 2 }, { ...accepted, outcome: "other" },
+    ...poisonedRecords(accepted, accessed),
+    ...poisonedRecords(receipt, accessed).map((receipt) => ({ ...accepted, receipt })),
+    ...poisonedRecords(receipt.result, accessed).map((result) => ({ ...accepted, receipt: { ...receipt, result } })),
+    { ...accepted, receipt: { version: 2, ok: false, error: { code: "error", message: DESKTOP_TASK_MESSAGES.error } } },
+    { ...accepted, receipt: { ...receipt, version: 3 } },
+    { ...accepted, receipt: { ...receipt, result: { ...receipt.result, event: -1 } } },
+    { ...accepted, receipt: { ...receipt, result: { ...receipt.result, duplicate: "false" } } },
+    { ...accepted, receipt: { ...receipt, result: { ...receipt.result, routed: new Array(1) } } },
+  ]) assert.throws(() => parseDesktopTaskOutcome(bad));
+  for (const outcome of ["not-sent", "rejected", "uncertain"] as const) {
+    const refusal = { version: 3 as const, outcome, message: DESKTOP_TASK_MESSAGES[outcome] };
+    assert.deepEqual(parseDesktopTaskOutcome(taskOutcomeOf(refusal)), refusal);
+    for (const bad of [
+      { ...refusal, message: "自造文案" }, { ...refusal, version: 2 },
+      { ...refusal, message: DESKTOP_TASK_MESSAGES.error }, { ...refusal, receipt },
+      ...poisonedRecords(refusal, accessed),
+    ]) assert.throws(() => parseDesktopTaskOutcome(bad));
+  }
+  assert.equal(reads, 0);
+});
