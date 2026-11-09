@@ -26,6 +26,7 @@ import type { Job } from "../protocol/job.ts";
 import { addUsage, type Notice, type Result } from "../protocol/validate.ts";
 import { adapterFor, type Adapter, type Reading, type Turn, type Usage } from "./agents.ts";
 import { promptFor, readMessage, repairPrompt, resultFrom } from "./contract.ts";
+import { summarizeHeld, type HeldProbe, type HeldRecord, type WorkerSummary } from "./summary.ts";
 
 const RUNS = path.join(HOME, "worker", "runs");
 const TIMEOUT_MINUTES = 180;
@@ -105,9 +106,10 @@ const files = (entry: Entry) => ({
   err: path.join(entry.dir, `stderr-${entry.turn}.log`),
   exit: path.join(entry.dir, `exit-${entry.turn}`),
 });
-const marker = (entry: Entry) => `agent-autoloop-run:${entry.run}:${entry.attempt}:${entry.turn}`;
+const marker = (entry: { run: number; attempt: number; turn: number }) =>
+  `agent-autoloop-run:${entry.run}:${entry.attempt}:${entry.turn}`;
 
-function alive(entry: Entry) {
+function alive(entry: { run: number; attempt: number; turn: number; pid?: number | null }) {
   if (!entry.pid) return false;
   try {
     const command = execFileSync("ps", ["-p", String(entry.pid), "-o", "command="], { encoding: "utf8" });
@@ -123,15 +125,19 @@ function signal(entry: Entry, name: NodeJS.Signals) {
   } catch {}
 }
 
-function groupAlive(entry: Entry) {
+function groupAliveOf(pid: number) {
   // The wrapper can die before a child; zombies have already stopped and only their parent can reap them.
   return execFileSync("ps", ["-ax", "-o", "pgid=", "-o", "stat="], { encoding: "utf8" })
     .trim()
     .split("\n")
     .some((line) => {
       const [group, state] = line.trim().split(/\s+/);
-      return Number(group) === entry.pid && !state.startsWith("Z");
+      return Number(group) === pid && !state.startsWith("Z");
     });
+}
+
+function groupAlive(entry: Entry) {
+  return entry.pid === undefined ? false : groupAliveOf(entry.pid);
 }
 
 function snapshot(file: string) {
@@ -180,6 +186,63 @@ export function createWorker({
         return [];
       }
     });
+
+  const probe: HeldProbe = {
+    group(pid) {
+      try {
+        return groupAliveOf(pid) ? "live" : "empty";
+      } catch {
+        return "unknown";
+      }
+    },
+    linked(record) {
+      try {
+        return alive(record);
+      } catch {
+        return false;
+      }
+    },
+  };
+
+  /**
+   * What this worker holds right now, for the App's own status card. A record it cannot read or does
+   * not recognise means the scan is incomplete: an incomplete scan reports "unknown", never a
+   * smaller or more hopeful count.
+   */
+  function observe(): WorkerSummary {
+    let complete = true;
+    const records = readdirSync(RUNS).flatMap((id): HeldRecord[] => {
+      // A run it has handed in keeps its folder for looking into but has no entry: not held, not a gap.
+      const file = path.join(RUNS, id, "entry.json");
+      if (!existsSync(file)) return [];
+      try {
+        const entry = JSON.parse(readFileSync(file, "utf8")) as Entry;
+        const known =
+          typeof entry === "object" &&
+          entry !== null &&
+          Number.isSafeInteger(entry.run) &&
+          Number.isSafeInteger(entry.attempt) &&
+          Number.isSafeInteger(entry.turn) &&
+          entry.turn >= 0;
+        // A record it cannot recognise might be anything, including something still running.
+        if (!known) throw new Error("unknown record shape");
+        return [
+          {
+            run: entry.run,
+            attempt: entry.attempt,
+            turn: entry.turn,
+            pid: Number.isSafeInteger(entry.pid) && (entry.pid as number) > 0 ? (entry.pid as number) : null,
+            resultSaved: entry.result !== undefined,
+            stopIntentSaved: entry.stopping !== undefined,
+          },
+        ];
+      } catch {
+        complete = false;
+        return [];
+      }
+    });
+    return summarizeHeld(records, probe, complete);
+  }
 
   /** Starts a turn of the agent: a process that outlives this one, leaving its output and exit code in files. */
   function launch(entry: Entry, adapter: Adapter, prompt: string) {
@@ -587,5 +650,5 @@ export function createWorker({
     }));
   }
 
-  return { tick, run, drain, entries, tidy };
+  return { tick, run, drain, entries, tidy, observe };
 }

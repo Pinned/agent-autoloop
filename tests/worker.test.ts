@@ -16,7 +16,7 @@
 // Drain must not lose a delayed claim, launch turn zero or repairs, overwrite completed work, leave live process-group
 // children, lose offline results, duplicate concurrent ticks/settlements, or deadlock with the run loop.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1120,4 +1120,49 @@ test("concurrent ticks settle once and drain and run finish without deadlock", a
   assert.equal(calls, 1);
   assert.equal(hub.results[0].outcome, "done");
   assert.equal(hub.claims.length, 0, "closing during settle must not claim afterwards");
+});
+
+// The App's own status card reads what this process can actually see. A record it cannot read, or a
+// process check that fails, must broaden uncertainty, never shrink the count or guess a state.
+test("observe reports the held records it can verify and fails closed on one it cannot read", async () => {
+  const hub = fakeHub();
+  const w = worker(hub);
+  // Saved before anything was launched.
+  const preparing = heldJob(job(), 0);
+  // A live group carrying this turn's marker: trusted as executing.
+  const executing = job();
+  // The marker lives in the process's own command line, as it does for a launched agent.
+  const child = spawn("/bin/sh", ["-c", `sleep 5\n: agent-autoloop-run:${executing.run}:1:1`], {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+  const runningEntry = heldJob(executing, 1, { pid: child.pid, launchedAt: Date.now() });
+  // Ended, saved, group gone: waiting for the hub to take it.
+  const pending = heldJob(job(), 1, { result: { outcome: "done", summary: "做完了" } });
+  const dirs = [preparing, runningEntry, pending].map((entry) => entry.dir);
+  try {
+    await waitFor(() => {
+      try {
+        return w.observe().counts?.executing === 1;
+      } catch {
+        return false;
+      }
+    });
+    assert.deepEqual(w.observe(), {
+      quality: "complete",
+      counts: { held: 3, preparing: 1, executing: 1, stopping: 0, pendingSync: 1, uncertain: 0 },
+    });
+    // One record the worker can no longer read makes the whole scan unknown, not smaller.
+    const broken = join(home, "worker", "runs", "broken-entry");
+    mkdirSync(broken, { recursive: true });
+    writeFileSync(join(broken, "entry.json"), "{ not json");
+    dirs.push(broken);
+    assert.deepEqual(w.observe(), { quality: "unknown", counts: null });
+  } finally {
+    try {
+      process.kill(-child.pid!, "SIGKILL");
+    } catch {}
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  }
 });

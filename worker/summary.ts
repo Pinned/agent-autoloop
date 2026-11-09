@@ -20,7 +20,52 @@ export type WorkerCounts = Readonly<{
 export type WorkerSummary = Readonly<
   { quality: "complete"; counts: WorkerCounts } | { quality: "unknown"; counts: null }
 >;
+// The identity fields stay private to the worker: the probe needs them to recognise the process it
+// started, but nothing here is allowed to carry a run id, a path or a token into the observation.
+export type HeldRecord = Readonly<{
+  run: number;
+  attempt: number;
+  turn: number;
+  pid: number | null;
+  resultSaved: boolean;
+  stopIntentSaved: boolean;
+}>;
+/** Process facts the worker can check about a record it holds; "unknown" when the check itself failed. */
+export type HeldProbe = Readonly<{
+  group(pid: number): "live" | "empty" | "unknown";
+  linked(record: HeldRecord): boolean;
+}>;
 const unknownSummary: WorkerSummary = Object.freeze({ quality: "unknown", counts: null });
+/** Records the worker could not read at all are not held records; the scan itself is reported as incomplete. */
+export function summarizeHeld(
+  records: readonly HeldRecord[],
+  probe: HeldProbe,
+  complete: boolean,
+): WorkerSummary {
+  if (!complete) return unknownSummary;
+  try {
+    const evidence: WorkerEvidence[] = [];
+    for (const record of records) {
+      const group = record.pid === null ? "empty" : probe.group(record.pid);
+      evidence.push({
+        recordTrusted: true,
+        claimSaved: true,
+        startBoundary: record.turn > 0 ? "crossed" : "not-crossed",
+        turnZero: record.turn === 0,
+        stopIntentSaved: record.stopIntentSaved,
+        resultSaved: record.resultSaved,
+        group,
+        // A marker check only means something for a pid whose group is still there; a reused pid in
+        // no live group cannot be this record's execution.
+        executionLinked: group === "live" && probe.linked(record),
+      });
+    }
+    return aggregateWorkerSummary(evidence, "complete");
+  } catch {
+    // A failing probe makes the process observation unknown, never a smaller or optimistic count.
+    return unknownSummary;
+  }
+}
 const evidenceFields = [
   "recordTrusted",
   "claimSaved",
