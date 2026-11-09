@@ -20,6 +20,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
+import { parseDesktopWorkerSnapshot } from "../host/desktop-worker-contract.ts";
 
 const repo = join(import.meta.dirname, "..");
 const root = mkdtempSync(join(tmpdir(), "autoloop-up-"));
@@ -234,6 +235,102 @@ test(
     assert.deepEqual(await p.message("drained"), { version: 1, type: "drained", pending: 1 });
     assert.equal((await p.exited).code, 0);
     assert.equal(JSON.parse(readFileSync(join(dir, "entry.json"), "utf8")).result.outcome, "cancelled");
+  },
+);
+
+test(
+  "worker-only run reports what it holds as a validated status snapshot, after ready",
+  { timeout: 20_000 },
+  async () => {
+    const f = await fixture();
+    const file = join(f.home, "config.json");
+    const config = JSON.parse(readFileSync(file, "utf8"));
+    delete config.hub;
+    config.channels = {};
+    writeFileSync(file, JSON.stringify(config));
+    // Two finished runs the hub was never told about: the worker owns them and nothing can launch.
+    for (const id of ["81", "82"]) {
+      const dir = join(f.home, "worker", "runs", id);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "entry.json"),
+        JSON.stringify({
+          run: Number(id),
+          attempt: 1,
+          turn: 1,
+          token: `t${id}`,
+          dir,
+          result: { outcome: "done", summary: "做完了" },
+        }),
+      );
+    }
+    const p = f.launch();
+    assert.deepEqual(await p.message("ready"), { version: 1, type: "ready", role: "worker" });
+    const first = await p.message("observed");
+    // Ready is a process fact: it never claims the hub was reached.
+    const readyAt = p.messages.indexOf(p.messages.find((m) => m.type === "ready")!);
+    assert.ok(p.messages.indexOf(first) > readyAt, "the reading follows ready");
+    // Wait for the reading a finished round produced, which is the one that knows about the hub.
+    const deadline = Date.now() + 10_000;
+    const observed = () => p.messages.filter((m) => m.type === "observed").at(-1)!;
+    while (observed().snapshot.connection.state === "unknown") {
+      assert.ok(Date.now() < deadline, `no round finished: ${p.output()}`);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const snapshot = parseDesktopWorkerSnapshot(observed().snapshot);
+    assert.equal(snapshot.quality, "complete");
+    assert.deepEqual(snapshot.counts, {
+      held: 2,
+      preparing: 0,
+      executing: 0,
+      stopping: 0,
+      pendingSync: 2,
+      uncertain: 0,
+    });
+    assert.equal(snapshot.connection.state, "disconnected");
+    assert.equal(snapshot.connection.lastSeen, null);
+    assert.ok(snapshot.seq >= 1 && snapshot.observedAt > 0);
+    // Each reading carries its own sequence number, and they arrive in that order.
+    const seqs = p.messages.filter((m) => m.type === "observed").map((m) => m.snapshot.seq as number);
+    assert.deepEqual(seqs, seqs.map((_, index) => index + 1));
+    p.child.kill("SIGTERM");
+    assert.deepEqual(await p.message("drained"), { version: 1, type: "drained", pending: 2 });
+    assert.equal((await p.exited).code, 0);
+  },
+);
+
+test(
+  "an unchanged reading is not repeated, and a failed send is retried",
+  { timeout: 20_000 },
+  async () => {
+    const f = await fixture();
+    const file = join(f.home, "config.json");
+    const config = JSON.parse(readFileSync(file, "utf8"));
+    delete config.hub;
+    config.channels = {};
+    writeFileSync(file, JSON.stringify(config));
+    // The first reading a finished round produced is dropped on the floor. Nothing about the worker
+    // changes afterwards, so the app only ever learns about that round if the failed send is retried.
+    const p = f.launch(
+      "drain",
+      false,
+      `const send = process.send.bind(process); let dropped = false; process.send = (message, callback) => { if (message.type === "observed" && message.snapshot.connection.state !== "unknown" && !dropped) { dropped = true; setImmediate(() => callback(new Error("fake IPC failure"))); return false; } return send(message, callback); };`,
+    );
+    await p.message("ready");
+    const observed = () => p.messages.filter((m) => m.type === "observed");
+    const deadline = Date.now() + 10_000;
+    while (!(observed().length && observed().at(-1).snapshot.connection.state === "disconnected")) {
+      assert.ok(Date.now() < deadline, `the failed reading was not retried: ${p.output()}`);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    // Nothing about this worker changes any more, so nothing further is sent.
+    const settled = observed().length;
+    await new Promise((resolve) => setTimeout(resolve, 4500));
+    assert.equal(observed().length, settled);
+    // A status reading is display data: losing one never turns a clean stop into a failure.
+    p.child.kill("SIGTERM");
+    assert.deepEqual(await p.message("drained"), { version: 1, type: "drained", pending: 0 });
+    assert.equal((await p.exited).code, 0);
   },
 );
 

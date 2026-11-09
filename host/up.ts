@@ -5,6 +5,7 @@ import type { Server } from "node:http";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { readConfig, type ChannelConfig } from "./config.ts";
+import { desktopWorkerSnapshotOf, type DesktopWorkerSnapshot } from "./desktop-worker-contract.ts";
 import { HOME } from "./home.ts";
 import { acquireRunLock, RunLockBusyError } from "./runlock.ts";
 import { commitOf } from "./version.ts";
@@ -15,7 +16,8 @@ type Failure = "lock" | "setup" | "listen" | "runtime";
 type Lifecycle =
   | { version: 1; type: "ready"; role: "hub-worker" | "worker" }
   | { version: 1; type: "failed"; reason: Failure }
-  | { version: 1; type: "drained"; pending: number };
+  | { version: 1; type: "drained"; pending: number }
+  | { version: 1; type: "observed"; snapshot: DesktopWorkerSnapshot };
 
 /** This is the child process's private IPC, not a kernel fact or a renderer error channel. */
 function sendLifecycle(message: Lifecycle): Promise<void> {
@@ -76,9 +78,56 @@ export async function up(options: { stopMode?: "legacy" | "drain" } = {}) {
     started = resolve;
   });
 
+  // Status-card readings are display data, not a lifecycle fact: a failed read or send never changes
+  // drain behaviour, and an unchanged reading is not repeated. The timer is cleared on shutdown.
+  const observeEvery = 2000;
+  // While contact continues every round, only a coarse timestamp bucket moves: the card gets a fresh
+  // "last seen" every half minute instead of a repaint every two seconds.
+  const refreshEvery = 30_000;
+  let observing: ReturnType<typeof setInterval> | undefined;
+  let reporting = false;
+  let observedSeq = 0;
+  let observedShape: string | undefined;
+  const reportObservation = async () => {
+    // One reading at a time: a slow send must not let an older reading land after a newer one.
+    if (!worker || closing || reporting) return;
+    reporting = true;
+    try {
+      let summary: ReturnType<ReturnType<typeof createWorker>["observation"]>["summary"];
+      let connection: ReturnType<ReturnType<typeof createWorker>["observation"]>["connection"];
+      let shape: string;
+      try {
+        ({ summary, connection } = worker.observation());
+        shape = JSON.stringify({
+          summary,
+          state: connection.state,
+          seen: connection.lastSeen === null ? null : Math.floor(connection.lastSeen / refreshEvery),
+        });
+      } catch (error) {
+        console.error(`${new Date().toISOString()} [up] couldn't observe this worker: ${error}`);
+        return;
+      }
+      if (shape === observedShape) return;
+      const snapshot = desktopWorkerSnapshotOf(observedSeq + 1, Date.now(), connection, summary);
+      try {
+        await sendLifecycle({ version: 1, type: "observed", snapshot });
+      } catch (error) {
+        // Not remembered, and the sequence is not consumed: the app never saw this reading.
+        console.error(`${new Date().toISOString()} [up] couldn't report worker status: ${error}`);
+        return;
+      }
+      observedSeq = snapshot.seq;
+      observedShape = shape;
+    } finally {
+      reporting = false;
+    }
+  };
+
   const finish = (reason?: Failure): Promise<void> => {
     failure ??= reason;
     closing = true;
+    clearInterval(observing);
+    observing = undefined;
     stop.abort();
     return (finishing ??= (async () => {
       // Imports/listen can complete after a signal: no resource can escape shutdown after this barrier.
@@ -191,11 +240,17 @@ export async function up(options: { stopMode?: "legacy" | "drain" } = {}) {
     if (!closing) {
       await sendLifecycle({ version: 1, type: "ready", role: config.hub ? "hub-worker" : "worker" });
       if (!closing) {
-        if (worker)
+        if (worker) {
           void worker.run(stop.signal).catch((error) => {
             log("worker")(`stopped: ${error}`);
             void finish("runtime");
           });
+          // An immediate reading saves the app two seconds of "not observed yet"; later ones only
+          // report changes, so an idle worker is not a steady stream of identical messages.
+          void reportObservation();
+          observing = setInterval(() => void reportObservation(), observeEvery);
+          observing.unref?.();
+        }
         for (const [id, channel] of Object.entries(config.channels ?? {})) {
           void keepChannelRunning(id, channel, config.url, stop.signal);
         }

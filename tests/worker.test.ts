@@ -1166,3 +1166,22 @@ test("observe reports the held records it can verify and fails closed on one it 
     for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// The App shows whether this worker is actually reaching its hub. A round that ran is a fact; before
+// any round there is none, and a failed round must not pretend the last success is current.
+test("observation reports hub connectivity from rounds that actually ran, not from intent", async () => {
+  const hub = fakeHub();
+  const w = worker(hub);
+  assert.deepEqual(w.observation().connection, { state: "unknown", lastSeen: null });
+  await w.tick();
+  const seen = w.observation().connection;
+  assert.equal(seen.state, "connected");
+  assert.ok(typeof seen.lastSeen === "number" && seen.lastSeen > 0);
+  hub.down = true;
+  await w.tick();
+  assert.deepEqual(w.observation().connection, { state: "disconnected", lastSeen: seen.lastSeen });
+  hub.down = false;
+  await w.tick();
+  assert.equal(w.observation().connection.state, "connected");
+  assert.ok(w.observation().connection.lastSeen! >= seen.lastSeen!);
+});
