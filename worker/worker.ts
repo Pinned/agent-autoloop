@@ -26,7 +26,14 @@ import type { Job } from "../protocol/job.ts";
 import { addUsage, type Notice, type Result } from "../protocol/validate.ts";
 import { adapterFor, type Adapter, type Reading, type Turn, type Usage } from "./agents.ts";
 import { promptFor, readMessage, repairPrompt, resultFrom } from "./contract.ts";
-import { summarizeHeld, type HeldProbe, type HeldRecord, type WorkerSummary } from "./summary.ts";
+import {
+  summarizeHeld,
+  type HeldProbe,
+  type HeldRecord,
+  type WorkerConnection,
+  type WorkerObservation,
+  type WorkerSummary,
+} from "./summary.ts";
 
 const RUNS = path.join(HOME, "worker", "runs");
 const TIMEOUT_MINUTES = 180;
@@ -176,6 +183,8 @@ export function createWorker({
   let unreachableSince: number | null = null;
   let told = false;
   let tries = 0;
+  // Only a round that actually reached the hub counts as seen; before any round it is unknown.
+  let connection: WorkerConnection = { state: "unknown", lastSeen: null };
   mkdirSync(RUNS, { recursive: true, mode: 0o700 });
 
   const entries = () =>
@@ -242,6 +251,11 @@ export function createWorker({
       }
     });
     return summarizeHeld(records, probe, complete);
+  }
+
+  /** What this worker holds, and whether it has been reaching its hub, for the App's status card. */
+  function observation(): WorkerObservation {
+    return { summary: observe(), connection: { ...connection } };
   }
 
   /** Starts a turn of the agent: a process that outlives this one, leaving its output and exit code in files. */
@@ -585,6 +599,9 @@ export function createWorker({
       reachable = false;
     }
     watchHub(reachable, now());
+    connection = reachable
+      ? { state: "connected", lastSeen: now() }
+      : { state: "disconnected", lastSeen: connection.lastSeen };
     return reachable;
   }
 
@@ -650,5 +667,5 @@ export function createWorker({
     }));
   }
 
-  return { tick, run, drain, entries, tidy, observe };
+  return { tick, run, drain, entries, tidy, observe, observation };
 }

@@ -35,6 +35,12 @@ export type HeldProbe = Readonly<{
   group(pid: number): "live" | "empty" | "unknown";
   linked(record: HeldRecord): boolean;
 }>;
+/** Whether this worker could reach its hub, as of the last round it finished. */
+export type WorkerConnection = Readonly<{
+  state: "unknown" | "connected" | "disconnected";
+  lastSeen: number | null;
+}>;
+export type WorkerObservation = Readonly<{ summary: WorkerSummary; connection: WorkerConnection }>;
 const unknownSummary: WorkerSummary = Object.freeze({ quality: "unknown", counts: null });
 /** Records the worker could not read at all are not held records; the scan itself is reported as incomplete. */
 export function summarizeHeld(
