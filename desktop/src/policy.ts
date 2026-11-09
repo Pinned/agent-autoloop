@@ -1,3 +1,4 @@
+import type { TaskHistoryRequest, TaskHistoryResponse } from "../../host/desktop-task-history-contract.ts";
 import { realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, relative, sep } from "node:path";
@@ -29,6 +30,7 @@ export const channels = Object.freeze({
   runtimeStop: "desktop:runtime:stop",
   todayState: "desktop:state:today",
   tasksGet: "desktop:tasks:get",
+  taskDetail: "desktop:tasks:detail",
   taskEntries: "desktop:task:entries",
   taskCreate: "desktop:task:create",
   rulesGet: "desktop:rules:get",
@@ -58,6 +60,7 @@ export interface DesktopBridge {
   todayState(): Promise<DesktopTodayResponse>;
   /** The runs page for the tasks list; `before` pages further into history. */
   tasksGet(before?: number): Promise<DesktopTasksResponse>;
+  taskDetail<R extends Exclude<TaskHistoryRequest, { operation: "list" }>>(request: R): Promise<TaskHistoryResponse<R["operation"]>>;
   /** The real rule entries the new-task panel offers, from the local hub while it runs. */
   taskEntries(): Promise<DesktopTaskEntriesResponse>;
   /** Create one task through the hub's own door; the input is checked again in main. */

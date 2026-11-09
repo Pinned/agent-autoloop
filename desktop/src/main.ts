@@ -1,3 +1,5 @@
+import { createTaskQuerySource } from "./task-query-source.ts";
+import { createTaskDetailIpc } from "./task-detail-ipc.ts";
 import {
   app,
   BrowserWindow,
@@ -249,6 +251,12 @@ if (ownsAppLock)
         },
         refresh: () => refreshMenus(),
         report: (message) => console.error(message),
+      });
+      const detailSource = createTaskQuerySource({ home: runtimeHome, getState: () => presentation.snapshot() });
+      const detailIpc = createTaskDetailIpc({
+        assertSender: (event) => assertSender(event as Parameters<typeof assertSender>[0], window.webContents, page),
+        presentation,
+        source: detailSource,
       });
       const showSafeError = (message: string) =>
         dialog.showMessageBox(window, {
@@ -572,6 +580,7 @@ if (ownsAppLock)
         return taskSource.entries();
       });
       // One task at a time through the hub's door; the input is validated before any request.
+      ipcMain.handle(channels.taskDetail, (event, ...args: unknown[]) => detailIpc.read(event, args));
       ipcMain.handle(channels.taskCreate, createTaskCreateHandler({
         assertSender: (event: Parameters<typeof assertSender>[0]) => assertSender(event, window.webContents, page),
         presentation,
@@ -684,7 +693,7 @@ if (ownsAppLock)
             result.runtimeEventSeen !== false ||
             result.navigateSeen !== false ||
             result.bridge.join(",") !==
-              "checkBuiltinAgents,getTheme,initHub,joinWorker,onNavigate,onRuntimeEvent,rulesGet,rulesPut,runtimeGet,runtimeStart,runtimeStop,setTheme,setupStatus,taskCreate,taskEntries,tasksGet,todayState,window" ||
+              "checkBuiltinAgents,getTheme,initHub,joinWorker,onNavigate,onRuntimeEvent,rulesGet,rulesPut,runtimeGet,runtimeStart,runtimeStop,setTheme,setupStatus,taskCreate,taskDetail,taskEntries,tasksGet,todayState,window" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||

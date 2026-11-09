@@ -105,7 +105,15 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(main, /远程队列不会取消/);
   assert.match(main, /离线持久待同步/);
   assert.doesNotMatch(main, /restartPolicy|controller\.restart/);
-  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 16);
+  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 17);
+  // Each handler is checked inside its own block: a cross-handler match would let a missing
+  // sender check hide behind the next handler that has one.
+  const blocks = main.split("ipcMain.handle(channels.").slice(1);
+  const blockOf = (name: string) => {
+    const block = blocks.find((part) => part.startsWith(`${name},`));
+    assert.ok(block, `handler ${name} is missing`);
+    return block;
+  };
   for (const name of [
     "setupStatus",
     "setupCheck",
@@ -121,11 +129,16 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
     "rulesGet",
     "rulesPut",
   ]) {
-    assert.match(
-      main,
-      new RegExp(`ipcMain\\.handle\\(channels\\.${name},[^]*?assertSender\\(event, window\\.webContents, page\\)`),
-    );
+    assert.match(blockOf(name), /assertSender\(event, window\.webContents, page\)/);
   }
+  // Detail has its own unit: the channel delegates, and that unit checks the same pinned sender
+  // before it parses anything.
+  assert.match(blockOf("taskDetail"), /=> detailIpc\.read\(event, args\)\)/);
+  assert.match(
+    main,
+    /assertSender: \(event\) => assertSender\(event as Parameters<typeof assertSender>\[0\], window\.webContents, page\)/,
+  );
+  assert.match(read("../src/task-detail-ipc.ts"), /async read\([^)]*\)[^{]*\{\s*options\.assertSender\(event\);/);
   // The renderer is pushed state through the two fixed event channels, and nothing else.
   assert.equal((main.match(/webContents\.send\(/g) ?? []).length, 2);
   assert.match(main, /webContents\.send\(channels\.runtimeEvent, desktopRuntimeEventOf\(state\)\)/);
@@ -164,6 +177,7 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
     "setTheme",
     "setupStatus",
     "taskCreate",
+    "taskDetail",
     "taskEntries",
     "tasksGet",
     "todayState",
