@@ -48,6 +48,7 @@ function fixture() {
   });
   return {
     controller,
+    state: () => controller.state,
     calls: () => calls,
     notifications: () => notifications,
     answer: (value: unknown) => gates[gates.length - 1].resolve(value),
@@ -55,7 +56,7 @@ function fixture() {
   };
 }
 
-test("refresh is single-flight: concurrent refreshes collapse into one bridge call", async () => {
+test("concurrent refreshes collapse into one call plus at most one trailing read", async () => {
   const f = fixture();
   f.controller.refresh();
   f.controller.refresh();
@@ -64,12 +65,37 @@ test("refresh is single-flight: concurrent refreshes collapse into one bridge ca
   assert.equal(f.controller.busy, true);
   assert.equal(f.controller.state.kind, "loading");
   assert.equal(f.notifications(), 1);
-  f.answer(reading());
+  f.answer(reading({ seq: 4 }));
   await flush();
-  assert.equal(f.calls(), 1);
+  // Three requests, one in-flight read, and exactly one trailing read — never three.
+  assert.equal(f.calls(), 2);
+  assert.equal(f.controller.busy, true);
+  const adopted = f.state();
+  if (adopted.kind !== "ready") throw new Error("expected ready");
+  assert.equal(adopted.snapshot.seq, 4);
+  f.answer(reading({ seq: 5 }));
+  await flush();
+  assert.equal(f.calls(), 2);
   assert.equal(f.controller.busy, false);
-  assert.equal(f.controller.state.kind, "ready");
-  assert.equal(f.notifications(), 2);
+  const settled = f.state();
+  if (settled.kind !== "ready") throw new Error("expected ready");
+  assert.equal(settled.snapshot.seq, 5);
+  assert.equal(f.notifications(), 4);
+});
+
+test("a transition during a read is never answered by the reading taken before it", async () => {
+  const f = fixture();
+  f.controller.refresh();
+  // The page render is still reading when the runtime stops; a dropped request would leave the
+  // pre-stop counts on the page until some later transition happened to refresh it.
+  f.controller.refresh();
+  f.answer(reading({ seq: 4 }));
+  await flush();
+  assert.equal(f.calls(), 2);
+  f.answer(null);
+  await flush();
+  assert.deepEqual(f.controller.state, { kind: "empty" });
+  assert.equal(f.controller.busy, false);
 });
 
 test("a valid reading is adopted as frozen display state", async () => {
