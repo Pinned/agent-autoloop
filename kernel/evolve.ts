@@ -13,12 +13,13 @@ export const TABLES = [
   "keys",
   "config",
   "due",
+  "feedback",
 ] as const;
 export type Table = (typeof TABLES)[number];
 export type Change = { table: Table; key: string; row: Row | null };
 export type Fact = { version: 1; seq: number; at: number; type: string; changes: Change[]; meta?: Row };
 export type Match = Record<string, SQLInputValue | SQLInputValue[] | { not: null }>;
-const NUMBERED = new Set<Table>(["events", "runs", "cards", "timers"]);
+const NUMBERED = new Set<Table>(["events", "runs", "cards", "timers", "feedback"]);
 const indexes: Partial<Record<Table, string[][]>> = {
   events: [["source", "key"], ["routed", "id"], ["id"]],
   runs: [["state", "id"], ["rule", "lane", "state", "id"], ["id"], ["finished_at"]],
@@ -40,6 +41,7 @@ const indexes: Partial<Record<Table, string[][]>> = {
   ],
   deliveries: [["channel"], ["card_id"]],
   due: [["at"]],
+  feedback: [["run_id", "id"]],
 };
 const field = (name: string) => `json_extract(data,'$.${name}')`;
 const statements = new WeakMap<DatabaseSync, Map<string, StatementSync>>();
