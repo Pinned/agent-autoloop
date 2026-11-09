@@ -66,7 +66,8 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
   title.textContent = "任务入口";
   const intro = document.createElement("p");
   intro.className = "muted rules-intro";
-  intro.textContent = "修改基于开始编辑时的规则版本；规则变化时，请核对服务器数据与保留的草稿。";
+  intro.textContent =
+    "修改基于开始编辑时的规则版本；规则变化时，请核对服务器数据与保留的草稿。这里只编辑本机入口；其他来源的规则与定时任务请在中台网页控制台修改。";
   head.append(title, intro);
   const status = document.createElement("p");
   status.className = "rules-status";
