@@ -7,6 +7,7 @@ import {
   type DesktopRuntimeResponse,
   type DesktopRuntimeSnapshot,
 } from "../../host/desktop-run-contract.ts";
+import type { DesktopLaunchStatus } from "../../host/desktop-launch-contract.ts";
 import { createRendererRun, type RunBridge, type RunGate, type RunState } from "../src/renderer/run-controller.ts";
 
 function deferred<T>() {
@@ -370,8 +371,7 @@ test("notify reentry starts a new token and old completion never clears it or qu
   assert.equal(control.operationResults.start?.status, "running"); assert.equal(control.operationResults.stop?.status, "stopped");
 });
 
-test("receipt warnings remain visible in loading and locked views and never enable buttons", async () => {
-  const { mountRunCard } = await import("../src/renderer/run-view.ts");
+test("receipt warnings remain visible in loading and locked views and never enable buttons", async () => {  const { mountRunCard } = await import("../src/renderer/run-view.ts");
   class Node {
     textContent = ""; className = ""; hidden = false; disabled = false; id = ""; type = "";
     dataset: Record<string, string> = {}; children: Node[] = [];
@@ -394,5 +394,54 @@ test("receipt warnings remain visible in loading and locked views and never enab
     const root2 = new Node(); mountRunCard(root2 as unknown as HTMLElement, loading, () => {}, { setupBusy: () => false, setupLocked: () => false });
     assert.equal(nodes(root2).find(node => node.className.includes("run-receipt-stop"))?.hidden, false);
     view.update(); assert.equal(warning.hidden, false);
+  } finally { if (previous) Object.defineProperty(globalThis, "document", previous); else Reflect.deleteProperty(globalThis, "document"); }
+});
+
+test("the card's connection facts come from the snapshot and launch record, never from invented data", async () => {
+  const { mountRunCard } = await import("../src/renderer/run-view.ts");
+  class Node {
+    textContent = ""; className = ""; hidden = false; disabled = false; id = ""; type = "";
+    dataset: Record<string, string> = {}; children: Node[] = [];
+    append(...nodes: Node[]) { this.children.push(...nodes); }
+    setAttribute() {} addEventListener() {}
+  }
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", { configurable: true, value: { createElement: () => new Node() } });
+  try {
+    const f = fixture();
+    f.push(pushed(snap({ status: "running", role: "worker", pendingSync: 3 })));
+    const facts = (launch: DesktopLaunchStatus | null) => {
+      const root = new Node();
+      mountRunCard(root as unknown as HTMLElement, f.controller, () => {}, {
+        setupBusy: () => false,
+        setupLocked: () => false,
+        launch: () => launch,
+      });
+      const nodes = (node: Node): Node[] => [node, ...node.children.flatMap(nodes)];
+      return nodes(root).filter((node) => node.className === "run-fact")
+        .map((row) => [row.children[0].textContent, row.children[1].textContent]);
+    };
+    // A legacy machine is configured but not authorized to auto-start; it still shows real facts.
+    assert.deepEqual(facts({ completion: "legacy", nextLaunch: null, current: null }), [
+      ["本机角色", "纯执行机"],
+      ["自动启动", "未授权，配置早于自动启动功能，需要手动启动"],
+      ["离线待同步", "3 条"],
+    ]);
+    assert.deepEqual(facts(null), [
+      ["本机角色", "纯执行机"],
+      ["自动启动", "未确认"],
+      ["离线待同步", "3 条"],
+    ]);
+    // A complete record describes the next launch, never that anything is running now.
+    assert.equal(
+      facts({ completion: "complete", nextLaunch: "embedded", current: "embedded" })[1][1],
+      "已授权，下次打开应用会启动本机中台与执行机",
+    );
+    f.push(pushed(snap({ status: "running", role: "hub-worker", pendingSync: null })));
+    assert.deepEqual(facts({ completion: "complete", nextLaunch: "worker", current: "worker" }), [
+      ["本机角色", "中台＋执行机"],
+      ["自动启动", "已授权，下次打开应用会启动执行机"],
+      ["离线待同步", "未确认"],
+    ]);
   } finally { if (previous) Object.defineProperty(globalThis, "document", previous); else Reflect.deleteProperty(globalThis, "document"); }
 });
