@@ -69,12 +69,25 @@ export function mountRunCard(
     "停止会等待本机 Agent 排空并同步离线结果；无法确认安全停止时不会强制终止，也不会退出应用。",
     "muted run-note",
   );
-  section.append(title, line, role, admission, error, actions, note);
+  const receipts = {
+    start: element("p", "", "run-receipt run-receipt-start"),
+    stop: element("p", "", "run-receipt run-receipt-stop"),
+  };
+  section.append(title, line, role, admission, error, receipts.start, receipts.stop, actions, note);
   root.append(section);
 
   function update() {
     const state = control.state;
     const busy = control.busy;
+    // Historical receipts remain visible even when the current-state view is loading or locked.
+    for (const operation of ["start", "stop"] as const) {
+      const receipt = control.operationResults[operation];
+      const node = receipts[operation];
+      node.hidden = receipt === null;
+      node.textContent = receipt
+        ? `上次已确认${operation === "start" ? "启动" : "停止"}回执，并非当前状态：${desktopRuntimeStatusText(receipt)}；角色：${receipt.role ? roleNames[receipt.role] : "无"}；离线待同步：${receipt.pendingSync ?? "未确认"}${receipt.error ? `；${receipt.error.message}` : ""}`
+        : "";
+    }
     start.disabled = true;
     stop.disabled = true;
     configure.disabled = true;

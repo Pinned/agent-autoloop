@@ -39,9 +39,11 @@ function sameSnapshot(a: DesktopRuntimeSnapshot, b: DesktopRuntimeSnapshot): boo
 /** A single-flight, in-memory view of the local runtime. Adopts only strictly parsed contract payloads. */
 export function createRendererRun(bridge: RunBridge, gate: RunGate, onChange: () => void) {
   let state: RunState = Object.freeze({ kind: "loading" });
-  let flight: "get" | "start" | "stop" | null = null;
+  type Flight = { readonly operation: "get" | "start" | "stop"; readonly eventGenerationAtBegin: number };
+  let flight: Flight | null = null;
   let eventGeneration = 0;
-  let readGeneration = 0;
+  let operationResults: Readonly<{ start: DesktopRuntimeSnapshot | null; stop: DesktopRuntimeSnapshot | null }> =
+    Object.freeze({ start: null, stop: null });
   let trailingRefresh = false;
   // Sticky: once an operation cannot be confirmed safe, only a pushed stopped/running state reopens the view.
   let lock: "unknown" | null = null;
@@ -64,8 +66,8 @@ export function createRendererRun(bridge: RunBridge, gate: RunGate, onChange: ()
     if (state.kind === "ready" && sameSnapshot(state.snapshot, next)) return;
     state = Object.freeze({ kind: "ready", snapshot: next, admission: null });
   }
-  function finish(operation: "get" | "start" | "stop", value: unknown, rejected: boolean) {
-    flight = null;
+  function finish(token: Flight, value: unknown, rejected: boolean) {
+    if (flight !== token) return;
     let response: DesktopRuntimeResponse | null = null;
     if (!rejected) {
       try {
@@ -74,21 +76,28 @@ export function createRendererRun(bridge: RunBridge, gate: RunGate, onChange: ()
         // Malformed results are safety failures, never normal UI errors.
       }
     }
+    if (flight !== token) return;
+    flight = null;
     if (!response) locked();
     else if (!response.ok) {
       if (response.error.code === "unknown") locked();
       else if (state.kind === "ready")
         // Admission refusals are transient text; the last known snapshot is never replayed from them.
         state = Object.freeze({ ...state, admission: response.error.message });
-    } else if (operation !== "get" || readGeneration === eventGeneration) adopt(response.state);
+    } else {
+      if (token.operation !== "get")
+        operationResults = Object.freeze({ ...operationResults, [token.operation]: frozen(response.state) });
+      // A confirmed operation is a fact, not authority to replay older state over a newer push.
+      if (token.eventGenerationAtBegin === eventGeneration) adopt(response.state);
+    }
     const reread = trailingRefresh;
     trailingRefresh = false;
     notify();
     if (reread && !lock && flight === null) begin("get");
   }
   function begin(operation: "get" | "start" | "stop") {
-    flight = operation;
-    if (operation === "get") readGeneration = eventGeneration;
+    const token: Flight = Object.freeze({ operation, eventGenerationAtBegin: eventGeneration });
+    flight = token;
     let result: Promise<unknown>;
     try {
       result =
@@ -98,12 +107,12 @@ export function createRendererRun(bridge: RunBridge, gate: RunGate, onChange: ()
             ? bridge.runtimeStart()
             : bridge.runtimeStop();
     } catch {
-      finish(operation, undefined, true);
+      finish(token, undefined, true);
       return;
     }
     void Promise.resolve(result).then(
-      (value) => finish(operation, value, false),
-      () => finish(operation, undefined, true),
+      (value) => finish(token, value, false),
+      () => finish(token, undefined, true),
     );
     // The button disables before any bridge promise settles.
     notify();
@@ -145,6 +154,9 @@ export function createRendererRun(bridge: RunBridge, gate: RunGate, onChange: ()
     get state(): RunState {
       return state;
     },
+    get operationResults() {
+      return operationResults;
+    },
     get busy(): boolean {
       return flight !== null;
     },
@@ -166,6 +178,7 @@ export function createRendererRun(bridge: RunBridge, gate: RunGate, onChange: ()
       if (flight !== null || lock || state.kind !== "ready") return;
       const snapshot = state.snapshot;
       const mirrored = gate();
+      if (flight !== null || lock || state.kind !== "ready" || state.snapshot !== snapshot) return;
       if (mirrored.setupLocked || mirrored.setupBusy) return;
       if (!["stopped", "failed", "unconfigured"].includes(snapshot.status)) return;
       begin("start");
