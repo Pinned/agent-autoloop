@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { test, type TestContext } from "node:test";
 import {
   DESKTOP_SETUP_ERROR_MESSAGES,
@@ -27,12 +28,15 @@ import {
   createDesktopDiscovery,
   createDesktopSetupDriver,
   desktopSetupPort,
+  desktopSetupRuntimeSupported,
   DESKTOP_CONFIG_MAX_BYTES,
   DESKTOP_SETUP_PORT_VARIABLE,
+  DESKTOP_SUPPORTED_NODE_MAJOR,
   readDesktopSetupRequest,
   readDesktopSetupStatus,
   type DesktopSetupDependencies,
 } from "../host/desktop-setup.ts";
+import { runtimeTarget } from "../desktop/scripts/runtime.mjs";
 
 const joinInput = { url: "https://hub.invalid", worker: "test-worker", key: " synthetic-key " };
 function fixture(t: TestContext) {
@@ -649,12 +653,20 @@ test("isolated init uses bundled adapters and private absolute launchers without
 });
 
 test("isolated direct entry accepts one stdin request and emits only a safe fd3 response", (t) => {
+  // The entry refuses Electron's Node and whatever `node` the PATH offers; production always runs
+  // it on the pinned, checksum-verified runtime. Test the shipped path, not the developer's node.
+  const runtime = runtimeTarget();
+  const node = fileURLToPath(new URL(`../desktop/.cache/runtime/${runtime.root}/bin/node`, import.meta.url));
+  if (!existsSync(node)) {
+    t.skip(`固定运行时未下载（${runtime.root}）；先运行 npm --prefix desktop run runtime:check`);
+    return;
+  }
   isolated(
     t,
     `
     const {spawnSync} = await import('node:child_process');
     const entry = ${JSON.stringify(new URL("../host/desktop-setup.ts", import.meta.url).pathname)};
-    const run = (input,extra=[]) => spawnSync(process.execPath,['--disable-warning=ExperimentalWarning',entry,...extra],
+    const run = (input,extra=[]) => spawnSync(${JSON.stringify(node)},['--disable-warning=ExperimentalWarning',entry,...extra],
       {env:process.env,cwd:privateHome,input,encoding:'utf8',stdio:['pipe','pipe','pipe','pipe']});
     const result = run(JSON.stringify({version:1,operation:'status'}));
     assert.equal(result.error,undefined); assert.equal(result.status,0,result.stderr); assert.equal(result.stdout,'');
@@ -665,6 +677,26 @@ test("isolated direct entry accepts one stdin request and emits only a safe fd3 
     }
     const extra = run('{}',['extra']); assert.equal(extra.status,0); assert.equal(JSON.parse(extra.output[3]).error.code,'invalid-request');
   `,
+  );
+});
+
+test("the direct entry refuses every runtime that was not the verified independent Node", async () => {
+  const runtime = runtimeTarget();
+  // process.versions.node has no leading "v"; normalize the pinned version the same way.
+  const node = runtime.version.slice(1);
+  // The gate is the only thing keeping first run off Electron's embedded Node and the user's PATH.
+  assert.equal(desktopSetupRuntimeSupported({ node }, "darwin"), true);
+  assert.equal(desktopSetupRuntimeSupported({ node }, "linux"), true);
+  assert.equal(desktopSetupRuntimeSupported({ node, electron: "45.2.3" }), false);
+  assert.equal(desktopSetupRuntimeSupported({ node: "26.1.0" }, "darwin"), false);
+  assert.equal(desktopSetupRuntimeSupported({ node: "23.99.0" }, "darwin"), false);
+  assert.equal(desktopSetupRuntimeSupported({ node }, "win32"), false);
+  assert.equal(desktopSetupRuntimeSupported({}, "darwin"), false);
+  // A runtime bump that forgets the gate would strand every real user at first run.
+  assert.equal(
+    Number(node.split(".")[0]),
+    DESKTOP_SUPPORTED_NODE_MAJOR,
+    "DESKTOP_SUPPORTED_NODE_MAJOR 必须与 desktop/scripts/runtime.mjs 的 NODE_VERSION 主版本一致",
   );
 });
 
