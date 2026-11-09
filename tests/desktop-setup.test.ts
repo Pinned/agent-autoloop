@@ -273,12 +273,111 @@ test("restricted discovery sees only fixed injected directories and never execut
   assert.throws(() => createDesktopDiscovery(["relative"]));
 });
 
+// Reject invalid allocator results before launch intent or config writes; valid boundaries never bind a socket.
+for (const port of ["0", "80", "1023", "65536", "99999", "1024", "65535"]) {
+  test(`L1 auto port boundary ${port}`, async (t) => {
+    assert.equal(process.env[DESKTOP_SETUP_PORT_VARIABLE], undefined);
+    const home = fixture(t);
+    const valid = port === "1024" || port === "65535";
+    const calls: string[] = [];
+    const initOptions: unknown[] = [];
+    let held = false;
+    const discovery = createDesktopDiscovery([]);
+    const driver = createDesktopSetupDriver({
+      home,
+      discovery,
+      acquireLock() {
+        assert.equal(held, false);
+        held = true;
+        calls.push("acquire");
+        return {
+          release() {
+            assert.equal(held, true);
+            held = false;
+            calls.push("release");
+          },
+        };
+      },
+      async allocatePort() {
+        assert.equal(held, true);
+        calls.push("allocate");
+        return port;
+      },
+      async init(options, restricted) {
+        assert.equal(held, true);
+        assert.equal(restricted, discovery);
+        calls.push("init");
+        initOptions.push(options);
+        // Only a minimal synthetic config: no setup runtime, discovery execution, listener or network.
+        writeFileSync(
+          path.join(home, "config.json"),
+          JSON.stringify({
+            url: `http://127.0.0.1:${port}`,
+            hub: { listen: `127.0.0.1:${port}` },
+            worker: { name: "worker", key: "synthetic-worker" },
+            owner: "synthetic-owner",
+            source: { name: "local", key: "synthetic-source" },
+          }),
+        );
+      },
+      join() {
+        calls.push("join");
+        throw new Error("unexpected-join");
+      },
+      async probe() {
+        calls.push("probe");
+        throw new Error("unexpected-probe");
+      },
+    });
+    assert.deepEqual(await driver({ version: 1, operation: "launch-status" }), {
+      version: 1,
+      operation: "launch-status",
+      ok: true,
+      data: { completion: "first-run", nextLaunch: null, current: null },
+    });
+    const response = await driver({ version: 1, operation: "init" });
+    const launch = await driver({ version: 1, operation: "launch-status" });
+    assert.deepEqual(
+      {
+        response,
+        calls,
+        held,
+        initOptions,
+        files: readdirSync(home).sort(),
+        setup: readDesktopSetupStatus(home),
+        launch,
+      },
+      {
+        response: valid
+          ? { version: 1, operation: "init", ok: true, data: { configuration: "configured", role: "hub-worker" } }
+          : desktopSetupFailure("init", "operation-failed"),
+        calls: valid ? ["acquire", "allocate", "init", "release"] : ["acquire", "allocate", "release"],
+        held: false,
+        initOptions: valid ? [{ allowNoAgent: true, port }] : [],
+        files: valid ? ["config.json", "desktop-launch.json"] : [],
+        setup: valid
+          ? { configuration: "configured", role: "hub-worker" }
+          : { configuration: "unconfigured", role: null },
+        launch: {
+          version: 1,
+          operation: "launch-status",
+          ok: true,
+          data: valid
+            ? { completion: "prepared", nextLaunch: "embedded", current: "embedded" }
+            : { completion: "first-run", nextLaunch: null, current: null },
+        },
+      },
+    );
+  });
+}
+
 function driverFixture(home: string, changes: Partial<DesktopSetupDependencies> = {}) {
   const calls: string[] = [];
   let held = false;
   const discovery = createDesktopDiscovery([]);
   const dependencies: DesktopSetupDependencies = {
     home,
+    allocatePort: async () => "3350", // Synthetic dependency; never listen or probe the real port.
     discovery,
     acquireLock() {
       assert.equal(held, false);
@@ -342,6 +441,32 @@ test("driver locks around entire init/join, returns no credentials and refuses e
   }
 });
 
+test("driver completes only prepared policy under instance lock and leaves old configs unauthorized", async (t) => {
+  const home = fixture(t);
+  const { driver, calls } = driverFixture(home);
+  assert.equal((await driver({ version: 1, operation: "complete" })).ok, false);
+  assert.equal((await driver({ version: 1, operation: "init" })).ok, true);
+  const before = await driver({ version: 1, operation: "launch-status" });
+  assert.ok(before.ok && before.operation === "launch-status");
+  assert.equal(before.data.completion, "prepared");
+  assert.deepEqual(await driver({ version: 1, operation: "complete" }), {
+    version: 1,
+    operation: "complete",
+    ok: true,
+    data: { nextLaunch: "embedded" },
+  });
+  const after = await driver({ version: 1, operation: "launch-status" });
+  assert.ok(after.ok && after.operation === "launch-status");
+  assert.equal(after.data.completion, "complete");
+  assert.deepEqual(calls, ["acquire", "release", "acquire", "init", "release", "acquire", "release"]);
+  const legacy = fixture(t);
+  writeFileSync(
+    path.join(legacy, "config.json"),
+    JSON.stringify({ url: joinInput.url, worker: { name: "worker", key: "fake" } }),
+  );
+  assert.equal((await driverFixture(legacy).driver({ version: 1, operation: "complete" })).ok, false);
+});
+
 test("driver status/check/invalid requests never acquire locks or invoke setup", async (t) => {
   const home = fixture(t);
   const { driver, calls } = driverFixture(home);
@@ -396,8 +521,9 @@ test("driver fails closed for busy, incomplete, invalid, post-commit and release
         throw new Error("raw secret failure");
       },
     }).driver(request),
-    desktopSetupFailure("init", "operation-failed"),
+    desktopSetupFailure("init", "unknown"), // Pending intent remains: never silently authorize a retry.
   );
+  rmSync(path.join(home, "desktop-launch.pending.json"));
   assert.deepEqual(
     await driverFixture(home, {
       acquireLock() {
@@ -411,6 +537,7 @@ test("driver fails closed for busy, incomplete, invalid, post-commit and release
     }).driver(request),
     desktopSetupFailure("init", "unknown"),
   );
+  rmSync(path.join(home, "desktop-launch.pending.json"));
   assert.deepEqual(
     await driverFixture(home, {
       async init() {
@@ -461,7 +588,7 @@ function isolated(t: TestContext, source: string) {
     const runlock = await import(${JSON.stringify(runlockUrl)});
     const discovery = desktop.createDesktopDiscovery([tools]);
     const driver = desktop.createDesktopSetupDriver({home, discovery, acquireLock: runlock.acquireRunLock,
-      init: setup.initSetup, join: setup.joinSetup});
+      init: setup.initSetup, join: setup.joinSetup, allocatePort: async () => '3350'});
     ${source}
   `,
     ],
@@ -553,8 +680,8 @@ test("isolated init allows configuration before any Agent is installed", (t) => 
 });
 
 test("the hub port knob defaults to 3350, accepts only real port numbers and refuses junk", async (t) => {
-  assert.equal(desktopSetupPort({}), "3350");
-  assert.equal(desktopSetupPort({ [DESKTOP_SETUP_PORT_VARIABLE]: undefined }), "3350");
+  assert.equal(desktopSetupPort({}), "auto");
+  assert.equal(desktopSetupPort({ [DESKTOP_SETUP_PORT_VARIABLE]: undefined }), "auto");
   assert.equal(desktopSetupPort({ [DESKTOP_SETUP_PORT_VARIABLE]: "3351" }), "3351");
   assert.equal(desktopSetupPort({ [DESKTOP_SETUP_PORT_VARIABLE]: "65535" }), "65535");
   for (const junk of ["", "x", "0", "1023", "65536", "80", " 3351", "3351 ", "99999"])

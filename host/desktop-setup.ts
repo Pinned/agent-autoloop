@@ -15,6 +15,13 @@ import { pathToFileURL } from "node:url";
 import { TextDecoder } from "node:util";
 import claude from "../plugins/claude/agent.ts";
 import codex from "../plugins/codex/agent.ts";
+import { allocateDesktopHubPort, probeDesktopHubs } from "./desktop-hub-probe.ts";
+import {
+  completeDesktopLaunch,
+  markDesktopLaunchPrepared,
+  prepareDesktopLaunch,
+  readDesktopLaunchStatus,
+} from "./desktop-launch-policy.ts";
 import type { InitOptions, SetupDiscovery } from "./setup.ts";
 import {
   DESKTOP_SETUP_REQUEST_MAX_BYTES,
@@ -120,7 +127,10 @@ function roleOf(value: unknown): "hub-worker" | "worker" {
     )
       throw new Error("invalid-config");
   }
-  if (value.hub === undefined) return "worker";
+  if (value.hub === undefined) {
+    if (value.owner !== undefined) throw new Error("invalid-config");
+    return "worker";
+  }
   if (
     !object(value.hub) ||
     typeof value.hub.listen !== "string" ||
@@ -168,15 +178,15 @@ export function readDesktopSetupStatus(home: string): DesktopSetupStatus {
 }
 
 /**
- * The hub port, overridable only through an explicit environment variable — the same knob the CLI
- * offers as `init --port`. A wrong value refuses the operation instead of silently falling back to
- * 3350: a listener on a guessed port is worse than a clear failure. Loopback itself stays fixed.
+ * Without an explicit environment override, first setup allocates an independent loopback port.
+ * The override uses the same port range as `init --port`; invalid overrides or allocator results
+ * refuse setup before launch intent is written, never falling back to a guessed port.
  */
 export const DESKTOP_SETUP_PORT_VARIABLE = "DESKTOP_SETUP_PORT";
 
 export function desktopSetupPort(env: Record<string, string | undefined> = process.env): string | null {
   const given = env[DESKTOP_SETUP_PORT_VARIABLE];
-  if (given === undefined) return "3350";
+  if (given === undefined) return "auto";
   if (!/^\d{1,5}$/.test(given)) return null;
   const port = Number(given);
   return port >= 1024 && port <= 65535 ? given : null;
@@ -187,6 +197,8 @@ export type DesktopSetupDependencies = {
   discovery: SetupDiscovery;
   acquireLock(): { release(): void } | Promise<{ release(): void }>;
   init(options: InitOptions, discovery: SetupDiscovery): Promise<unknown>;
+  probe?: typeof probeDesktopHubs;
+  allocatePort?(): Promise<string>;
   join(input: DesktopJoinInput): unknown | Promise<unknown>;
 };
 
@@ -198,10 +210,25 @@ export function createDesktopSetupDriver(dependencies: DesktopSetupDependencies)
     try {
       const candidate =
         value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, "operation")?.value : undefined;
-      if (["status", "check", "init", "join"].includes(candidate)) operation = candidate;
+      if (["status", "check", "init", "join", "launch-status", "probe", "complete"].includes(candidate))
+        operation = candidate;
       request = parseDesktopSetupRequest(value);
     } catch {
       return desktopSetupFailure(operation, "invalid-request");
+    }
+    if (request.operation === "launch-status")
+      return { version: 1, operation: "launch-status", ok: true, data: readDesktopLaunchStatus(dependencies.home) };
+    if (request.operation === "probe") {
+      if (readDesktopLaunchStatus(dependencies.home).completion !== "first-run")
+        return desktopSetupFailure("probe", "already-configured");
+      try {
+        return parseDesktopSetupResponse(
+          { version: 1, operation: "probe", ok: true, data: await (dependencies.probe ?? probeDesktopHubs)() },
+          "probe",
+        );
+      } catch {
+        return desktopSetupFailure("probe", "operation-failed");
+      }
     }
     if (request.operation === "status") {
       return { version: 1, operation: "status", ok: true, data: readDesktopSetupStatus(dependencies.home) };
@@ -240,38 +267,69 @@ export function createDesktopSetupDriver(dependencies: DesktopSetupDependencies)
     let response: DesktopSetupResponse;
     try {
       // Modification is authorized only while actually holding the interprocess run lock.
-      const status = readDesktopSetupStatus(dependencies.home);
-      const port = desktopSetupPort();
-      const refusal: DesktopSetupErrorCode | null =
-        port === null
-          ? "invalid-config"
-          : status.configuration === "configured"
-            ? "already-configured"
-            : status.configuration === "incomplete"
-              ? "incomplete-setup"
-              : status.configuration === "invalid"
-                ? "invalid-config"
-                : null;
-      if (refusal) response = desktopSetupFailure(operation, refusal);
-      else {
-        if (request.operation === "init")
-          await dependencies.init({ allowNoAgent: true, port: port ?? undefined }, dependencies.discovery);
-        else await dependencies.join(request.input);
-        const after = readDesktopSetupStatus(dependencies.home);
-        const role = request.operation === "init" ? "hub-worker" : "worker";
+      if (request.operation === "complete") {
+        const launch = readDesktopLaunchStatus(dependencies.home);
         response =
-          after.configuration !== "configured" || after.role !== role
-            ? desktopSetupFailure(operation, "unknown")
-            : request.operation === "init"
-              ? { version: 1, operation: "init", ok: true, data: { configuration: "configured", role: "hub-worker" } }
-              : { version: 1, operation: "join", ok: true, data: { configuration: "configured", role: "worker" } };
+          launch.completion === "prepared" || launch.completion === "complete"
+            ? {
+                version: 1,
+                operation: "complete",
+                ok: true,
+                data: { nextLaunch: completeDesktopLaunch(dependencies.home) },
+              }
+            : desktopSetupFailure("complete", launch.completion === "recovery" ? "incomplete-setup" : "invalid-config");
+      } else {
+        const status = readDesktopSetupStatus(dependencies.home);
+        const launch = readDesktopLaunchStatus(dependencies.home);
+        const port = desktopSetupPort();
+        const refusal: DesktopSetupErrorCode | null =
+          port === null
+            ? "invalid-config"
+            : status.configuration === "configured"
+              ? "already-configured"
+              : status.configuration === "incomplete" || launch.completion === "recovery"
+                ? "incomplete-setup"
+                : status.configuration === "invalid"
+                  ? "invalid-config"
+                  : null;
+        if (refusal) response = desktopSetupFailure(operation, refusal);
+        else {
+          const mode = request.operation === "init" ? "embedded" : "worker";
+          const selectedPort =
+            request.operation === "init" && port === "auto"
+              ? await (dependencies.allocatePort ?? allocateDesktopHubPort)()
+              : port;
+          if (
+            selectedPort === null ||
+            (request.operation === "init" &&
+              (typeof selectedPort !== "string" ||
+                desktopSetupPort({ [DESKTOP_SETUP_PORT_VARIABLE]: selectedPort }) === null))
+          )
+            throw new Error("invalid-port");
+          prepareDesktopLaunch(dependencies.home, mode);
+          if (request.operation === "init")
+            await dependencies.init({ allowNoAgent: true, port: selectedPort ?? undefined }, dependencies.discovery);
+          else await dependencies.join(request.input);
+          const after = readDesktopSetupStatus(dependencies.home);
+          if (after.configuration === "configured" && after.role === (mode === "embedded" ? "hub-worker" : "worker"))
+            markDesktopLaunchPrepared(dependencies.home, mode);
+          const role = request.operation === "init" ? "hub-worker" : "worker";
+          response =
+            after.configuration !== "configured" || after.role !== role
+              ? desktopSetupFailure(operation, "unknown")
+              : request.operation === "init"
+                ? { version: 1, operation: "init", ok: true, data: { configuration: "configured", role: "hub-worker" } }
+                : { version: 1, operation: "join", ok: true, data: { configuration: "configured", role: "worker" } };
+        }
       }
     } catch {
       // A commit followed by cleanup failure is never reported as a safe retryable failure.
       const status = readDesktopSetupStatus(dependencies.home);
       response = desktopSetupFailure(
         operation,
-        status.configuration === "unconfigured" ? "operation-failed" : "unknown",
+        status.configuration === "unconfigured" && readDesktopLaunchStatus(dependencies.home).completion === "first-run"
+          ? "operation-failed"
+          : "unknown",
       );
     }
     try {
@@ -301,7 +359,7 @@ async function main() {
     const value = await readDesktopSetupRequest(process.stdin);
     const candidate =
       value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, "operation")?.value : undefined;
-    if (["status", "check", "init", "join"].includes(candidate))
+    if (["status", "check", "init", "join", "launch-status", "probe", "complete"].includes(candidate))
       response = desktopSetupFailure(candidate, "invalid-request");
     const request = parseDesktopSetupRequest(value);
     response = desktopSetupFailure(request.operation, "operation-failed");
@@ -318,7 +376,13 @@ async function main() {
     } else {
       const driver = createDesktopSetupDriver({
         home,
-        discovery: createDesktopDiscovery(),
+        discovery:
+          process.env.DESKTOP_SETUP_DISCOVERY === "none" ? createDesktopDiscovery([]) : createDesktopDiscovery(),
+        probe: () => {
+          const port = desktopSetupPort();
+          if (port === null) throw new Error("invalid-port");
+          return probeDesktopHubs(port === "auto" ? {} : { candidates: [`http://127.0.0.1:${port}`] });
+        },
         acquireLock: async () => (await import("./runlock.ts")).acquireRunLock(),
         init: async (options, discovery) => (await import("./setup.ts")).initSetup(options, discovery),
         join: async (input) => (await import("./setup.ts")).joinSetup(input),
