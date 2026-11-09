@@ -32,6 +32,11 @@ const TABS: readonly { id: Tab; title: string }[] = [
   { id: "connection", title: "角色连接" },
   { id: "general", title: "通用" },
 ];
+// A pure worker does not own the hub's sources or notification channels; those tabs would only
+// ever show the hub's refusal. Its own machine-level settings stay.
+const WORKER_TABS: readonly Tab[] = ["agents", "connection", "general"];
+const tabsFor = (role: "hub-worker" | "worker" | null) =>
+  role === "worker" ? TABS.filter((item) => WORKER_TABS.includes(item.id)) : TABS;
 const editableSection = (tab: Tab): DesktopSettingsSection | null =>
   tab === "agents" ? "agents" : tab === "sources" ? "sources" : tab === "channels" ? "channels" : tab === "general" ? "settings" : null;
 
@@ -108,20 +113,37 @@ export function mountSettingsView(controller: Settings, options: SettingsViewOpt
   const tabs = document.createElement("nav");
   tabs.className = "settings-tabs";
   tabs.setAttribute("aria-label", "设置分组");
-  const tabButtons = TABS.map((item) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "settings-tab";
-    button.dataset.tab = item.id;
-    button.textContent = item.title;
-    button.addEventListener("click", () => {
-      if (editing) return;
-      tab = item.id;
-      renderTab();
+  let tabButtons: HTMLButtonElement[] = [];
+  const tabOf = (section: DesktopSettingsSection): Tab => (section === "settings" ? "general" : section);
+  // The role decides which groups exist; a rebuild is only a DOM change, never a state reset.
+  function syncTabs(): boolean {
+    const available = tabsFor(options.role());
+    const signature = available.map((item) => item.id).join(",");
+    if (tabs.dataset.signature === signature) return false;
+    tabs.dataset.signature = signature;
+    // A group the machine may no longer change takes the selection, and any draft inside it, with
+    // it. Leaving the draft alive would both hide the typed values and block editing anything else.
+    if (editing && !available.some((item) => item.id === tabOf(editing!.section))) {
+      editing = null;
+      queueMicrotask(() => controller.cancelEdit());
+    }
+    if (!available.some((item) => item.id === tab)) tab = available[0].id;
+    tabButtons = available.map((item) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "settings-tab";
+      button.dataset.tab = item.id;
+      button.textContent = item.title;
+      button.addEventListener("click", () => {
+        if (editing) return;
+        tab = item.id;
+        renderTab();
+      });
+      return button;
     });
-    tabs.append(button);
-    return button;
-  });
+    tabs.replaceChildren(...tabButtons);
+    return true;
+  }
   const body = document.createElement("div");
   body.className = "settings-body";
   root.append(head, tabs, body);
@@ -485,6 +507,7 @@ export function mountSettingsView(controller: Settings, options: SettingsViewOpt
   }
 
   function renderTab() {
+    syncTabs();
     for (const button of tabButtons) {
       const active = button.dataset.tab === tab;
       button.classList.toggle("active", active);
@@ -504,6 +527,12 @@ export function mountSettingsView(controller: Settings, options: SettingsViewOpt
   }
 
   function update() {
+    // The role can change without a page change (the runtime starts, or stops); the group row
+    // follows it, and the body has to follow the row.
+    if (syncTabs()) {
+      renderTab();
+      return;
+    }
     const state = controller.getState();
     const versions = state.snapshot ? `配置版本 R${state.snapshot.rulesSeq}` : "尚未读取本机配置";
     status.textContent = `${versions}${state.draft ? ` · 草稿基线 R${state.draft.rulesSeq}` : ""}${state.loading ? " · 正在读取……" : ""}${state.saving ? " · 正在保存……" : ""}${state.save.kind === "confirmed" ? " · 已确认保存到本机中台。" : ""}`;
