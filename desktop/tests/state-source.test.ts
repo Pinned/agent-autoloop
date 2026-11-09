@@ -13,8 +13,20 @@ import {
   parseDesktopTasksResponse,
   type DesktopTasksResponse,
 } from "../../host/desktop-tasks-contract.ts";
+import {
+  DESKTOP_WORKERS_MESSAGES,
+  parseDesktopWorkersResponse,
+  type DesktopWorkersResponse,
+} from "../../host/desktop-workers-contract.ts";
 import type { DesktopRuntimeRole, DesktopRuntimeStatus } from "../../host/desktop-run-contract.ts";
-import { createTasksSource, createTodaySource, parseHubEndpoint, readRuntimeConfig } from "../src/state-source.ts";
+import {
+  createTasksSource,
+  createTodaySource,
+  createWorkersSource,
+  localWorkerName,
+  parseHubEndpoint,
+  readRuntimeConfig,
+} from "../src/state-source.ts";
 
 const hubConfig = {
   hub: { listen: "127.0.0.1:3350" },
@@ -302,4 +314,157 @@ test("the tasks source falls back to the fixed error on any failure", async () =
     }).read();
     assert.equal(parseDesktopTasksResponse(answer4).state.kind, "error");
   }
+});
+
+const workersHubPayload = {
+  now: "2026-01-02T03:04:05.678Z",
+  agents: [
+    {
+      id: "claude",
+      name: "Claude",
+      use: "claude",
+      worker: "this-machine",
+      seenAt: "2026-01-02T03:03:10.000Z",
+      online: true,
+      totals: {
+        running: 1,
+        queued: 2,
+        retrying: 0,
+        unknown: 0,
+        done: 5,
+        doneToday: 3,
+        nothing: 0,
+        usage: { input: 10, output: 20, cost: 0.5 },
+      },
+    },
+    {
+      id: "codex",
+      name: "Codex",
+      use: "codex",
+      worker: "far-away",
+      seenAt: "2026-01-02T01:00:00.000Z",
+      online: false,
+      totals: {
+        running: 0,
+        queued: 0,
+        retrying: 0,
+        unknown: 0,
+        done: 0,
+        doneToday: 0,
+        nothing: 0,
+        usage: { input: 0, output: 0, cost: 0 },
+      },
+    },
+  ],
+  channels: [{ id: "chat", name: "聊天", seenAt: "2026-01-02T03:04:00.000Z", online: true }],
+};
+
+test("the workers source reads only a running local hub's heartbeat", async () => {
+  let read = 0;
+  let fetched = 0;
+  const stopped = await createWorkersSource({
+    home: "/unused",
+    getState: () => ({ status: "stopped", role: "hub-worker" }),
+    readConfig: () => {
+      read++;
+      return hubConfig;
+    },
+    fetchImpl: () => {
+      fetched++;
+      throw new Error("never");
+    },
+  }).read();
+  assert.deepEqual(parseDesktopWorkersResponse(stopped).state, {
+    kind: "unavailable",
+    message: DESKTOP_WORKERS_MESSAGES.unavailable,
+  });
+  assert.equal(read, 0);
+  assert.equal(fetched, 0);
+  // A worker-only machine holds no owner key, so it must never reach the state door.
+  const worker = await createWorkersSource({
+    home: "/unused",
+    getState: () => ({ status: "running", role: "worker" }),
+    readConfig: () => workerConfig,
+  }).read();
+  assert.deepEqual(parseDesktopWorkersResponse(worker).state, {
+    kind: "no-hub",
+    message: DESKTOP_WORKERS_MESSAGES["no-hub"],
+  });
+});
+
+test("the workers source projects presence, distribution and only the local worker flag", async () => {
+  const seen: { url: string; headers: Record<string, string> }[] = [];
+  const fetchImpl = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    seen.push({ url: String(url), headers: init?.headers as Record<string, string> });
+    return new Response(JSON.stringify(workersHubPayload), { status: 200 });
+  }) as typeof fetch;
+  const answer: DesktopWorkersResponse = await createWorkersSource({
+    home: "/unused",
+    getState: () => ({ status: "running", role: "hub-worker" }),
+    readConfig: () => ({ ...hubConfig, worker: { name: "this-machine", key: "k" } }),
+    fetchImpl,
+    timeoutMs: 50,
+  }).read();
+  const parsed = parseDesktopWorkersResponse(answer);
+  assert.equal(parsed.state.kind, "ready");
+  if (parsed.state.kind === "ready") {
+    const snapshot = parsed.state.snapshot;
+    assert.equal(snapshot.agents.length, 2);
+    assert.equal(snapshot.agents[0].local, true);
+    assert.equal(snapshot.agents[1].local, false);
+    assert.equal(snapshot.agents[0].totals.doneToday, 3);
+    assert.deepEqual(snapshot.channels.map((channel) => channel.id), ["chat"]);
+    // Keys, links and any environment facts never leave main.
+    assert.ok(!JSON.stringify(snapshot).includes("key"));
+    assert.ok(!JSON.stringify(snapshot).includes("http"));
+  }
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].url, "http://127.0.0.1:3350/v1/state");
+  assert.equal(seen[0].headers.authorization, "Bearer owner-key");
+});
+
+test("the workers source fails closed on transport, payload and config surprises", async () => {
+  const cases = [
+    (async () => new Response("nope", { status: 500 })) as unknown as typeof fetch,
+    (async () => new Response(JSON.stringify({ agents: "x" }), { status: 200 })) as unknown as typeof fetch,
+    (async () => new Response(JSON.stringify({ ...workersHubPayload, now: "not a date" }), { status: 200 })) as unknown as typeof fetch,
+    (async () => {
+      throw new Error("connection refused");
+    }) as unknown as typeof fetch,
+  ];
+  for (const fetchImpl of cases) {
+    const answer = await createWorkersSource({
+      home: "/unused",
+      getState: () => ({ status: "running", role: "hub-worker" }),
+      readConfig: () => hubConfig,
+      fetchImpl,
+    }).read();
+    assert.deepEqual(parseDesktopWorkersResponse(answer).state, {
+      kind: "error",
+      message: DESKTOP_WORKERS_MESSAGES.error,
+    });
+  }
+  for (const config of [null, { hub: { listen: "10.0.0.1:1" }, owner: "x" }]) {
+    const answer = await createWorkersSource({
+      home: "/unused",
+      getState: () => ({ status: "running", role: null }),
+      readConfig: () => config,
+    }).read();
+    assert.equal(parseDesktopWorkersResponse(answer).state.kind, "error");
+  }
+});
+
+test("the local worker label comes only from an exact runtime-home worker name", () => {
+  assert.equal(localWorkerName(hubConfig), "w");
+  for (const value of [
+    null,
+    {},
+    { worker: {} },
+    { worker: { name: "" } },
+    { worker: { name: "Upper" } },
+    { worker: { name: "-leading" } },
+    { worker: { name: "a".repeat(65) } },
+    { worker: { name: 7 } },
+  ])
+    assert.equal(localWorkerName(value), null, JSON.stringify(value));
 });

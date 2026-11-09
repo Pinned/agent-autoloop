@@ -29,7 +29,7 @@ import {
 import { loadTheme, saveTheme } from "./preferences.ts";
 import { createSupervisor } from "./supervisor.ts";
 import { createRuntimeControl, SAFE_STOP_ERROR, type RuntimeControlState } from "./runtime-control.ts";
-import { createTasksSource, createTodaySource } from "./state-source.ts";
+import { createTasksSource, createTodaySource, createWorkersSource } from "./state-source.ts";
 import { createTaskSource } from "./task-source.ts";
 import { createHubWatcher, type HubGlance } from "./hub-watcher.ts";
 import { createNotifier } from "./notify.ts";
@@ -197,6 +197,8 @@ if (ownsAppLock)
       const todaySource = createTodaySource({ home: runtimeHome, getState: () => controller.getState() });
       // The tasks page reads the same door with the hub's own paging into older runs.
       const tasksSource = createTasksSource({ home: runtimeHome, getState: () => controller.getState() });
+      // The workers page shows the hub's own heartbeat and distribution, never a remote probe.
+      const workersSource = createWorkersSource({ home: runtimeHome, getState: () => controller.getState() });
       // Task creation is the write side of the same owner data plane, through the hub's own door.
       const taskSource = createTaskSource({ home: runtimeHome, getState: () => controller.getState() });
       // The tray's live view: the hub's own stream says when, the state doors say what.
@@ -617,6 +619,13 @@ if (ownsAppLock)
         if (args.length !== 0) throw new Error("invalid-request");
         return todaySource.read();
       });
+      // Read-only worker and channel presence; the hub keeps no separate worker registry, so a
+      // worker with no agent behind it simply does not appear — it is never invented.
+      ipcMain.handle(channels.workersGet, async (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        if (args.length !== 0) throw new Error("invalid-request");
+        return workersSource.read();
+      });
       // Read-only task history; `before` is the hub's own paging cursor (a run id), never a page number.
       ipcMain.handle(channels.tasksGet, async (event, ...args: unknown[]) => {
         assertSender(event, window.webContents, page);
@@ -681,6 +690,7 @@ if (ownsAppLock)
         await window.desktop.setTheme('system');
         const runtime = await window.desktop.runtimeGet();
         const today = await window.desktop.todayState();
+        const workers = await window.desktop.workersGet();
         const tasks = await window.desktop.tasksGet();
         let invalidPageRejected = false;
         try { await window.desktop.tasksGet(0); } catch { invalidPageRejected = true; }
@@ -697,7 +707,7 @@ if (ownsAppLock)
         const offNavigate = window.desktop.onNavigate((target) => { navigateSeen = true; });
         offNavigate();
         offNavigate();
-        return { theme, dark, invalidRejected, pages, runtime, today, tasks, invalidPageRejected, taskEntries, invalidTaskRejected, rulesCasGet, invalidRules, runtimeEventSeen, navigateSeen, nodeAbsent: typeof require === 'undefined' && typeof process === 'undefined', bridge: Object.keys(window.desktop).sort() };
+        return { theme, dark, invalidRejected, pages, runtime, today, workers, tasks, invalidPageRejected, taskEntries, invalidTaskRejected, rulesCasGet, invalidRules, runtimeEventSeen, navigateSeen, nodeAbsent: typeof require === 'undefined' && typeof process === 'undefined', bridge: Object.keys(window.desktop).sort() };
       })()`);
           const shots = join(base, "..", ".cache", "smoke");
           mkdirSync(shots, { recursive: true });
@@ -725,6 +735,9 @@ if (ownsAppLock)
             !result.today ||
             result.today.ok !== true ||
             result.today.state.kind !== "unavailable" ||
+            !result.workers ||
+            result.workers.ok !== true ||
+            result.workers.state.kind !== "unavailable" ||
             !result.tasks ||
             result.tasks.ok !== true ||
             result.tasks.state.kind !== "unavailable" ||
@@ -742,7 +755,7 @@ if (ownsAppLock)
             result.runtimeEventSeen !== false ||
             result.navigateSeen !== false ||
             result.bridge.join(",") !==
-              "checkBuiltinAgents,completeSetup,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,probeHub,rulesCasGet,rulesCasPut,runtimeGet,runtimeStart,runtimeStop,setTheme,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,tasksGet,todayState,window" ||
+              "checkBuiltinAgents,completeSetup,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,probeHub,rulesCasGet,rulesCasPut,runtimeGet,runtimeStart,runtimeStop,setTheme,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,tasksGet,todayState,window,workersGet" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||

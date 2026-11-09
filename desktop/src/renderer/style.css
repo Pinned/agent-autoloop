@@ -925,9 +925,76 @@ main {
 .run-times {
   font-size: 11px;
 }
+/* The workers page: per-worker groups of the hub's own agents, plus channel presence. */
+.workers-content {
+  display: grid;
+  gap: 18px;
+  margin-top: 18px;
+}
+.workers-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 15px;
+  background: var(--panel2);
+  min-width: 0;
+}
+.workers-group-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
+}
+.workers-group-head h3 {
+  font: 600 13px/1.5 var(--mono);
+  overflow-wrap: anywhere;
+}
+.workers-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  flex: none;
+}
+.workers-badge.online {
+  border-color: var(--green);
+  background: color-mix(in srgb, var(--green) 8%, transparent);
+  color: var(--green);
+}
+.workers-badge.offline {
+  color: var(--faint);
+}
+.workers-heartbeat {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.workers-group .run-list {
+  margin-top: 12px;
+  gap: 8px;
+}
+.workers-group .run-line {
+  margin-top: 0;
+  justify-content: space-between;
+  font-size: 12px;
+  min-width: 0;
+}
+.workers-channels h3 {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.workers-channels .run-line {
+  margin-top: 0;
+  font-size: 12px;
+}
 @media (max-width: 650px) {
   .setup-choices {
     grid-template-columns: 1fr;
+  }
+  .workers-group-head .workers-heartbeat {
+    width: 100%;
   }
 }
 @media (forced-colors: active) {

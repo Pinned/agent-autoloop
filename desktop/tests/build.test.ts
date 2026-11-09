@@ -111,7 +111,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(main, /远程队列不会取消/);
   assert.match(main, /离线持久待同步/);
   assert.doesNotMatch(main, /restartPolicy|controller\.restart/);
-  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 21);
+  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 22);
   // Each handler is checked inside its own block: a cross-handler match would let a missing
   // sender check hide behind the next handler that has one.
   const blocks = main.split("ipcMain.handle(channels.").slice(1);
@@ -132,6 +132,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
     "runtimeStart",
     "runtimeStop",
     "todayState",
+    "workersGet",
     "tasksGet",
     "taskEntries",
     "taskCreate",
@@ -214,6 +215,7 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
     "tasksGet",
     "todayState",
     "window",
+    "workersGet",
   ]);
   assert.doesNotMatch(source, /invoke\((?:channel|name|value)/);
   // The only renderer-bound listeners are the two fixed push channels.
@@ -327,6 +329,27 @@ test("the automation page edits the hub's own entries through the versioned rule
   assert.match(view, /needsReview|丢弃草稿并重新读取/);
   assert.match(main, /createRulesCasSource\(\{ home: runtimeHome, getState: \(\) => presentation\.snapshot\(\) \}\)/);
   assert.match(main, /desktop:rules:cas:get|channels\.rulesCasGet/);
+});
+
+test("the workers page shows the hub's own heartbeat through the pure workers contract", () => {
+  const app = read("../src/renderer/app.ts");
+  const view = read("../src/renderer/workers-view.ts");
+  const controller = read("../src/renderer/workers-controller.ts");
+  const source = read("../src/state-source.ts");
+  const main = read("../src/main.ts");
+  assert.match(app, /mountWorkersView\(/);
+  assert.match(app, /workers\.refresh\(\)/);
+  // Pure DOM construction only; the list never serialises markup.
+  assert.doesNotMatch(view, /innerHTML|insertAdjacentHTML|console\./);
+  assert.doesNotMatch(controller, /node:|from ["'].*host\/(?:config|runtime|setup)\.ts/);
+  assert.match(controller, /from ["'].*host\/desktop-workers-contract\.ts/);
+  // Same gate and the same single read route as today; presence is never probed remotely.
+  assert.match(source, /createWorkersSource/);
+  assert.doesNotMatch(source, /\/v1\/(?:tell|ui|events|cards|runs|keys|in)\b/);
+  assert.match(main, /ipcMain\.handle\(channels\.workersGet, async \(event, \.\.\.args: unknown\[\]\) => \{/);
+  assert.match(main, /createWorkersSource\(\{ home: runtimeHome, getState: \(\) => controller\.getState\(\) \}\)/);
+  // The page states where its data comes from instead of inventing remote environment facts.
+  assert.match(view, /不含远程环境信息/);
 });
 
 test("the tasks page shows the hub's run history through the pure tasks contract", () => {

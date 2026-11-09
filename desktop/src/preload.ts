@@ -16,6 +16,7 @@ const bridge = Object.freeze<DesktopBridge>({
   runtimeStart: () => ipcRenderer.invoke("desktop:runtime:start"),
   runtimeStop: () => ipcRenderer.invoke("desktop:runtime:stop"),
   todayState: () => ipcRenderer.invoke("desktop:state:today"),
+  workersGet: () => ipcRenderer.invoke("desktop:workers:get"),
   tasksGet: (before) => ipcRenderer.invoke("desktop:tasks:get", before),
   taskDetail: (request) => ipcRenderer.invoke("desktop:tasks:detail", request),
   taskEntries: () => ipcRenderer.invoke("desktop:task:entries"),
