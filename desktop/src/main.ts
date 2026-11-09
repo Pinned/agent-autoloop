@@ -642,6 +642,13 @@ if (ownsAppLock)
         if (args.length !== 0) throw new Error("invalid-request");
         return workersSource.read();
       });
+      // What this runtime process reported it holds, read from the supervisor's own last reading.
+      // Display data only: nothing here can prove a drain or a safe stop may proceed.
+      ipcMain.handle(channels.workersLocal, (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        if (args.length !== 0) throw new Error("invalid-request");
+        return controller.reading();
+      });
       // Read-only task history; `before` is the hub's own paging cursor (a run id), never a page number.
       ipcMain.handle(channels.tasksGet, async (event, ...args: unknown[]) => {
         assertSender(event, window.webContents, page);
@@ -781,7 +788,7 @@ if (ownsAppLock)
             result.runtimeEventSeen !== false ||
             result.navigateSeen !== false ||
             result.bridge.join(",") !==
-              "checkBuiltinAgents,completeSetup,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,probeHub,rulesCasGet,rulesCasPut,runtimeGet,runtimeStart,runtimeStop,setTheme,settingsGet,settingsPut,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,tasksGet,todayState,window,workersGet" ||
+              "checkBuiltinAgents,completeSetup,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,probeHub,rulesCasGet,rulesCasPut,runtimeGet,runtimeStart,runtimeStop,setTheme,settingsGet,settingsPut,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,tasksGet,todayState,window,workersGet,workersLocal" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||

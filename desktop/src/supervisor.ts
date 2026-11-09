@@ -1,5 +1,6 @@
 import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { isAbsolute } from "node:path";
+import { parseDesktopWorkerSnapshot, type DesktopWorkerSnapshot } from "../../host/desktop-worker-contract.ts";
 
 export type SupervisorStatus = "stopped" | "starting" | "running" | "draining" | "failed" | "unknown";
 export type SupervisorRole = "hub-worker" | "worker";
@@ -25,6 +26,11 @@ export interface SupervisorOptions {
 }
 export interface Supervisor {
   getState(): SupervisorState;
+  /**
+   * What the running child last reported it holds, for display only. Never proof that a drain or a
+   * safe stop may proceed. Null whenever no confirmed running child owns the reading.
+   */
+  getReading(): DesktopWorkerSnapshot | null;
   subscribe(listener: (state: SupervisorState) => void): () => void;
   start(): Promise<SupervisorState>;
   stop(): Promise<SupervisorState>;
@@ -45,6 +51,7 @@ const messages: Record<SupervisorErrorCode, string> = {
 type Message =
   | { version: 1; type: "ready"; role: SupervisorRole }
   | { version: 1; type: "drained"; pending: number }
+  | { version: 1; type: "observed"; snapshot: DesktopWorkerSnapshot }
   | { version: 1; type: "failed"; reason: FailureReason };
 function parseMessage(value: unknown): Message | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -54,6 +61,14 @@ function parseMessage(value: unknown): Message | null {
     return { version: 1, type: "ready", role: item.role };
   if (item.type === "drained" && Number.isSafeInteger(item.pending) && (item.pending as number) >= 0)
     return { version: 1, type: "drained", pending: item.pending as number };
+  // The reading is revalidated with the same strict parser the App uses; a bad one is dropped whole.
+  if (item.type === "observed") {
+    try {
+      return { version: 1, type: "observed", snapshot: parseDesktopWorkerSnapshot(item.snapshot) };
+    } catch {
+      return null;
+    }
+  }
   if (item.type === "failed" && ["lock", "setup", "listen", "runtime"].includes(item.reason as string))
     return { version: 1, type: "failed", reason: item.reason as FailureReason };
   return null;
@@ -86,6 +101,10 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
   let state: SupervisorState = { status: "stopped", role: null, pendingSync: null, restartAttempt: 0, error: null };
   const listeners = new Set<(state: SupervisorState) => void>();
   let session: Session | undefined;
+  // The running child's last held-counts reading. Kept out of SupervisorState on purpose: every
+  // state change wakes lifecycle observers (a hub re-read and a renderer push), and a reading
+  // every couple of seconds must not do that. Readers pull it when the page renders.
+  let reading: DesktopWorkerSnapshot | null = null;
   // Process ownership and confirmed drain are independent: no child does not prove safe shutdown.
   let safeStopped = true;
   let desired = false;
@@ -147,6 +166,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
   async function launch(): Promise<SupervisorState> {
     if (session || stopRequested) return snapshot();
     update("starting", null, { role: null, pendingSync: null });
+    reading = null;
     let child: ChildProcess;
     try {
       // No inherited NODE_OPTIONS, Electron mode, config overrides, keys or service credentials.
@@ -219,6 +239,10 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
         current.drained = true;
         state = { ...state, pendingSync: message.pending };
         update(state.status, state.error?.code ?? null);
+      } else if (message.type === "observed" && current.ready && state.status === "running") {
+        // Silently replaces the reading; a stale one from before a restart is impossible because
+        // launch() clears it and this branch only accepts a confirmed running child.
+        reading = message.snapshot;
       } else if (message.type === "failed" && !current.stopping) {
         current.failure = message.reason;
         cancelRestart();
@@ -239,6 +263,8 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
       current.exited = true;
       current.exitCode = code;
       current.exitSignal = signal;
+      // An exited child owns nothing it reported before; the reading must not outlive it.
+      reading = null;
       clearTimeout(readyTimer);
       if (!current.stopping) update("unknown", current.failure ?? "unsafe-exit");
       finishStart();
@@ -297,6 +323,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
   }
   return {
     getState: snapshot,
+    getReading: () => (session && state.status === "running" && !session.exited ? reading : null),
     subscribe(listener) {
       listeners.add(listener);
       return () => {

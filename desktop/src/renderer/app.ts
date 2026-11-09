@@ -6,6 +6,8 @@ import { createRendererToday } from "./today-controller.ts";
 import { mountTodayView } from "./today-view.ts";
 import { createRendererWorkers } from "./workers-controller.ts";
 import { mountWorkersView } from "./workers-view.ts";
+import { createRendererLocalReading } from "./local-reading-controller.ts";
+import { mountLocalReadingView } from "./local-reading-view.ts";
 import { createRendererTask } from "./task-controller.ts";
 import { mountTaskDialog } from "./task-view.ts";
 import { createRendererRun } from "./run-controller.ts";
@@ -86,12 +88,17 @@ let initialSetupPresented = false;
 let runCard: ReturnType<typeof mountRunCard> | undefined;
 let todayView: ReturnType<typeof mountTodayView> | undefined;
 let workersView: ReturnType<typeof mountWorkersView> | undefined;
+let localReadingView: ReturnType<typeof mountLocalReadingView> | undefined;
 // App-level singletons: page switches never destroy the controllers or their subscriptions.
 const today = createRendererToday(window.desktop, () => {
   if (currentPage === "today") todayView?.update();
 });
 const workers = createRendererWorkers(window.desktop, () => {
   if (currentPage === "workers") workersView?.update();
+});
+// This machine's own runtime reading; pulled from the supervisor, never pushed on every heartbeat.
+const localReading = createRendererLocalReading(window.desktop, () => {
+  if (currentPage === "workers") localReadingView?.update();
 });
 // The new-task dialog is app-level: one <dialog>, one entry list, one submission at a time.
 let taskGate = () => false;
@@ -115,6 +122,8 @@ const run = createRendererRun(
     // The same transition is when another machine's heartbeat can first be observed.
     if (currentPage === "workers" && run.state.kind === "ready" && run.state.snapshot.status === "running")
       workers.refresh();
+    // Only the runtime's own process owns a reading; every runtime transition re-reads it.
+    if (currentPage === "workers") localReading.refresh();
   },
 );
 const setup = createRendererSetup(window.desktop, () => {
@@ -271,6 +280,7 @@ function render(id: string, focus = true) {
   runCard = undefined;
   todayView = undefined;
   workersView = undefined;
+  localReadingView = undefined;
   currentPage = id;
   main.setAttribute("aria-labelledby", "page-title");
   const page = pages.find((item) => item.id === id)!;
@@ -319,12 +329,17 @@ function render(id: string, focus = true) {
       setupLocked: () => setup.state.kind === "unknown-locked",
       launch: () => setup.launch,
     });
+    // What this machine's own runtime holds, pulled from the supervisor when the page renders.
+    const readingHost = document.createElement("div");
+    main.append(readingHost);
+    localReadingView = mountLocalReadingView(readingHost, localReading);
     // The hub's own heartbeat and distribution; there is nothing to probe from here.
     const presence = document.createElement("div");
     main.append(presence);
     workersView = mountWorkersView(presence, workers);
     run.init();
     workers.refresh();
+    localReading.refresh();
   }
   if (focus) main.focus();
 }

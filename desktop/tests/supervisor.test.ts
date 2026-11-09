@@ -38,7 +38,20 @@ class FakeChild extends EventEmitter {
   drained(pending = 0) {
     this.message({ version: 1, type: "drained", pending });
   }
+  observed(snapshot: unknown = reading()) {
+    this.message({ version: 1, type: "observed", snapshot });
+  }
 }
+/** A reading the shared contract accepts; every field is required and the buckets must add up. */
+const reading = (overrides: Record<string, unknown> = {}) => ({
+  version: 1,
+  seq: 3,
+  observedAt: 1_700_000_000_000,
+  quality: "complete",
+  connection: { state: "connected", lastSeen: 1_700_000_000_000 },
+  counts: { held: 2, preparing: 1, executing: 1, stopping: 0, pendingSync: 0, uncertain: 0 },
+  ...overrides,
+});
 function fixture(extra: Partial<SupervisorOptions> = {}) {
   const children: FakeChild[] = [];
   const calls: { file: string; args: string[]; options: SpawnOptions }[] = [];
@@ -109,16 +122,76 @@ test("messages are versioned, validated and sanitized, snapshots cannot mutate s
     { version: 2, type: "ready", role: "worker" },
     { version: 1, type: "ready", role: "secret" },
     { version: 1, type: "status", pending: 2 },
+    { version: 1, type: "observed" },
+    { version: 1, type: "observed", snapshot: null },
+    { version: 1, type: "observed", snapshot: reading({ counts: { held: 1, preparing: 0, executing: 0, stopping: 0, pendingSync: 0, uncertain: 0 } }) },
+    { version: 1, type: "observed", snapshot: reading({ cpu: "M4 Pro" }) },
     { version: 1, type: "failed", reason: "secret" },
   ])
     child.message(message);
   assert.equal(f.supervisor.getState().status, "starting");
+  assert.equal(f.supervisor.getReading(), null);
   child.message({ version: 1, type: "ready", role: "hub-worker", config: "SECRET", keys: "SECRET", stdout: "SECRET" });
   assert.equal((await start).role, "hub-worker");
   assert.equal(f.supervisor.getState().status, "running");
   assert.ok(!JSON.stringify(states).includes("SECRET"));
   unsubscribe();
   await stopClean(f);
+});
+
+test("a held-counts reading is pulled from the confirmed running child and never wakes observers", async () => {
+  const f = fixture();
+  const states: unknown[] = [];
+  f.supervisor.subscribe((state) => states.push(state));
+  const start = f.supervisor.start();
+  await until(() => f.children.length === 1);
+  const child = f.children[0];
+  // Nothing is running yet: a reading that arrives early is display data with no owner.
+  child.observed();
+  assert.equal(f.supervisor.getReading(), null);
+  child.ready();
+  await start;
+  const before = states.length;
+  child.observed(reading({ seq: 4 }));
+  assert.equal(states.length, before, "a reading must not wake lifecycle observers");
+  assert.deepEqual(f.supervisor.getReading(), {
+    version: 1,
+    seq: 4,
+    observedAt: 1_700_000_000_000,
+    connection: { state: "connected", lastSeen: 1_700_000_000_000 },
+    quality: "complete",
+    counts: { held: 2, preparing: 1, executing: 1, stopping: 0, pendingSync: 0, uncertain: 0 },
+  });
+  // A malformed reading is dropped whole; the last good one stands rather than being erased.
+  child.observed({ version: 1, seq: 5 });
+  assert.equal(f.supervisor.getReading()?.seq, 4);
+  // The child that exits owns nothing: the reading must not outlive it.
+  child.exit(1);
+  assert.equal(f.supervisor.getReading(), null);
+  child.close();
+  assert.equal(f.supervisor.getState().status, "unknown");
+  assert.equal((await f.supervisor.stop()).status, "unknown");
+});
+
+test("a new launch clears the previous run's reading before the next child reports", async () => {
+  const f = fixture();
+  await running(f);
+  f.children[0].observed(reading({ seq: 9 }));
+  assert.equal(f.supervisor.getReading()?.seq, 9);
+  const restart = f.supervisor.restart();
+  await until(() => f.children[0].signals.length > 0);
+  f.children[0].drained();
+  f.children[0].exit();
+  f.children[0].close();
+  await until(() => f.children.length === 2);
+  // Still "starting" for the new child, and the old run's counts are gone.
+  assert.equal(f.supervisor.getReading(), null);
+  f.children[1].ready();
+  assert.equal((await restart).status, "running");
+  assert.equal(f.supervisor.getReading(), null);
+  f.children[1].observed(reading({ seq: 10 }));
+  assert.equal(f.supervisor.getReading()?.seq, 10);
+  assert.equal((await stopClean(f)).status, "stopped");
 });
 
 test("drained pending=2 and normal exit plus close safely stops, repeated stop is single-flight", async () => {

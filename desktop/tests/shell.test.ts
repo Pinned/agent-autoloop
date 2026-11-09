@@ -48,7 +48,7 @@ test("IPC trusts only this window and its exact top-level local document", () =>
   }
 });
 
-test("IPC exposes only themes, window actions, the four fixed setup operations, the three runtime operations, the today read, the workers read, the two task operations, the runs read, the two versioned rules operations, the two versioned settings operations and the two push channels", () => {
+test("IPC exposes only themes, window actions, the four fixed setup operations, the three runtime operations, the today read, the two workers reads, the two task operations, the runs read, the two versioned rules operations, the two versioned settings operations and the two push channels", () => {
   assert.deepEqual(Object.values(channels).sort(), [
     "desktop:navigate",
     "desktop:rules:cas:get",
@@ -76,6 +76,7 @@ test("IPC exposes only themes, window actions, the four fixed setup operations, 
     "desktop:theme:set",
     "desktop:window",
     "desktop:workers:get",
+    "desktop:workers:local",
   ]);
   assert.equal(channels.runtimeEvent, "desktop:runtime:event");
   assert.equal(channels.navigate, "desktop:navigate");

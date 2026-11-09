@@ -101,6 +101,15 @@ export function parseDesktopWorkerSnapshotBytes(bytes: Uint8Array): DesktopWorke
   return parseDesktopWorkerSnapshot(value);
 }
 
+/**
+ * The local reading channel's answer: the last reading this machine's own runtime reported, or
+ * null when no confirmed running runtime has reported one. Null is a fact ("nothing to show"),
+ * never an error; a malformed object is still rejected.
+ */
+export function parseDesktopWorkerLocalReading(value: unknown): DesktopWorkerSnapshot | null {
+  return value === null ? null : parseDesktopWorkerSnapshot(value);
+}
+
 /** Only erased model types cross the boundary; no worker runtime enters a desktop bundle. */
 export function desktopWorkerSnapshotOf(
   seq: number,

@@ -1,6 +1,7 @@
 import { lstat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Supervisor, SupervisorOptions, SupervisorState, SupervisorStatus } from "./supervisor.ts";
+import type { DesktopWorkerSnapshot } from "../../host/desktop-worker-contract.ts";
 import {
   DESKTOP_RUNTIME_ERROR_MESSAGES,
   type DesktopRuntimeErrorCode,
@@ -131,6 +132,17 @@ export function createRuntimeControl(options: {
       return () => {
         listeners.delete(listener);
       };
+    },
+    /**
+     * The running child's last held-counts reading, pulled on render rather than pushed. Null
+     * before a reading arrives, once the child exits, and whenever no supervisor is owned.
+     */
+    reading(): DesktopWorkerSnapshot | null {
+      try {
+        return supervisor?.getReading() ?? null;
+      } catch {
+        return null;
+      }
     },
     start(): Promise<RuntimeControlState> {
       if (!options.enabled || stopRequested || stopping) return Promise.resolve(snapshot());
