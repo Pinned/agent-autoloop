@@ -6,7 +6,7 @@ import {
 } from "../../../host/desktop-tasks-contract.ts";
 import type { DesktopBridge } from "../policy.ts";
 import { parseTaskHistoryResponse, TASK_HISTORY_MESSAGES, type TaskHistoryResponse } from "../../../host/desktop-task-history-contract.ts";
-import type { Section } from "../../../host/desktop-task-query-contract.ts";
+import type { FeedbackItem, FeedbackKind, Section } from "../../../host/desktop-task-query-contract.ts";
 import { parseDesktopRuntimeEvent } from "../../../host/desktop-run-contract.ts";
 import {
   DESKTOP_TASK_ACTION_MESSAGES,
@@ -22,7 +22,8 @@ export type TasksActionRequest =
   | { readonly action: "answer"; readonly cardId: number; readonly input: { choice: number } | { text: string } }
   | { readonly action: "resolve"; readonly cardId: number; readonly input: { reason: string } }
   | { readonly action: "cancel"; readonly runId: number }
-  | { readonly action: "memo"; readonly runId: number; readonly input: { text: string } };
+  | { readonly action: "memo"; readonly runId: number; readonly input: { text: string } }
+  | { readonly action: "feedback"; readonly runId: number; readonly input: { kind: FeedbackKind; text: string } };
 export type TasksActionState =
   | { readonly kind: "idle" }
   | { readonly kind: "busy"; readonly request: TasksActionRequest }
@@ -41,6 +42,14 @@ export type TasksDetailState =
   | { readonly kind: "failed"; readonly runId: number; readonly message: string }
   | { readonly kind: "ready"; readonly runId: number; readonly data: Extract<TaskHistoryResponse<"detail">, { ok: true }>["data"] };
 export type TasksSectionState = { readonly kind: "idle" | "loading" | "end" | "capped" } | { readonly kind: "failed"; readonly message: string };
+/** Ratings are their own page: they never changed the run, so they never join its detail snapshot. */
+export type TasksFeedbackState = Readonly<{
+  readonly kind: "idle" | "loading" | "ready" | "end" | "capped" | "failed";
+  readonly items: readonly FeedbackItem[];
+  readonly hasMore: boolean;
+  readonly nextCursor: string | null;
+  readonly message: string;
+}>;
 type DetailData = Extract<TaskHistoryResponse<"detail">, { ok: true }>["data"];
 const sectionNames: readonly Section[] = ["events", "cards", "related"];
 const sectionKey = (section: Section) => section === "related" ? "relatedRuns" : section;
@@ -84,6 +93,15 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
   type PageFlight = Readonly<{ session: Session; section: Section; cursor: string }>;
   let session: Session | null = null;
   let sectionStates = initialSections();
+  // Ratings are their own page with their own cursor; they are not part of the strict detail snapshot.
+  let feedbackState: TasksFeedbackState = Object.freeze({
+    kind: "idle",
+    items: Object.freeze([]),
+    hasMore: false,
+    nextCursor: null,
+    message: "",
+  });
+  let feedbackFlight: Readonly<{ session: Session; cursor: string | null }> | null = null;
   // Old promises capture their tokens; the live controller holds only three slots.
   let pageFlights: Record<Section, PageFlight | null> = { events: null, cards: null, related: null };
   // One owner write at a time, bound to the run it was made from. Retryability is decided per
@@ -96,6 +114,8 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
     session = null;
     pageFlights = { events: null, cards: null, related: null };
     sectionStates = initialSections();
+    feedbackState = Object.freeze({ kind: "idle", items: Object.freeze([]), hasMore: false, nextCursor: null, message: "" });
+    feedbackFlight = null;
     detail = Object.freeze({ kind: "idle", runId: null });
     action = null;
     actionFlight = null;
@@ -125,6 +145,8 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
     if (action?.runId !== runId) action = null;
     pageFlights = { events: null, cards: null, related: null };
     sectionStates = initialSections();
+    feedbackState = Object.freeze({ kind: "idle", items: Object.freeze([]), hasMore: false, nextCursor: null, message: "" });
+    feedbackFlight = null;
     const request = Object.freeze({ operation: "detail" as const, runId });
     detail = Object.freeze({ kind: "loading", runId });
     notify();
@@ -151,6 +173,8 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
       if (next.kind === "ready" && action?.runId === runId && action.state.kind === "settled" && action.state.mustReread)
         action = Object.freeze({ runId, state: Object.freeze({ ...action.state, mustReread: false }) });
       notify();
+      // Only a delivered run can carry the owner's rating; other states never open that read.
+      if (next.kind === "ready" && next.data.run.state === "done" && current(token)) readFeedback(token, null);
     }
     try {
       const read = bridge.taskDetail;
@@ -223,6 +247,76 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
       // A later render rebuilds the page from the authoritative state.
     }
   }
+  /**
+   * Ratings are read separately from the run detail: they are facts the owner wrote, newest first.
+   * A first read replaces the list; a continuation appends only behind the exact cursor it started from.
+   */
+  function readFeedback(token: Session, cursor: string | null): void {
+    if (!current(token) || feedbackFlight) return;
+    const flight = Object.freeze({ session: token, cursor });
+    const active = () => current(token) && feedbackFlight === flight;
+    const set = (state: TasksFeedbackState) => {
+      feedbackState = Object.freeze(state);
+    };
+    feedbackFlight = flight;
+    set({ ...feedbackState, kind: "loading" });
+    notify();
+    const request = cursor === null
+      ? Object.freeze({ operation: "feedback" as const, runId: token.runId, input: Object.freeze({}) })
+      : Object.freeze({ operation: "feedback" as const, runId: token.runId, input: Object.freeze({ cursor }) });
+    function finish(value: unknown) {
+      if (!active()) return;
+      // This reply is ours: release the slot, then judge only by the session fence. Checking the
+      // flight identity again after clearing it would strand the page in "loading" forever.
+      feedbackFlight = null;
+      let next: TasksFeedbackState;
+      try {
+        const result = parseTaskHistoryResponse(value, request);
+        if (!current(token)) return;
+        if (!result.ok) next = { ...feedbackState, kind: "failed", message: result.error.message };
+        else {
+          const page = result.data;
+          const previous = cursor === null ? [] : feedbackState.items;
+          const tail = previous.at(-1);
+          if (cursor !== null && (feedbackState.nextCursor !== cursor || (page.hasMore && page.nextCursor === cursor)))
+            throw new Error("cursor");
+          const seen = new Set(previous.map((item) => item.id));
+          if (page.items.some((item) => seen.has(item.id) || (tail && item.id >= tail.id)))
+            throw new Error("page-order");
+          const items = Object.freeze([...previous, ...page.items]);
+          if (items.length > ITEM_CAP) next = { ...feedbackState, kind: "capped", items, hasMore: false, nextCursor: null };
+          else
+            next = {
+              kind: page.hasMore ? "idle" : "end",
+              items,
+              hasMore: page.hasMore,
+              nextCursor: page.nextCursor,
+              message: "",
+            };
+        }
+      } catch {
+        next = { ...feedbackState, kind: "failed", message: TASK_HISTORY_MESSAGES.error };
+      }
+      if (!current(token)) return;
+      set(next);
+      notify();
+    }
+    try {
+      const read = bridge.taskDetail;
+      if (!active()) return;
+      if (!read) { finish(undefined); return; }
+      const pending = read(request);
+      void Promise.resolve(pending).then(finish, () => finish(undefined));
+    } catch {
+      finish(undefined);
+    }
+  }
+  function loadFeedbackMore(): void {
+    if (!session || detail.kind !== "ready" || !current(session)) return;
+    const state = feedbackState;
+    if (state.kind !== "idle" || !state.hasMore || !state.nextCursor) return;
+    readFeedback(session, state.nextCursor);
+  }
   // Nothing left main: the click may be repeated once the cause is fixed.
   const notSent = new Set<DesktopTaskActionCode>(["invalid", "busy", "unavailable", "no-hub", "config"]);
   function settle(
@@ -277,6 +371,7 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
           } else {
             if ("cardId" in request || response.runId !== request.runId) throw new Error("mismatched-receipt");
             if (response.action === "cancel") message = "已请求停止；执行机确认进程组结束后才算结束。";
+            else if (response.action === "feedback") message = "已记录交付反馈；它不会触发新一轮。";
             else
               message = response.result.stopped
                 ? "已提交更正：原轮次将被停止，新的下一轮会并入队列。"
@@ -349,9 +444,13 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
     } else if (request.runId !== runId) return;
     else {
       const state = detail.data.run.state;
-      // The kernel can refuse a correction it cannot resume; the desktop only withholds the clearly impossible.
-      if (request.action === "cancel" ? state !== "queued" && state !== "claimed" && state !== "unknown" : state === "queued")
-        return;
+      // A rating is about a delivered result; the kernel also refuses anything not yet done.
+      if (request.action === "feedback") {
+        if (state !== "done") return;
+      } else if (request.action === "cancel") {
+        // The kernel can refuse a correction it cannot resume; the desktop only withholds the clearly impossible.
+        if (state !== "queued" && state !== "claimed" && state !== "unknown") return;
+      } else if (state === "queued") return;
     }
     let draft;
     try {
@@ -361,7 +460,7 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
           ? { version: 1, action: "cancel", runId: request.runId, input: {} }
           : "cardId" in request
             ? { version: 1, action: request.action, cardId: request.cardId, input: request.input }
-            : { version: 1, action: "memo", runId: request.runId, input: request.input },
+            : { version: 1, action: request.action, runId: request.runId, input: request.input },
       );
     } catch {
       settle(runId, request, DESKTOP_TASK_ACTION_MESSAGES.invalid, true);
@@ -453,6 +552,11 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
       startDetail(detail.runId);
     },
     submitAction,
+    /** One more page of the owner's recorded ratings for the shown run. */
+    loadFeedbackMore,
+    get feedbackState(): TasksFeedbackState {
+      return feedbackState;
+    },
     get sectionState(): Readonly<Record<Section, TasksSectionState>> { return sectionStates; },
     get loadState(): TasksLoadState {
       return load;

@@ -1,7 +1,14 @@
 // Pure auxiliary for an already owner-authenticated UI adapter. Not a top-level router or auth door.
 // The adapter must call this only after authentication, passing its current committed View/getView.
 import type { View } from "../kernel/evolve.ts";
-import { listRuns, readRunDetail, pageRunEvents, pageRunCards, pageRelatedRuns } from "./desktop-task-query.ts";
+import {
+  listRuns,
+  readRunDetail,
+  pageRunEvents,
+  pageRunCards,
+  pageRelatedRuns,
+  pageRunFeedback,
+} from "./desktop-task-query.ts";
 import {
   parseRunListInput,
   parseRunSectionInput,
@@ -12,9 +19,10 @@ import {
   parseRunEvents,
   parseRunCards,
   parseRelatedRuns,
+  parseRunFeedback,
   type RunListInput,
   type RunSectionInput,
-  type Section,
+  type PageSection,
 } from "./desktop-task-query-contract.ts";
 const ROOT = "/v1/ui/task-runs";
 const HEADERS = { "Cache-Control": "no-store" };
@@ -59,7 +67,7 @@ function parameters(url: URL, rawUrl: string): Record<string, string> {
 type Query =
   | { kind: "list"; input: RunListInput }
   | { kind: "detail"; run: number }
-  | { kind: "section"; run: number; section: Section; input: RunSectionInput };
+  | { kind: "section"; run: number; section: PageSection; input: RunSectionInput };
 function queryOf(url: URL, request: Request, id: string | undefined): Query {
   const length = request.headers.get("content-length");
   if ((length !== null && length !== "0") || request.headers.has("transfer-encoding")) invalid();
@@ -76,7 +84,7 @@ function queryOf(url: URL, request: Request, id: string | undefined): Query {
     return { kind: "detail", run };
   }
   const section = params.section;
-  if (section !== "events" && section !== "cards" && section !== "related") invalid();
+  if (section !== "events" && section !== "cards" && section !== "related" && section !== "feedback") invalid();
   const { section: _section, ...given } = params;
   const input: Record<string, unknown> = { ...given };
   if (Object.hasOwn(given, "limit")) input.limit = number(given.limit);
@@ -114,6 +122,8 @@ export function taskQueryHttp(request: Request, current: View | (() => View)): R
     else if (query.kind === "detail") data = parseRunDetail(readRunDetail(view, query.run));
     else if (query.section === "events") data = parseRunEvents(pageRunEvents(view, query.run, query.input), query.run);
     else if (query.section === "cards") data = parseRunCards(pageRunCards(view, query.run, query.input), query.run);
+    else if (query.section === "feedback")
+      data = parseRunFeedback(pageRunFeedback(view, query.run, query.input), query.run);
     else data = parseRelatedRuns(pageRelatedRuns(view, query.run, query.input), query.run);
     // Validate only; never trim a second time or rewrite pagination metadata in the transport layer.
     return Response.json(data, { headers: HEADERS });

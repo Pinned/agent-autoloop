@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { empty, evolve, keyOf, snapshot, type Row, type Table } from "../kernel/evolve.ts";
 import { taskQueryHttp } from "../host/task-query-http.ts";
-import { listRuns, readRunDetail, pageRunEvents, pageRunCards, pageRelatedRuns } from "../host/desktop-task-query.ts";
+import { listRuns, readRunDetail, pageRunEvents, pageRunCards, pageRelatedRuns, pageRunFeedback } from "../host/desktop-task-query.ts";
 import { encodeRunCursor, LIST_MAX_BYTES, DETAIL_MAX_BYTES } from "../host/desktop-task-query-contract.ts";
 const root = "http://fixture.invalid/v1/ui/task-runs";
 const at = "2026-11-08T00:00:00.000Z";
@@ -29,6 +29,8 @@ function fixture() {
         created_at: at,
       },
     ],
+    ["feedback", { id: 5, run_id: 1, kind: "交付满意", text: "做得好", created_at: at }],
+    ["feedback", { id: 6, run_id: 1, kind: "需要改善", text: "再快一点", created_at: at }],
   ];
   return evolve(empty(), [
     {
@@ -96,6 +98,7 @@ test("GET list, initial detail and sections reuse query DTO without second trimm
       [root + "/1?section=events&limit=1", pageRunEvents(view, 1, { limit: 1 })],
       [root + "/1?section=cards&limit=1", pageRunCards(view, 1, { limit: 1 })],
       [root + "/1?section=related&limit=1", pageRelatedRuns(view, 1, { limit: 1 })],
+      [root + "/1?section=feedback&limit=1", pageRunFeedback(view, 1, { limit: 1 })],
     ];
     for (const [url, expected] of cases) {
       let reads = 0;
@@ -355,6 +358,7 @@ test("production response validation blocks malformed projection shapes and rema
       root + "/1?section=events",
       root + "/1?section=cards",
       root + "/1?section=related",
+      root + "/1?section=feedback",
     ]) {
       assert.equal(taskQueryHttp(fake(url), view)!.status, 200);
     }

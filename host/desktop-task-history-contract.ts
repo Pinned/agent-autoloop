@@ -9,6 +9,7 @@ import {
   parseRunEvents,
   parseRunCards,
   parseRelatedRuns,
+  parseRunFeedback,
   type RunListInput,
   type RunSectionInput,
   type RunList,
@@ -16,6 +17,7 @@ import {
   type Page,
   type EventItem,
   type CardItem,
+  type FeedbackItem,
   type RunItem,
 } from "./desktop-task-query-contract.ts";
 
@@ -36,7 +38,7 @@ export type TaskHistoryRequest =
   | { readonly operation: "list"; readonly input: Readonly<RunListInput> }
   | { readonly operation: "detail"; readonly runId: number }
   | {
-      readonly operation: "events" | "cards" | "related";
+      readonly operation: "events" | "cards" | "related" | "feedback";
       readonly runId: number;
       readonly input: Readonly<RunSectionInput>;
     };
@@ -46,6 +48,7 @@ type HistoryData = {
   events: Page<EventItem>;
   cards: Page<CardItem>;
   related: Page<RunItem>;
+  feedback: Page<FeedbackItem>;
 };
 type Frozen<T> = T extends object ? { readonly [K in keyof T]: Frozen<T[K]> } : T;
 export type TaskHistoryFailure = {
@@ -105,7 +108,13 @@ export function parseTaskHistoryRequest(value: unknown): TaskHistoryRequest {
     record(item, ["operation", "runId"]);
     return Object.freeze({ operation: "detail", runId: runId(item.runId) });
   }
-  if (item.operation !== "events" && item.operation !== "cards" && item.operation !== "related") invalid();
+  if (
+    item.operation !== "events" &&
+    item.operation !== "cards" &&
+    item.operation !== "related" &&
+    item.operation !== "feedback"
+  )
+    invalid();
   record(item, ["operation", "runId", "input"]);
   const id = runId(item.runId);
   if (item.input === undefined) invalid();
@@ -164,6 +173,9 @@ export function parseTaskHistoryResponse<R extends TaskHistoryRequest>(
       data = related;
       break;
     }
+    case "feedback":
+      data = parseRunFeedback(item.data, checked.runId);
+      break;
   }
   return Object.freeze({ version: TASK_HISTORY_VERSION, ok: true, data: freeze(data) }) as TaskHistoryResponse<
     R["operation"]

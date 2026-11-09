@@ -100,6 +100,7 @@ for (const status of ["stopped", "starting", "draining", "failed", "unknown", "u
       h.source.events(7),
       h.source.cards(7),
       h.source.related(7),
+      h.source.feedback(7),
     ]))
       assert.deepEqual(result, fail("unavailable"));
     assert.equal(h.reads(), 0);
@@ -115,6 +116,7 @@ for (const role of ["worker", null] as const) {
       h.source.events(7),
       h.source.cards(7),
       h.source.related(7),
+      h.source.feedback(7),
     ]))
       assert.deepEqual(result, fail(role === "worker" ? "no-hub" : "unavailable"));
     assert.equal(h.reads(), 0);
@@ -203,7 +205,7 @@ test("detail and section doors retain bound cursors and limits", async () => {
     },
   });
   assert.deepEqual(await h.source.detail(7), ok(detail()));
-  for (const section of ["events", "cards", "related"] as const) {
+  for (const section of ["events", "cards", "related", "feedback"] as const) {
     const cursor = encodeRunCursor(
       section === "events"
         ? { version: 1, run: 7, section, lastKey: "7:9" }
@@ -357,7 +359,7 @@ test("strict response parsers reject extra fields, wrong run, malformed paginati
     },
   ])
     assert.deepEqual(await harness({ fetchImpl: async () => Response.json(value) }).source.detail(7), fail("error"));
-  for (const section of ["events", "cards", "related"] as const)
+  for (const section of ["events", "cards", "related", "feedback"] as const)
     assert.deepEqual(
       await harness({ fetchImpl: async () => Response.json({ ...emptyPage, secret: "no" }) }).source[section](7),
       fail("error"),
@@ -390,6 +392,11 @@ test("valid cards, related runs and embedded detail sections use their own contr
     hasMore: true,
     nextCursor: encodeRunCursor({ version: 1, run: 7, section: "related", lastId: 6 }),
   };
+  const feedback = {
+    items: [{ id: 9, kind: "交付满意", text: "做得好", createdAt: null, truncated: false }],
+    hasMore: true,
+    nextCursor: encodeRunCursor({ version: 1, run: 7, section: "feedback", lastId: 9 }),
+  };
   const data = { ...detail(), cards, relatedRuns: related };
   const h = harness({
     fetchImpl: async (url) =>
@@ -398,11 +405,14 @@ test("valid cards, related runs and embedded detail sections use their own contr
           ? cards
           : new URL(String(url)).searchParams.get("section") === "related"
             ? related
-            : data,
+            : new URL(String(url)).searchParams.get("section") === "feedback"
+              ? feedback
+              : data,
       ),
   });
   assert.deepEqual(await h.source.cards(7), ok(cards));
   assert.deepEqual(await h.source.related(7), ok(related));
+  assert.deepEqual(await h.source.feedback(7), ok(feedback));
   assert.deepEqual(await h.source.detail(7), ok(data));
 });
 test("fixed status mapping and exact bounded missing-run 404 only on detail/sections", async () => {
@@ -426,6 +436,7 @@ test("fixed status mapping and exact bounded missing-run 404 only on detail/sect
     h.source.events(7),
     h.source.cards(7),
     h.source.related(7),
+    h.source.feedback(7),
   ]))
     assert.deepEqual(result, fail("not-found"));
   for (const value of [{ error: "run-not-found", extra: true }, { error: "other" }, [], null])
@@ -449,7 +460,7 @@ test("fixed status mapping and exact bounded missing-run 404 only on detail/sect
     fail("error"),
   );
 });
-for (const slot of ["list", "detail", "events", "cards", "related"] as const) {
+for (const slot of ["list", "detail", "events", "cards", "related", "feedback"] as const) {
   test(`${slot} actual byte boundary succeeds; excess cancels reader despite fake length`, async () => {
     const budget = slot === "list" ? LIST_MAX_BYTES : DETAIL_MAX_BYTES;
     const data = slot === "list" ? emptyList : slot === "detail" ? detail() : emptyPage;
@@ -488,8 +499,8 @@ test("content-length early check cancels, absent length streams chunks, fatal UT
     fail("unsupported"),
   );
 });
-test("five slots are independent, identical parameters share flight, cancelAll only aborts queries", async () => {
-  const waits = Array.from({ length: 5 }, () => deferred<Response>());
+test("six slots are independent, identical parameters share flight, cancelAll only aborts queries", async () => {
+  const waits = Array.from({ length: 6 }, () => deferred<Response>());
   const signals: AbortSignal[] = [];
   const h = harness({
     fetchImpl: (_url, init) => {
@@ -497,10 +508,17 @@ test("five slots are independent, identical parameters share flight, cancelAll o
       return waits[signals.length - 1].promise;
     },
   });
-  const calls = [h.source.list(), h.source.detail(7), h.source.events(7), h.source.cards(7), h.source.related(7)];
+  const calls = [
+    h.source.list(),
+    h.source.detail(7),
+    h.source.events(7),
+    h.source.cards(7),
+    h.source.related(7),
+    h.source.feedback(7),
+  ];
   assert.strictEqual(h.source.events(7), calls[2]);
   await tick();
-  assert.equal(signals.length, 5);
+  assert.equal(signals.length, 6);
   assert.ok(signals.every((s) => !s.aborted));
   h.source.cancelAll();
   h.source.cancelAll();
@@ -509,7 +527,7 @@ test("five slots are independent, identical parameters share flight, cancelAll o
   for (const wait of waits) wait.resolve(Response.json(emptyPage));
   await tick();
 });
-for (const slot of ["list", "detail", "events", "cards", "related"] as const) {
+for (const slot of ["list", "detail", "events", "cards", "related", "feedback"] as const) {
   test(`${slot} replacement discards ignored-abort late result and old flight cannot release new slot`, async () => {
     const waits = [deferred<Response>(), deferred<Response>()];
     const signals: AbortSignal[] = [];
@@ -722,7 +740,7 @@ test("404 body completion and body rejection cannot beat an elapsed deadline", a
   let now = 0;
   t.mock.method(performance, "now", () => now);
   try {
-    for (const slot of ["detail", "events", "cards", "related"] as const) {
+    for (const slot of ["detail", "events", "cards", "related", "feedback"] as const) {
       for (const reject of [false, true]) {
         for (const end of [999, 1001]) {
           now = 0;

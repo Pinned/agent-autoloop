@@ -4,10 +4,10 @@ import type { TaskQuerySource } from './task-query-source.ts';
 export function createTaskDetailIpc(options: {
   assertSender(event: unknown): void;
   presentation: { acquireTaskLease(): object | undefined; checkTaskLease(lease: object): boolean; releaseTaskLease(lease: object): void };
-  source: Pick<TaskQuerySource, 'detail' | 'events' | 'cards' | 'related'>;
+  source: Pick<TaskQuerySource, 'detail' | 'events' | 'cards' | 'related' | 'feedback'>;
 }) {
   return {
-    async read(event: unknown, args: readonly unknown[]): Promise<TaskHistoryResponse<'detail' | 'events' | 'cards' | 'related'>> {
+    async read(event: unknown, args: readonly unknown[]): Promise<TaskHistoryResponse<'detail' | 'events' | 'cards' | 'related' | 'feedback'>> {
       options.assertSender(event);
       let request;
       try {

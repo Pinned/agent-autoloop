@@ -4,6 +4,7 @@ import {
   type DesktopTasksRun,
 } from "../../../host/desktop-tasks-contract.ts";
 import type { createRendererTasks } from "./tasks-controller.ts";
+import { FEEDBACK_KINDS } from "../../../host/desktop-task-query-contract.ts";
 
 /**
  * The tasks page: the hub's real run history, newest first, one page at a time. All DOM is built
@@ -160,6 +161,31 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
       textLine(runActions, "更正不会改写本轮：原轮次保留结束记录，新的下一轮并入队列。");
     }
     if (runActions.children.length) node.append(runActions);
+    // A rating is about a delivered result only: it records the owner's view and never reruns anything.
+    if (run.state === "done") {
+      const block = document.createElement("div");
+      block.className = "feedback-actions";
+      const kinds = document.createElement("select");
+      kinds.setAttribute("aria-label", "反馈类型");
+      for (const kind of FEEDBACK_KINDS) {
+        const option = document.createElement("option");
+        option.value = kind;
+        option.textContent = kind;
+        kinds.append(option);
+      }
+      const text = document.createElement("textarea");
+      text.setAttribute("aria-label", "反馈内容");
+      text.setAttribute("placeholder", "告诉我们结果哪里做得好，或哪里需要改善");
+      text.setAttribute("maxlength", "4000");
+      block.append(kinds, text);
+      actionButton(block, "feedback-submit", "记录反馈", !writes, () => {
+        // The select only ever holds the three contract kinds; anything else is a broken DOM, not a draft.
+        const kind = FEEDBACK_KINDS.find((value) => value === kinds.value);
+        if (fresh() && kind) controller.submitAction({ action: "feedback", runId: run.id, input: { kind, text: text.value } });
+      });
+      textLine(block, "反馈只记录评价，不自动重新执行。如需修改任务，请用“提交更正”开启新一轮。");
+      node.append(block);
+    }
     actionStatus(node);
     textLine(node, "触发事件");
     if (!data.events.items.length) textLine(node, "本批没有触发事件。");
@@ -215,6 +241,40 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
       }
     }
     sectionControl("related", "关联执行记录");
+    // Ratings live beside the run, not inside it: they are the owner's notes, read as their own page.
+    if (run.state === "done") {
+      const feedback = controller.feedbackState;
+      textLine(node, "已提交反馈");
+      if (feedback.kind === "failed") textLine(node, feedback.message);
+      else if (feedback.kind === "loading" && !feedback.items.length) textLine(node, "正在读取交付反馈。");
+      else if (!feedback.items.length) textLine(node, "本执行还没有反馈。");
+      for (const item of feedback.items) {
+        const entry = document.createElement("div");
+        entry.className = "feedback-item";
+        const kind = document.createElement("strong");
+        kind.textContent = item.kind;
+        textLine(entry, item.text);
+        const note = document.createElement("small");
+        note.textContent = item.createdAt ? `${when(item.createdAt)} · 已记录` : "已记录";
+        entry.prepend(kind);
+        entry.append(note);
+        if (item.truncated) textLine(entry, "部分反馈文字已截断。");
+        node.append(entry);
+      }
+      if (feedback.kind !== "end" && feedback.kind !== "failed" && feedback.kind !== "capped") {
+        const more = document.createElement("button");
+        more.type = "button";
+        // Its own class: the three section paging controls remain the only `detail-more` buttons.
+        more.className = "feedback-more";
+        more.disabled = feedback.kind === "loading" || !feedback.hasMore;
+        more.textContent = feedback.kind === "loading" ? "正在读取交付反馈……" : "加载更多交付反馈";
+        more.addEventListener("click", () => {
+          if (controller.detailState === stateSnapshot) controller.loadFeedbackMore();
+        });
+        node.append(more);
+      } else if (feedback.kind === "capped") textLine(node, "已达本次详情显示上限，仍有未显示反馈");
+      else if (feedback.kind === "end" && feedback.items.length) textLine(node, "已显示全部交付反馈。");
+    }
     return node;
   }
 

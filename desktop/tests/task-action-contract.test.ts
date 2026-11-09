@@ -30,7 +30,7 @@ function hostile(value: Record<string, unknown>): unknown[] {
   ];
 }
 
-test("four actions normalize into detached recursively frozen copies", () => {
+test("five actions normalize into detached recursively frozen copies", () => {
   for (const value of [
     answer(),
     answer({ choice: 0 }),
@@ -38,6 +38,7 @@ test("four actions normalize into detached recursively frozen copies", () => {
     { version: 1, action: "resolve", cardId: 7, input: { reason: " 已核实 " } },
     run(),
     run("memo", { text: " 更正 " }),
+    run("feedback", { kind: "交付满意", text: " 做得好 " }),
   ]) {
     const parsed = parseDesktopTaskActionInput(value);
     assert.notEqual(parsed, value);
@@ -48,6 +49,10 @@ test("four actions normalize into detached recursively frozen copies", () => {
   }
   assert.deepEqual(parseDesktopTaskActionInput(answer({ text: " 想法 " })).input, { text: "想法" });
   assert.deepEqual(parseDesktopTaskActionInput(run("memo", { text: " 更正 " })).input, { text: "更正" });
+  assert.deepEqual(parseDesktopTaskActionInput(run("feedback", { kind: "需要改善", text: " 慢 " })).input, {
+    kind: "需要改善",
+    text: "慢",
+  });
 });
 
 test("strict shape rejects prototypes, symbols, nonenumerable fields and getters without invoking them", () => {
@@ -57,6 +62,7 @@ test("strict shape rejects prototypes, symbols, nonenumerable fields and getters
     run(),
     { version: 1, action: "resolve", cardId: 1, input: { reason: "x" } },
     run("memo", { text: "x" }),
+    run("feedback", { kind: "交付满意", text: "x" }),
   ]) {
     for (const value of hostile(base)) bad(value);
     for (const value of hostile(base.input as Record<string, unknown>)) bad({ ...base, input: value });
@@ -108,6 +114,16 @@ test("version, target IDs, mutually exclusive inputs and owner-only fields fail 
     answer({ text: " " }),
     run("cancel", { text: "x" }),
     run("memo"),
+    // A rating must name one of the three kinds the hub accepts and carry words; it is still a run target.
+    run("feedback", {}),
+    run("feedback", { kind: "交付满意" }),
+    run("feedback", { kind: "随便", text: "x" }),
+    run("feedback", { kind: "交付满意 ", text: "x" }),
+    run("feedback", { kind: 1, text: "x" }),
+    run("feedback", { kind: "交付满意", text: "x", reason: "y" }),
+    run("feedback", { kind: "交付满意", text: " " }),
+    run("feedback", undefined),
+    { version: 1, action: "feedback", cardId: 7, input: { kind: "交付满意", text: "x" } },
     { version: 1, action: "resolve", cardId: 7, input: {} },
     { ...answer(), input: undefined },
   ])
@@ -128,8 +144,13 @@ test("version, target IDs, mutually exclusive inputs and owner-only fields fail 
 });
 
 test("raw UTF16, trimmed codepoint and whole UTF8 budgets are bounded before serialization", () => {
-  for (const action of ["answer", "memo"]) {
-    const make = (text: string) => (action === "answer" ? answer({ text }) : run(action, { text }));
+  for (const action of ["answer", "memo", "feedback"]) {
+    const make = (text: string) =>
+      action === "answer"
+        ? answer({ text })
+        : action === "memo"
+          ? run(action, { text })
+          : run(action, { kind: "内容错误", text });
     assert.doesNotThrow(() => parseDesktopTaskActionInput(make("😀".repeat(4000))));
     assert.doesNotThrow(() => parseDesktopTaskActionInput(make(" " + "x".repeat(4000) + " ")));
     bad(make("😀".repeat(4001)));
@@ -170,6 +191,8 @@ test("strict native receipts retain false flags and every card state without suc
     ["cancel", { ok: true }],
     ["memo", { stopped: false }],
     ["memo", { stopped: true }],
+    ["feedback", { ok: true, id: 1 }],
+    ["feedback", { ok: true, id: Number.MAX_SAFE_INTEGER }],
   ] as const) {
     assert.deepEqual(projectDesktopTaskActionResult(action, result), result);
     for (const value of hostile(result)) assert.throws(() => projectDesktopTaskActionResult(action, value));
@@ -182,6 +205,16 @@ test("strict native receipts retain false flags and every card state without suc
     ["cancel", { ok: false }],
     ["memo", { stopped: 1 }],
     ["memo", { stopped: false, success: true }],
+    // A recorded rating is not a delivery: the id must be a positive safe integer and nothing else may ride along.
+    ["feedback", { ok: true }],
+    ["feedback", { ok: true, id: 0 }],
+    ["feedback", { ok: true, id: -1 }],
+    ["feedback", { ok: true, id: 1.5 }],
+    ["feedback", { ok: true, id: "1" }],
+    ["feedback", { ok: true, id: Number.MAX_SAFE_INTEGER + 1 }],
+    ["feedback", { ok: false, id: 1 }],
+    ["feedback", { id: 1 }],
+    ["feedback", { ok: true, id: 1, changed: true }],
   ] as const) {
     assert.throws(() => projectDesktopTaskActionResult(action, value));
   }
@@ -192,6 +225,7 @@ test("local envelopes validate action/target/result and only fixed Chinese error
     ["resolve", { changed: false }],
     ["cancel", { ok: true }],
     ["memo", { stopped: true }],
+    ["feedback", { ok: true, id: 12 }],
   ] as const) {
     const value = { version: 1, ok: true, action, ...(action === "resolve" ? { cardId: 7 } : { runId: 91 }), result };
     assert.deepEqual(parseDesktopTaskActionResponse(value), value);

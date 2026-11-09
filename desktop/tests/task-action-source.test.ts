@@ -79,7 +79,7 @@ test("only running hub-worker may read config or fetch; invalid drafts are zero 
   assert.equal(f.calls.length, 0);
 });
 
-test("exact four POST routes, owner authorization, JSON and detached normalized payload only", async () => {
+test("exact five POST routes, owner authorization, JSON and detached normalized payload only", async () => {
   const cases = [
     [card(), "/v1/cards/7/answer", { choice: 0 }, { changed: true, state: "decided" }],
     [card("answer", { text: " 想法 " }), "/v1/cards/7/answer", { text: "想法" }, { changed: false, state: "done" }],
@@ -87,6 +87,12 @@ test("exact four POST routes, owner authorization, JSON and detached normalized 
     [card("resolve", { reason: " 已核实 " }), "/v1/cards/7/resolve", { reason: "已核实" }, { changed: false }],
     [draft("cancel"), "/v1/runs/91/cancel", {}, { ok: true }],
     [draft(), "/v1/runs/91/memo", { text: "更正" }, { stopped: true }],
+    [
+      { version: 1, action: "feedback", runId: 91, input: { kind: "交付满意", text: " 做得好 " } },
+      "/v1/runs/91/feedback",
+      { kind: "交付满意", text: "做得好" },
+      { ok: true, id: 12 },
+    ],
   ] as const;
   for (const [input, route, payload, receipt] of cases) {
     const f = fixture({
