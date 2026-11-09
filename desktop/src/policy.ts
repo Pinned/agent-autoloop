@@ -21,6 +21,11 @@ import type {
   DesktopTaskActionInput,
   DesktopTaskActionResponse,
 } from "../../host/desktop-task-action-contract.ts";
+import type {
+  DesktopSettingsGetResponse,
+  DesktopSettingsInput,
+  DesktopSettingsPutResponse,
+} from "../../host/desktop-settings-contract.ts";
 
 export const channels = Object.freeze({
   themeGet: "desktop:theme:get",
@@ -46,6 +51,8 @@ export const channels = Object.freeze({
   taskAction: "desktop:tasks:action",
   rulesCasGet: "desktop:rules:cas:get",
   rulesCasPut: "desktop:rules:cas:put",
+  settingsGet: "desktop:settings:get",
+  settingsPut: "desktop:settings:put",
   // Main-to-renderer push only; the renderer never invokes this channel.
   runtimeEvent: "desktop:runtime:event",
   navigate: "desktop:navigate",
@@ -87,6 +94,10 @@ export interface DesktopBridge {
   rulesCasGet(): Promise<DesktopRulesCasGetResponse>;
   /** Replace the whole list only at that rules version; checked again in main before any request. */
   rulesCasPut(input: DesktopRulesCasInput): Promise<DesktopRulesCasPutResponse>;
+  /** The editable configuration sections, keyed maps flattened to `id`-tagged lists. */
+  settingsGet(): Promise<DesktopSettingsGetResponse>;
+  /** Save one section only at the rules version it was read at; checked again in main. */
+  settingsPut(input: DesktopSettingsInput): Promise<DesktopSettingsPutResponse>;
   /** Subscribe to main-pushed runtime state; the returned function unsubscribes. */
   onRuntimeEvent(listener: (event: DesktopRuntimeEvent) => void): () => void;
   /** Subscribe to main-pushed page navigation (tray card and notification clicks). */

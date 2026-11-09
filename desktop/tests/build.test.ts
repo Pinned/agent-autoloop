@@ -111,7 +111,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(main, /远程队列不会取消/);
   assert.match(main, /离线持久待同步/);
   assert.doesNotMatch(main, /restartPolicy|controller\.restart/);
-  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 22);
+  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 24);
   // Each handler is checked inside its own block: a cross-handler match would let a missing
   // sender check hide behind the next handler that has one.
   const blocks = main.split("ipcMain.handle(channels.").slice(1);
@@ -166,6 +166,16 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(casIpc, /parseDesktopRulesCasPutResponse\(reply\)/);
   assert.match(main, /rulesCas\.invalidate\(\)/);
   assert.match(main, /rulesCas\.dispose\(\)/);
+  // The settings page is fenced the same way and must be fenced on the same document boundaries.
+  assert.match(blockOf("settingsGet"), /=> settings\.get\(event, args\)\)/);
+  assert.match(blockOf("settingsPut"), /=> settings\.put\(event, args\)\)/);
+  assert.match(main, /const settings = createSettingsIpc\(\{/);
+  const settingsIpc = read("../src/settings-ipc.ts");
+  assert.match(settingsIpc, /options\.assertSender\(event\);/);
+  assert.match(settingsIpc, /parseDesktopSettingsInput\(payload\)/);
+  assert.match(settingsIpc, /parseDesktopSettingsPutResponse\(reply\)/);
+  assert.match(main, /settings\.invalidate\(\)/);
+  assert.match(main, /settings\.dispose\(\)/);
   // The renderer is pushed state through the two fixed event channels, and nothing else.
   assert.equal((main.match(/webContents\.send\(/g) ?? []).length, 2);
   // Presentation wraps each snapshot once, then main posts that exact event; no second envelope.
@@ -207,6 +217,8 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
     "runtimeStart",
     "runtimeStop",
     "setTheme",
+    "settingsGet",
+    "settingsPut",
     "setupStatus",
     "taskAction",
     "taskCreate",
@@ -231,7 +243,9 @@ test("onboarding is explicit and renderer bundles only the pure setup contract",
   const view = read("../src/renderer/setup-view.ts");
   const controller = read("../src/renderer/setup-controller.ts");
   const renderer = read("../dist/renderer/app.js");
-  assert.match(app, /button\.addEventListener\("click", openSetup\)/);
+  // The settings page owns the re-entry point now; it hands the action back to the app's openSetup.
+  assert.match(app, /openSetup,/);
+  assert.match(read("../src/renderer/settings-view.ts"), /addEventListener\("click", \(\) => options\.openSetup\(\)\)/);
   assert.match(app, /render\("today", false\)/);
   assert.doesNotMatch(app, /setupStatus\(|checkBuiltinAgents\(|initHub\(|joinWorker\(/);
   assert.doesNotMatch(controller, /node:|from ["'].*host\/(?:config|runtime|setup)\.ts/);

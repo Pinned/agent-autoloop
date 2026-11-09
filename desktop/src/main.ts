@@ -38,6 +38,8 @@ import { createTaskActionSource } from "./task-action-source.ts";
 import { createTaskActionIpc } from "./task-action-ipc.ts";
 import { createRulesCasSource } from "./rules-cas-source.ts";
 import { createRulesCasIpc } from "./rules-cas-ipc.ts";
+import { createSettingsSource } from "./settings-source.ts";
+import { createSettingsIpc } from "./settings-ipc.ts";
 import { createLaunchControl, createLaunchStatusRead, safelyAbortLifecycle } from "./launch-control.ts";
 import { createRuntimePresentation } from "./runtime-presentation.ts";
 import type { DesktopLaunchStatus } from "../../host/desktop-launch-contract.ts";
@@ -280,6 +282,13 @@ if (ownsAppLock)
         assertSender: (event) => assertSender(event, window.webContents, page),
         gate: () => undefined,
       });
+      // The settings page edits the same file through the hub; the door checks role and version itself.
+      const settingsSource = createSettingsSource({ home: runtimeHome, getState: () => presentation.snapshot() });
+      const settings = createSettingsIpc({
+        source: settingsSource,
+        assertSender: (event) => assertSender(event, window.webContents, page),
+        gate: () => undefined,
+      });
       const showSafeError = (message: string) =>
         dialog.showMessageBox(window, {
           type: "error",
@@ -455,18 +464,21 @@ if (ownsAppLock)
         presentation.invalidateDocument();
         // The old document's rules reads and saves must not land after the new document exists.
         rulesCas.invalidate();
+        settings.invalidate();
       };
       window.webContents.on("did-start-loading", () => {
         if (!window.webContents.isLoadingMainFrame()) return;
         committedFrame = undefined;
         documentToken = presentation.beginDocument();
         rulesCas.invalidate();
+        settings.invalidate();
       });
       window.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
         if (isMainFrame && !isInPlace) {
           committedFrame = undefined;
           documentToken = presentation.beginDocument();
           rulesCas.invalidate();
+          settings.invalidate();
         }
       });
       window.webContents.on("did-frame-navigate", (_event, url, _code, _text, isMainFrame, processId, routingId) => {
@@ -492,6 +504,7 @@ if (ownsAppLock)
       window.webContents.on("destroyed", () => {
         invalidateDocument();
         rulesCas.dispose();
+        settings.dispose();
       });
       window.webContents.on("will-navigate", (event) => event.preventDefault());
       window.webContents.on("will-frame-navigate", (event) => event.preventDefault());
@@ -652,6 +665,8 @@ if (ownsAppLock)
       ipcMain.handle(channels.taskAction, taskAction);
       ipcMain.handle(channels.rulesCasGet, (event, ...args: unknown[]) => rulesCas.get(event, args));
       ipcMain.handle(channels.rulesCasPut, (event, ...args: unknown[]) => rulesCas.put(event, args));
+      ipcMain.handle(channels.settingsGet, (event, ...args: unknown[]) => settings.get(event, args));
+      ipcMain.handle(channels.settingsPut, (event, ...args: unknown[]) => settings.put(event, args));
       await window.loadFile(pagePath);
       window.show();
       if (!smoke && !lifecycle) await launch.autoStart();
@@ -699,6 +714,8 @@ if (ownsAppLock)
         try { await window.desktop.taskCreate({ type: 'Task', summary: 'x', detail: '' }); } catch { invalidTaskRejected = true; }
         const rulesCasGet = await window.desktop.rulesCasGet();
         const invalidRules = await window.desktop.rulesCasPut({ entries: [{ name: '', types: ['t'], to: 'c', cwd: '~/' }], rulesSeq: 1 });
+        const settingsGet = await window.desktop.settingsGet();
+        const invalidSettings = await window.desktop.settingsPut({ section: 'agents', value: [], rulesSeq: 0 });
         let runtimeEventSeen = false;
         const unsubscribe = window.desktop.onRuntimeEvent((event) => { runtimeEventSeen = true; });
         unsubscribe();
@@ -707,7 +724,7 @@ if (ownsAppLock)
         const offNavigate = window.desktop.onNavigate((target) => { navigateSeen = true; });
         offNavigate();
         offNavigate();
-        return { theme, dark, invalidRejected, pages, runtime, today, workers, tasks, invalidPageRejected, taskEntries, invalidTaskRejected, rulesCasGet, invalidRules, runtimeEventSeen, navigateSeen, nodeAbsent: typeof require === 'undefined' && typeof process === 'undefined', bridge: Object.keys(window.desktop).sort() };
+        return { theme, dark, invalidRejected, pages, runtime, today, workers, tasks, invalidPageRejected, taskEntries, invalidTaskRejected, rulesCasGet, invalidRules, settingsGet, invalidSettings, runtimeEventSeen, navigateSeen, nodeAbsent: typeof require === 'undefined' && typeof process === 'undefined', bridge: Object.keys(window.desktop).sort() };
       })()`);
           const shots = join(base, "..", ".cache", "smoke");
           mkdirSync(shots, { recursive: true });
@@ -752,10 +769,16 @@ if (ownsAppLock)
             result.invalidRules.ok !== false ||
             result.invalidRules.error.code !== "invalid" ||
             result.invalidRules.error.outcome !== "not-sent" ||
+            !result.settingsGet ||
+            result.settingsGet.ok !== false ||
+            result.settingsGet.error.code !== "unavailable" ||
+            result.invalidSettings.ok !== false ||
+            result.invalidSettings.error.code !== "invalid" ||
+            result.invalidSettings.error.outcome !== "not-sent" ||
             result.runtimeEventSeen !== false ||
             result.navigateSeen !== false ||
             result.bridge.join(",") !==
-              "checkBuiltinAgents,completeSetup,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,probeHub,rulesCasGet,rulesCasPut,runtimeGet,runtimeStart,runtimeStop,setTheme,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,tasksGet,todayState,window,workersGet" ||
+              "checkBuiltinAgents,completeSetup,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,probeHub,rulesCasGet,rulesCasPut,runtimeGet,runtimeStart,runtimeStop,setTheme,settingsGet,settingsPut,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,tasksGet,todayState,window,workersGet" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||
