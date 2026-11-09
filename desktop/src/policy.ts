@@ -6,6 +6,7 @@ import type { DesktopJoinInput, DesktopSetupResponse } from "../../host/desktop-
 import type { DesktopRuntimeEvent, DesktopRuntimeResponse } from "../../host/desktop-run-contract.ts";
 import type { DesktopTodayResponse } from "../../host/desktop-state-contract.ts";
 import type { DesktopTasksResponse } from "../../host/desktop-tasks-contract.ts";
+import type { DesktopWorkersResponse } from "../../host/desktop-workers-contract.ts";
 import type {
   DesktopTaskOutcome,
   DesktopTaskEntriesResponse,
@@ -36,6 +37,8 @@ export const channels = Object.freeze({
   runtimeStart: "desktop:runtime:start",
   runtimeStop: "desktop:runtime:stop",
   todayState: "desktop:state:today",
+  /** Agent and channel presence the hub already knows; never a remote environment probe. */
+  workersGet: "desktop:workers:get",
   tasksGet: "desktop:tasks:get",
   taskDetail: "desktop:tasks:detail",
   taskEntries: "desktop:task:entries",
@@ -69,6 +72,8 @@ export interface DesktopBridge {
   runtimeStop(): Promise<DesktopRuntimeResponse>;
   /** Read-only today-page data from the local hub while it runs. */
   todayState(): Promise<DesktopTodayResponse>;
+  /** Read-only worker and channel presence from the local hub while it runs. */
+  workersGet(): Promise<DesktopWorkersResponse>;
   /** The runs page for the tasks list; `before` pages further into history. */
   tasksGet(before?: number): Promise<DesktopTasksResponse>;
   taskDetail<R extends Exclude<TaskHistoryRequest, { operation: "list" }>>(request: R): Promise<TaskHistoryResponse<R["operation"]>>;
