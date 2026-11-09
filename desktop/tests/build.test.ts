@@ -338,6 +338,10 @@ test("the automation page edits the hub's own entries through the versioned rule
   assert.doesNotMatch(controller, /node:|from ["'].*host\/(?:config|runtime|setup)\.ts/);
   assert.match(controller, /from ["'].*host\/desktop-rules-cas-contract\.ts/);
   assert.match(view, /showModal\(\)/);
+  // The preview is a local diff of the draft, and it says so: it never claims the hub accepted a
+  // save or that a rule will route, because the hub alone decides both.
+  assert.match(view, /不代表中台已接受，也不代表路由结果；非 local 规则不会被改动/);
+  assert.doesNotMatch(view, /\bfetch\(|WebSocket|ipcRenderer/);
   // The save carries the version it started from; the hub refuses a stale one, and main hands the
   // parsed input to the same single-flight unit the page talks to.
   assert.match(view, /needsReview|丢弃草稿并重新读取/);

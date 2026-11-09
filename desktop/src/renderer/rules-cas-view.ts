@@ -1,6 +1,58 @@
 import { DESKTOP_RULES_MESSAGES, type DesktopRuleEntry } from "../../../host/desktop-rules-contract.ts";
 import type { createRendererRulesCas } from "./rules-cas-controller.ts";
 
+/** The editor already validated every entry, so two entries can be compared as plain data. */
+function sameEntry(left: DesktopRuleEntry, right: DesktopRuleEntry): boolean {
+  if (
+    left.name !== right.name ||
+    left.to !== right.to ||
+    left.cwd !== right.cwd ||
+    left.prompt !== right.prompt ||
+    left.skill !== right.skill ||
+    left.parallel !== right.parallel ||
+    left.group !== right.group ||
+    left.tell !== right.tell ||
+    left.types.length !== right.types.length ||
+    left.types.some((type, index) => type !== right.types[index])
+  )
+    return false;
+  if (left.emits === undefined || right.emits === undefined)
+    return left.emits === undefined && right.emits === undefined;
+  return (
+    left.emits.source === right.emits.source &&
+    left.emits.types.length === right.emits.types.length &&
+    left.emits.types.every((type, index) => type === right.emits!.types[index])
+  );
+}
+
+/**
+ * The save replaces the local slots of rules.json position by position, keeping every non-local
+ * rule where it is. This is that same comparison, never a routing prediction: the hub decides
+ * whether the merged file is valid and which rules actually fire.
+ */
+function previewOf(baseline: readonly DesktopRuleEntry[], draft: readonly DesktopRuleEntry[]) {
+  const shared = Math.min(baseline.length, draft.length);
+  let changed = 0;
+  for (let index = 0; index < shared; index++) if (!sameEntry(baseline[index], draft[index])) changed++;
+  return {
+    added: Math.max(0, draft.length - baseline.length),
+    changed,
+    removed: Math.max(0, baseline.length - draft.length),
+  };
+}
+function previewText(
+  { added, changed, removed }: ReturnType<typeof previewOf>,
+  total: number,
+): string {
+  const parts: string[] = [];
+  if (added) parts.push(`新增 ${added} 条`);
+  if (changed) parts.push(`修改 ${changed} 条`);
+  if (removed) parts.push(`删除 ${removed} 条`);
+  if (!parts.length) return `本次保存将提交的本机入口与当前一致（共 ${total} 条）。`;
+  if (total === 0 && removed) return `本次保存将提交 0 条本机入口：删除全部 ${removed} 条。`;
+  return `本次保存将提交 ${total} 条本机入口：${parts.join("、")}。`;
+}
+
 export function mountRulesCasView(controller: ReturnType<typeof createRendererRulesCas>): {
   root: HTMLElement;
   init(): void;
@@ -37,10 +89,15 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
   const warning = document.createElement("p");
   warning.className = "muted rules-intro";
   warning.textContent = "放弃本地修改不会撤回已发出的请求";
+  const preview = document.createElement("p");
+  preview.className = "muted rules-preview";
+  preview.setAttribute("role", "status");
+  preview.setAttribute("aria-live", "polite");
+  preview.hidden = true;
   actions.append(refreshButton, addButton, saveButton, cancelButton, discardButton);
   const list = document.createElement("ul");
   list.className = "entry-list";
-  root.append(head, status, error, actions, warning, list);
+  root.append(head, status, error, actions, warning, preview, list);
 
   const dialog = document.createElement("dialog");
   dialog.className = "task-dialog rules-dialog";
@@ -323,6 +380,11 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
     cancelButton.hidden = !state.draft;
     discardButton.hidden = !state.draft && !state.needsReview;
     warning.hidden = !state.draft && !state.saving;
+    // A local diff of the draft against the read baseline. It describes only what will be handed
+    // over for the local slots; it cannot know whether the hub accepts it or which rules fire.
+    preview.hidden = !state.draft || !state.snapshot;
+    if (!preview.hidden)
+      preview.textContent = `${previewText(previewOf(state.snapshot!.entries, state.draft!.entries), state.draft!.entries.length)} 仅描述将提交的本机入口；不代表中台已接受，也不代表路由结果；非 local 规则不会被改动。`;
     // Refresh is always available: the controller queues it safely behind physical flights.
     refreshButton.disabled = false;
     for (const input of fields) input.disabled = state.saving;

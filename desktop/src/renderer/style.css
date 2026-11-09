@@ -831,6 +831,13 @@ main {
 .rules-error {
   margin: 10px 0 0;
 }
+.rules-preview {
+  font-size: 12px;
+  margin: 10px 0 0;
+}
+.rules-preview[hidden] {
+  display: none;
+}
 .rules-actions {
   display: flex;
   flex-wrap: wrap;
