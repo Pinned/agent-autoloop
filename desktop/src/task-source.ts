@@ -1,11 +1,10 @@
 import {
   DESKTOP_TASK_MESSAGES,
-  desktopTaskCreateOf,
+  taskOutcomeOf,
   desktopTaskEntriesOf,
   parseDesktopTaskInput,
   projectDesktopTaskEntries,
-  projectDesktopTaskResult,
-  type DesktopTaskCreateResponse,
+  type DesktopTaskOutcome,
   type DesktopTaskEntriesResponse,
   type DesktopTaskInput,
 } from "../../host/desktop-task-contract.ts";
@@ -35,11 +34,12 @@ export type TaskSourceOptions = {
   readConfig?: (home: string) => unknown;
   fetchImpl?: (input: string, init?: RequestInit) => Promise<Response>;
   timeoutMs?: number;
+  createSignal?: (timeoutMs: number) => AbortSignal;
 };
 
 export function createTaskSource(options: TaskSourceOptions): {
   entries(): Promise<DesktopTaskEntriesResponse>;
-  create(input: DesktopTaskInput): Promise<DesktopTaskCreateResponse>;
+  create(input: DesktopTaskInput, canSend?: () => boolean): Promise<DesktopTaskOutcome>;
   rules(): Promise<DesktopRulesGetResponse>;
   save(entries: DesktopRuleEntry[]): Promise<DesktopRulesSaveResponse>;
 } {
@@ -86,46 +86,39 @@ export function createTaskSource(options: TaskSourceOptions): {
         return desktopTaskEntriesOf({ version: 2, ok: false, error: { ...failure } });
       }
     },
-    async create(input: DesktopTaskInput) {
-      // The door's own limits, enforced before anything leaves this process.
-      parseDesktopTaskInput(input);
-      const gate = await endpoint();
-      if (gate === "unavailable")
-        return desktopTaskCreateOf({
-          version: 2,
-          ok: false,
-          error: { code: "unavailable", message: DESKTOP_TASK_MESSAGES.unavailable },
-        });
-      if (gate === "no-hub")
-        return desktopTaskCreateOf({
-          version: 2,
-          ok: false,
-          error: { code: "no-hub", message: DESKTOP_TASK_MESSAGES["no-hub"] },
-        });
-      if (gate === "error") return desktopTaskCreateOf({ version: 2, ok: false, error: { ...failure } });
+    async create(input: DesktopTaskInput, canSend: () => boolean = () => true) {
+      const notSent = () => taskOutcomeOf({ version: 3, outcome: "not-sent", message: DESKTOP_TASK_MESSAGES["not-sent"] });
+      const uncertain = () => taskOutcomeOf({ version: 3, outcome: "uncertain", message: DESKTOP_TASK_MESSAGES.uncertain });
+      let url: string;
+      let init: RequestInit;
+      let dispatch: typeof fetchImpl;
       try {
-        const response = await fetchImpl(`${gate.origin}/v1/ui/tasks`, {
+        const inputCopy = parseDesktopTaskInput(input);
+        const initial = options.getState();
+        if (initial.status !== "running" || initial.role !== "hub-worker" || !canSend()) return notSent();
+        const gate = parseHubEndpoint(readConfig(options.home));
+        if (typeof gate === "string") return notSent();
+        dispatch = fetchImpl;
+        url = `${gate.origin}/v1/ui/tasks`;
+        init = {
           method: "POST",
           headers: { authorization: `Bearer ${gate.owner}`, "content-type": "application/json" },
-          body: JSON.stringify(input),
-          signal: AbortSignal.timeout(timeoutMs),
-        });
-        const payload: unknown = await response.json().catch(() => null);
-        // A 400 is the door's own refusal text; it is the one message passed through verbatim.
-        if (!response.ok) {
-          if (response.status !== 400) return desktopTaskCreateOf({ version: 2, ok: false, error: { ...failure } });
-          const message =
-            typeof payload === "object" &&
-            payload !== null &&
-            typeof (payload as Record<string, unknown>).error === "string"
-              ? ((payload as Record<string, unknown>).error as string)
-              : DESKTOP_TASK_MESSAGES.error;
-          return desktopTaskCreateOf({ version: 2, ok: false, error: { code: "invalid", message } });
-        }
-        return desktopTaskCreateOf({ version: 2, ok: true, result: projectDesktopTaskResult(payload) });
-      } catch {
-        return desktopTaskCreateOf({ version: 2, ok: false, error: { ...failure } });
-      }
+          body: JSON.stringify(inputCopy),
+          signal: options.createSignal ? options.createSignal(timeoutMs) : AbortSignal.timeout(timeoutMs),
+        };
+        // Let already queued boundaries revoke the main lease before the final synchronous dispatch.
+        await Promise.resolve();
+        const latest = options.getState();
+        if (latest.status !== "running" || latest.role !== "hub-worker" || !canSend()) return notSent();
+      } catch { return notSent(); }
+      // No observer, accessor, or await between the last qualification and entering fetch.
+      // Entering fetch is not proof of non-ingestion, even when the callable throws synchronously.
+      try {
+        const response = await dispatch(url, init);
+        if (!response.ok) return uncertain();
+        const payload: unknown = await response.json();
+        return taskOutcomeOf({ version: 3, outcome: "accepted", receipt: { version: 2, ok: true, result: payload as never } });
+      } catch { return uncertain(); }
     },
     async rules() {
       const gate = await endpoint();

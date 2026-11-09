@@ -6,7 +6,7 @@ import type { DesktopRuntimeEvent, DesktopRuntimeResponse } from "../../host/des
 import type { DesktopTodayResponse } from "../../host/desktop-state-contract.ts";
 import type { DesktopTasksResponse } from "../../host/desktop-tasks-contract.ts";
 import type {
-  DesktopTaskCreateResponse,
+  DesktopTaskOutcome,
   DesktopTaskEntriesResponse,
   DesktopTaskInput,
 } from "../../host/desktop-task-contract.ts";
@@ -61,7 +61,7 @@ export interface DesktopBridge {
   /** The real rule entries the new-task panel offers, from the local hub while it runs. */
   taskEntries(): Promise<DesktopTaskEntriesResponse>;
   /** Create one task through the hub's own door; the input is checked again in main. */
-  taskCreate(input: DesktopTaskInput): Promise<DesktopTaskCreateResponse>;
+  taskCreate(input: DesktopTaskInput): Promise<DesktopTaskOutcome>;
   /** The whole entry list plus selectable agents, for the automation page's editor. */
   rulesGet(): Promise<DesktopRulesGetResponse>;
   /** Replace the whole entry list; the entries are checked before any request leaves main. */

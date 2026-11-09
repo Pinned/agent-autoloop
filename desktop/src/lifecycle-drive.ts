@@ -9,6 +9,7 @@
 // reaches either the renderer or this module.
 import { access } from "node:fs/promises";
 import { isAbsolute } from "node:path";
+import { parseDesktopTaskOutcome, type DesktopTaskResult } from "../../host/desktop-task-contract.ts";
 import { parseDesktopJoinInput, type DesktopJoinInput } from "../../host/desktop-setup-contract.ts";
 
 /** Console markers the external driver waits for; one per verified stage of the lifecycle. */
@@ -102,11 +103,16 @@ export function lifecycleHubRunScript(): string {
  * finishes, read today, then stop the runtime and wait for a clean stop. Every stage that fails
  * reports itself, so a timeout says which door never opened.
  */
+export function parseLifecycleTaskReceipt(value: unknown): DesktopTaskResult {
+  const created = parseDesktopTaskOutcome(value);
+  if (created.outcome !== "accepted") throw new Error("lifecycle-task-create-unconfirmed");
+  return created.receipt.result;
+}
+
 export function lifecycleHubBusinessScript(ruleCwd: string): string {
   const entry = JSON.stringify([
     { name: LIFECYCLE_RULE_NAME, types: [LIFECYCLE_TASK_TYPE], to: LIFECYCLE_AGENT_ID, cwd: ruleCwd },
   ]);
-  const ruleName = JSON.stringify(LIFECYCLE_RULE_NAME);
   const agentId = JSON.stringify(LIFECYCLE_AGENT_ID);
   const taskType = JSON.stringify(LIFECYCLE_TASK_TYPE);
   return `(async () => {
@@ -122,7 +128,16 @@ export function lifecycleHubBusinessScript(ruleCwd: string): string {
   const saved = await window.desktop.rulesPut(${entry});
   if (!saved.ok) return { stage: "rules", saved };
   const created = await window.desktop.taskCreate({ type: ${taskType}, summary: "业务生命周期冒烟", detail: "" });
-  if (!created.ok) return { stage: "create", created };
+  return { stage: "create", created, deadline };
+})()`;
+}
+
+export function lifecycleHubBusinessFinishScript(deadline: number): string {
+  if (!Number.isSafeInteger(deadline) || deadline < 0) throw new Error("lifecycle-invalid-deadline");
+  const ruleName = JSON.stringify(LIFECYCLE_RULE_NAME);
+  return `(async () => {
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const deadline = ${JSON.stringify(deadline)};
   let done = null;
   while (!done && Date.now() < deadline) {
     const tasks = await window.desktop.tasksGet();
@@ -141,7 +156,6 @@ export function lifecycleHubBusinessScript(ruleCwd: string): string {
   }
   return {
     stage: "ok",
-    routed: created.result.routed,
     summary: done.summary,
     todayReady: today.ok && today.state.kind === "ready",
     stopped,
@@ -210,23 +224,27 @@ export async function runLifecycleHubDrive(port: LifecycleDrivePort, ruleCwd: st
   if (run.running?.state?.status !== "running" || run.running?.state?.role !== "hub-worker")
     return port.abort("运行服务未在期限内达到 hub-worker 运行态");
   console.log(LIFECYCLE_MARKERS.hubRunning);
-  const business = (await port.evaluate(lifecycleHubBusinessScript(ruleCwd))) as {
+  const creation = (await port.evaluate(lifecycleHubBusinessScript(ruleCwd))) as { stage?: string; created?: unknown; deadline?: number };
+  if (creation.stage !== "create") return port.abort(`业务闭环未完成：${JSON.stringify(creation)}`);
+  let receipt: DesktopTaskResult;
+  try { receipt = parseLifecycleTaskReceipt(creation.created); }
+  catch { return port.abort("任务入队未确认"); }
+  if (!receipt.routed.includes(LIFECYCLE_RULE_NAME)) return port.abort("任务未被入口路由");
+  if (!Number.isSafeInteger(creation.deadline) || creation.deadline! < 0) return port.abort("业务期限无效");
+  const business = (await port.evaluate(lifecycleHubBusinessFinishScript(creation.deadline!))) as {
     stage?: string;
-    routed?: string[];
     summary?: string;
     todayReady?: boolean;
     stopped?: { state?: { status?: unknown; error?: unknown } } | null;
   };
   if (business.stage !== "ok") return port.abort(`业务闭环未完成：${JSON.stringify(business)}`);
-  if (!(business.routed ?? []).includes(LIFECYCLE_RULE_NAME))
-    return port.abort(`任务未被入口路由：${JSON.stringify(business.routed)}`);
   if (business.todayReady !== true) return port.abort("今天页数据未就绪");
   if (business.stopped?.state?.status !== "stopped" || business.stopped?.state?.error !== null)
     return port.abort("运行服务未安全停止");
   console.log(
     LIFECYCLE_MARKERS.hubOk +
       " " +
-      JSON.stringify({ routed: business.routed, summary: business.summary, todayReady: true }),
+      JSON.stringify({ routed: receipt.routed, summary: business.summary, todayReady: true }),
   );
   await port.requestQuit();
 }

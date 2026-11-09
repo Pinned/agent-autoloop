@@ -1,9 +1,9 @@
 import {
   DESKTOP_TASK_MESSAGES,
-  parseDesktopTaskCreateResponse,
+  parseDesktopTaskOutcome,
   parseDesktopTaskInput,
   parseDesktopTaskEntriesResponse,
-  type DesktopTaskCreateResponse,
+  type DesktopTaskOutcome,
   type DesktopTaskEntriesResponse,
   type DesktopTaskEntry,
   type DesktopTaskInput,
@@ -14,111 +14,105 @@ import type { DesktopBridge } from "../policy.ts";
 export type TaskBridge = Pick<DesktopBridge, "taskEntries" | "taskCreate">;
 export type TaskEntriesState =
   | { readonly kind: "loading" }
-  | { readonly kind: "unavailable" | "no-hub"; readonly message: string }
-  | { readonly kind: "error"; readonly message: string }
+  | { readonly kind: "unavailable" | "no-hub" | "error"; readonly message: string }
   | { readonly kind: "ready"; readonly entries: readonly DesktopTaskEntry[] };
 export type TaskSubmitState =
-  | { readonly kind: "idle" }
-  | { readonly kind: "busy" }
+  | { readonly kind: "idle" | "busy" }
   | { readonly kind: "done"; readonly result: DesktopTaskResult }
-  | { readonly kind: "failed"; readonly message: string };
+  | { readonly kind: "failed" | "not-sent" | "rejected" | "uncertain"; readonly message: string };
+export type TaskDraft = Readonly<{ entry: string; pattern: string; concrete: string; summary: string; detail: string }>;
+type TaskOperation = Readonly<{ input: Readonly<DesktopTaskInput>; draft: TaskDraft }>;
 
-/**
- * The new-task panel's data half: entry list and submission. Reads and writes both degrade to
- * fixed text — an invalid result costs one dialog, never unvalidated data — and each operation
- * is single-flight so a double click never double-creates a task.
- */
-export function createRendererTask(bridge: TaskBridge, onChange: () => void) {
+/** One bounded operation record. A hidden dialog is not cancellation or evidence of non-ingestion. */
+export function createRendererTask(bridge: TaskBridge, onChange: () => void, gate: () => boolean = () => true) {
   let entries: TaskEntriesState = Object.freeze({ kind: "loading" });
   let submit: TaskSubmitState = Object.freeze({ kind: "idle" });
   let entriesFlight = false;
-  let submitFlight = false;
-
-  function notify() {
-    // Rendering is not part of the bridge transaction, even if a listener throws.
-    try {
-      onChange();
-    } catch {
-      // A later render rebuilds the panel from the authoritative state.
-    }
-  }
+  let operation: TaskOperation | null = null;
+  let flight: TaskOperation | null = null;
+  let checkingEligibility = false;
+  let gateRevision = 0;
+  const eligible = () => {
+    if (checkingEligibility) return false;
+    checkingEligibility = true;
+    const before = gateRevision;
+    try { const allowed = gate() === true; return allowed && before === gateRevision; } catch { return false; }
+    finally { checkingEligibility = false; }
+  };
+  const terminal = () => submit.kind === "done" || submit.kind === "not-sent" || submit.kind === "rejected";
+  function notify() { try { onChange(); } catch { /* Rendering cannot settle or cancel an operation. */ } }
   function finishEntries(value: unknown, rejected: boolean) {
     entriesFlight = false;
     let response: DesktopTaskEntriesResponse | null = null;
-    if (!rejected) {
-      try {
-        response = parseDesktopTaskEntriesResponse(value);
-      } catch {
-        // Malformed results are display failures, never unvalidated data.
-      }
-    }
-    if (response && response.ok)
-      entries = Object.freeze({ kind: "ready", entries: Object.freeze(response.data.entries) });
+    if (!rejected) { try { response = parseDesktopTaskEntriesResponse(value); } catch { /* Fixed display error. */ } }
+    if (response?.ok) entries = Object.freeze({ kind: "ready", entries: Object.freeze(response.data.entries) });
     else if (response) entries = Object.freeze({ kind: response.error.code, message: response.error.message });
     else entries = Object.freeze({ kind: "error", message: DESKTOP_TASK_MESSAGES.entryLoadFailed });
     notify();
   }
-  function finishSubmit(value: unknown, rejected: boolean) {
-    submitFlight = false;
-    let response: DesktopTaskCreateResponse | null = null;
-    if (!rejected) {
-      try {
-        response = parseDesktopTaskCreateResponse(value);
-      } catch {
-        // Malformed results are display failures, never unvalidated data.
-      }
-    }
-    if (response && response.ok) submit = Object.freeze({ kind: "done", result: Object.freeze(response.result) });
-    else if (response) submit = Object.freeze({ kind: "failed", message: response.error.message });
-    else submit = Object.freeze({ kind: "failed", message: DESKTOP_TASK_MESSAGES.error });
+  function finishSubmit(token: TaskOperation, value: unknown, rejected: boolean) {
+    if (flight !== token || operation !== token) return;
+    let response: DesktopTaskOutcome | null = null;
+    if (!rejected) { try { response = parseDesktopTaskOutcome(value); } catch { /* Old/damaged replies cannot prove non-ingestion. */ } }
+    if (flight !== token || operation !== token) return;
+    flight = null;
+    if (response?.outcome === "accepted") {
+      const result = Object.freeze({ ...response.receipt.result, routed: Object.freeze(response.receipt.result.routed) }) as unknown as DesktopTaskResult;
+      submit = Object.freeze({ kind: "done", result });
+    } else if (response) submit = Object.freeze({ kind: response.outcome, message: response.message });
+    else submit = Object.freeze({ kind: "uncertain", message: DESKTOP_TASK_MESSAGES.uncertain });
     notify();
   }
-
   return {
-    get entriesState(): TaskEntriesState {
-      return entries;
+    get entriesState(): TaskEntriesState { return entries; },
+    get submitState(): TaskSubmitState { return submit; },
+    get operation(): TaskOperation | null { return operation; },
+    get busy(): boolean { return entriesFlight || flight !== null; },
+    get canSubmit(): boolean { return operation === null && eligible() && operation === null; },
+    get canBeginAnother(): boolean {
+      const token = operation;
+      return token !== null && flight === null && terminal() && eligible() && operation === token && flight === null && terminal();
     },
-    get submitState(): TaskSubmitState {
-      return submit;
-    },
-    get busy(): boolean {
-      return entriesFlight || submitFlight;
-    },
-    /** Opening the panel (re)reads the entries; concurrent opens collapse into one call. */
+    gateChanged(): void { gateRevision++; notify(); },
     loadEntries(): void {
-      if (entriesFlight) return;
+      if (entriesFlight || operation !== null) return;
       entriesFlight = true;
-      void Promise.resolve(bridge.taskEntries()).then(
-        (value) => finishEntries(value, false),
-        () => finishEntries(undefined, true),
-      );
+      try { void Promise.resolve(bridge.taskEntries()).then(value => finishEntries(value, false), () => finishEntries(undefined, true)); }
+      catch { finishEntries(undefined, true); }
     },
-    /** Submitting is single-flight: a double click can never double-create a task. */
-    submitTask(input: DesktopTaskInput): void {
-      if (submitFlight) return;
-      if (submit.kind === "done") return;
-      try {
-        input = parseDesktopTaskInput(input);
-      } catch {
-        submit = Object.freeze({
-          kind: "failed",
-          message: "请选择或填写具体事件类型，并填写合规标题；不能提交通配符。",
-        });
-        notify();
-        return;
+    submitTask(raw: DesktopTaskInput, draft?: TaskDraft): void {
+      if (operation !== null) return;
+      let input: DesktopTaskInput;
+      try { input = parseDesktopTaskInput(raw); }
+      catch {
+        submit = Object.freeze({ kind: "failed", message: "请选择或填写具体事件类型，并填写合规标题；不能提交通配符。" });
+        notify(); return;
       }
-      submitFlight = true;
-      submit = Object.freeze({ kind: "busy" });
+      if (!eligible() || operation !== null) return;
+      const token: TaskOperation = Object.freeze({
+        input: Object.freeze(input),
+        draft: Object.freeze({ entry: draft?.entry ?? "", pattern: draft?.pattern ?? input.type,
+          concrete: draft?.concrete ?? "", summary: input.summary, detail: input.detail }),
+      });
+      if (operation !== null || !eligible() || operation !== null) return;
+      operation = token; flight = token; submit = Object.freeze({ kind: "busy" });
       notify();
-      void Promise.resolve(bridge.taskCreate(input)).then(
-        (value) => finishSubmit(value, false),
-        () => finishSubmit(undefined, true),
-      );
+      if (flight !== token || operation !== token) return;
+      const allowed = eligible();
+      if (flight !== token || operation !== token) return;
+      if (!allowed) {
+        flight = null; submit = Object.freeze({ kind: "not-sent", message: DESKTOP_TASK_MESSAGES["not-sent"] });
+        notify(); return;
+      }
+      try { void Promise.resolve(bridge.taskCreate(token.input)).then(value => finishSubmit(token, value, false), () => finishSubmit(token, undefined, true)); }
+      catch { finishSubmit(token, undefined, true); }
     },
-    /** A closed panel forgets the last submission but keeps the loaded entries. */
+    /** Explicit 'another task' only; close/open never calls this. */
     reset(): void {
-      submit = Object.freeze({ kind: "idle" });
-      notify();
+      const token = operation;
+      if (!token || flight || !terminal() || !eligible()) return;
+      if (operation !== token || flight || !terminal()) return;
+      operation = null; submit = Object.freeze({ kind: "idle" }); notify();
     },
   };
 }

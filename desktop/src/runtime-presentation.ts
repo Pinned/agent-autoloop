@@ -28,6 +28,38 @@ export function createRuntimePresentation(options: {
   let reported = false;
   let publishing = false;
   let pendingPush = false;
+  // Display generations are not task validity: ordinary pushes must not cancel a valid lease.
+  const taskLeases = new Set<object>();
+  let taskEpoch = 0;
+  let checkingTasks = false;
+  function revokeTaskLeases() {
+    taskEpoch++;
+    taskLeases.clear();
+  }
+  function taskQualified(): boolean {
+    if (checkingTasks) { revokeTaskLeases(); return false; }
+    const epoch = taskEpoch;
+    const targetDocument = document;
+    checkingTasks = true;
+    try {
+      const state = options.read();
+      const supplied = options.gates();
+      const status = state.status;
+      const role = state.role;
+      const phase = supplied.phase;
+      const busy = supplied.busy;
+      const blocked = supplied.blocked;
+      const quitting = supplied.quitting;
+      const valid = epoch === taskEpoch && document === targetDocument && !!document && documentAlive &&
+        transitions.size === 0 && phase === "idle" && !busy && !blocked && !quitting &&
+        status === "running" && role === "hub-worker";
+      if (!valid) revokeTaskLeases();
+      return valid;
+    } catch {
+      revokeTaskLeases();
+      return false;
+    } finally { checkingTasks = false; }
+  }
 
   function diagnose() {
     if (reported) return;
@@ -68,6 +100,7 @@ export function createRuntimePresentation(options: {
     return before === generation ? result : desktopRuntimeSnapshotOf({ ...result, status: "unavailable", role: null });
   }
   function publish() {
+    if (taskLeases.size > 0 || checkingTasks) taskQualified();
     generation++;
     pendingPush = true;
     if (publishing) return;
@@ -91,6 +124,7 @@ export function createRuntimePresentation(options: {
   }
   function changed() {
     generation++;
+    if (taskLeases.size > 0 || checkingTasks) taskQualified();
     try { options.refresh(); } catch { diagnose(); }
     publish();
   }
@@ -99,14 +133,27 @@ export function createRuntimePresentation(options: {
     snapshot,
     publish,
     canRun: (operation: Operation) => admission(operation) === undefined,
+    acquireTaskLease(): object | undefined {
+      if (!taskQualified()) return undefined;
+      const lease = Object.freeze({});
+      taskLeases.add(lease);
+      return lease;
+    },
+    checkTaskLease(lease: object): boolean {
+      if (!taskLeases.has(lease)) return false;
+      return taskQualified() && taskLeases.has(lease);
+    },
+    releaseTaskLease(lease: object): void { taskLeases.delete(lease); },
     beginDocument(): object {
       const token = Object.freeze({});
+      revokeTaskLeases();
       document = token;
       documentAlive = false;
       changed();
       return token;
     },
     invalidateDocument() {
+      revokeTaskLeases();
       document = undefined;
       documentAlive = false;
       changed();
@@ -120,6 +167,7 @@ export function createRuntimePresentation(options: {
     changed,
     async observe<T>(callback: () => T | Promise<T>): Promise<T> {
       // Observe the actual task's lifetime without owning its setup gates or interpreting its receipt.
+      revokeTaskLeases();
       try {
         const flight = callback();
         changed();
@@ -133,6 +181,7 @@ export function createRuntimePresentation(options: {
       if (refusal) return desktopRuntimeFailure(refusal);
       const token = Object.freeze({});
       transitions.set(token, operation);
+      revokeTaskLeases();
       generation++;
       try {
         // Give the business controller its synchronous intent before any external presentation observer.

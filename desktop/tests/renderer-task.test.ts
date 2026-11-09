@@ -1,8 +1,9 @@
+// Prevent duplicate submit, false non-ingestion from old/damaged replies, and lost entry/reset state.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   DESKTOP_TASK_MESSAGES,
-  type DesktopTaskCreateResponse,
+  type DesktopTaskOutcome,
   type DesktopTaskEntriesResponse,
   type DesktopTaskEntry,
 } from "../../host/desktop-task-contract.ts";
@@ -33,10 +34,10 @@ const entriesReady = (entries: DesktopTaskEntry[]): DesktopTaskEntriesResponse =
   ok: true,
   data: { entries },
 });
-const createOk = (overrides: Record<string, unknown> = {}): DesktopTaskCreateResponse => ({
-  version: 2,
-  ok: true,
-  result: { event: 1, duplicate: false, routed: ["值班规则"], ...overrides },
+const createOk = (overrides: Record<string, unknown> = {}): DesktopTaskOutcome => ({
+  version: 3,
+  outcome: "accepted",
+  receipt: { version: 2, ok: true, result: { event: 1, duplicate: false, routed: ["值班规则"], ...overrides } },
 });
 
 function fixture() {
@@ -57,7 +58,7 @@ function fixture() {
       createCalls.push([input]);
       const gate = deferred<unknown>();
       createGates.push(gate);
-      return gate.promise as Promise<DesktopTaskCreateResponse>;
+      return gate.promise as Promise<DesktopTaskOutcome>;
     },
   };
   const controller = createRendererTask(bridge, () => {
@@ -173,35 +174,34 @@ test("submitting is single-flight and never resubmits after a done result", asyn
   assert.equal(f.createCalls(), 1);
 });
 
-test("a create rejection shows the door's text, other failures the fixed text", async () => {
+test("trusted v3 rejection has fixed text; old/damaged replies and bridge failures remain uncertain", async () => {
   const door = fixture();
   door.controller.submitTask({ type: "task.ops", summary: "x", detail: "" });
-  door.answerCreate({
-    version: 2,
-    ok: false,
-    error: { code: "invalid", message: "没有任务入口接 task.ops，先在入口设置里加一个。" },
-  });
+  door.answerCreate({ version: 3, outcome: "rejected", message: DESKTOP_TASK_MESSAGES.rejected });
   await flush();
   assert.deepEqual(door.controller.submitState, {
-    kind: "failed",
-    message: "没有任务入口接 task.ops，先在入口设置里加一个。",
+    kind: "rejected",
+    message: DESKTOP_TASK_MESSAGES.rejected,
   });
   for (const poison of [
     null,
     { version: 2, ok: true, result: { event: "ui-x", duplicate: "yes", routed: [] } },
     { version: 2, ok: false, error: { code: "error", message: "自造文案" } },
+    { version: 2, ok: true, result: { event: 1, duplicate: false, routed: ["值班规则"] } },
+    { version: 3, outcome: "accepted", receipt: { version: 2, ok: true, result: { event: "ui-x", duplicate: "yes", routed: [] } } },
+    { version: 3, outcome: "rejected", message: "自造文案" },
   ]) {
     const f = fixture();
     f.controller.submitTask({ type: "task.ops", summary: "x", detail: "" });
     f.answerCreate(poison);
     await flush();
-    assert.deepEqual(f.controller.submitState, { kind: "failed", message: DESKTOP_TASK_MESSAGES.error });
+    assert.deepEqual(f.controller.submitState, { kind: "uncertain", message: DESKTOP_TASK_MESSAGES.uncertain });
   }
   const rejected = fixture();
   rejected.controller.submitTask({ type: "task.ops", summary: "x", detail: "" });
   rejected.failCreate(new Error("bridge failure"));
   await flush();
-  assert.deepEqual(rejected.controller.submitState, { kind: "failed", message: DESKTOP_TASK_MESSAGES.error });
+  assert.deepEqual(rejected.controller.submitState, { kind: "uncertain", message: DESKTOP_TASK_MESSAGES.uncertain });
 });
 
 test("reset returns to idle but keeps the loaded entries", async () => {
