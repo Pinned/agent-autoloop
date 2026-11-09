@@ -6,6 +6,7 @@ import { dirname } from "node:path";
 import { RULES_FILE } from "./home.ts";
 import { parseRules } from "../protocol/rules.ts";
 import { InputError } from "../kernel/errors.ts";
+import { runSynchronousHook } from "./rules-baseline.ts";
 import { writeLocalEntriesWith, type LocalEntriesWriteIO } from "./local-entries.ts";
 export { takesLocal } from "./local-entries.ts";
 export type { Entry } from "./local-entries.ts";
@@ -24,15 +25,27 @@ export type Section =
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-function readWhole(): Record<string, unknown> {
-  const whole: unknown = JSON.parse(readFileSync(RULES_FILE, "utf8"));
+function readText(): string {
+  return readFileSync(RULES_FILE, "utf8");
+}
+
+function parseWhole(text: string): Record<string, unknown> {
+  const whole: unknown = JSON.parse(text);
   if (!isObject(whole)) throw new InputError("rules.json 不是一个对象");
   return whole;
 }
 
+export type SectionWriteHooks = {
+  /** Runs on the same bytes the merge will use, so a stale writer is stopped before it builds its replacement. */
+  beforeMerge?(text: string): undefined;
+  afterRename?(): undefined;
+};
+
 /** One section swapped in, the rest kept, the whole checked, then the file atomically replaced. */
-export function writeSection(section: Section) {
-  const whole = readWhole();
+export function writeSection(section: Section, hooks: SectionWriteHooks = {}) {
+  const text = readText();
+  if (hooks.beforeMerge) runSynchronousHook(() => hooks.beforeMerge!(text));
+  const whole = parseWhole(text);
   if (!Array.isArray(whole.rules) || !isObject(whole.sources)) {
     throw new InputError("rules.json 缺少 rules 或 sources，先把它修好再用网页改");
   }
@@ -60,6 +73,7 @@ export function writeSection(section: Section) {
       break;
   }
   commitWhole(whole);
+  if (hooks.afterRename) runSynchronousHook(() => hooks.afterRename!());
 }
 
 function commitWhole(whole: Record<string, unknown>) {

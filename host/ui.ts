@@ -235,7 +235,7 @@ function checkedSettings(given: unknown): Section {
   return { kind: "settings", timezone, askFirst: wordsOf(settings.askFirst ?? [], "askFirst") };
 }
 
-/** A section as the page sends it, checked entry by entry; the whole-file check still has the last word on disk. */
+/** A section body as the page sends it, checked entry by entry; the whole-file check still has the last word on disk. */
 function checkedSection(kind: string, body: unknown): Section {
   if (kind === "settings") return checkedSettings(body);
   if (!["agents", "sources", "channels", "rules", "elsewhere"].includes(kind)) throw new NotFound("没有这一段");
@@ -280,7 +280,26 @@ function wholeConfig() {
     // The schedule is the kernel's, not the owner's; showing it would invite edits the door would only refuse.
     workerIds: hub.workers(),
     seq: hub.getView().seq,
+    // The version a save must name; it is the applied rule version, not the log's sequence number.
+    rulesSeq: hub.getRulesBaseline().rulesSeq,
   };
+}
+
+/**
+ * A section body, optionally carrying the rule version it was read at. The wrapper is recognised only when the
+ * second value is a positive integer, which no section body could ever be (they are objects or lists), so an old
+ * client's bare body — including one that happens to have ids named "section" and "rulesSeq" — still means itself.
+ */
+function sectionBody(given: unknown): { body: unknown; rulesSeq?: number } {
+  if (
+    isObject(given) &&
+    Object.keys(given).length === 2 &&
+    Object.hasOwn(given, "section") &&
+    Number.isSafeInteger(given.rulesSeq) &&
+    (given.rulesSeq as number) >= 1
+  )
+    return { body: given.section, rulesSeq: given.rulesSeq as number };
+  return { body: given };
 }
 
 async function readBody(request: Request): Promise<unknown> {
@@ -303,10 +322,29 @@ async function api(request: Request): Promise<Response> {
     return Response.json(wholeConfig(), { headers: HEADERS });
   const section = /^\/v1\/ui\/config\/([a-z]+)$/.exec(pathname);
   if (section && request.method === "PUT") {
-    const part = checkedSection(section[1], await readBody(request));
-    writeSection(part);
+    const { body, rulesSeq } = sectionBody(await readBody(request));
+    const part = checkedSection(section[1], body);
+    // A bare body keeps the old last-writer-wins door; a body that names its version is held to the same applied
+    // baseline the rules door uses, so two editors racing on different sections cannot silently overwrite each other.
+    const baseline = rulesSeq === undefined ? undefined : hub.getRulesBaseline();
+    if (baseline && (rulesSeq !== baseline.rulesSeq || !baseline.declarationHash))
+      throw new Conflict("规则已变化，请重新读取后再保存");
+    writeSection(part, {
+      ...(baseline && {
+        beforeMerge: (text: string) => assertRulesBaseline(text, rulesSeq as number, baseline, hub.parseRules),
+      }),
+      afterRename: () => {
+        const result = hub.reloadRules(RULES_FILE, true);
+        if (result.problem) throw new InputError(result.problem);
+      },
+    });
     hub.tick();
-    return Response.json({ ok: true }, { headers: HEADERS });
+    // Reply with the version the next save must name, so a client can keep editing without another whole read.
+    const latest = hub.getView();
+    return Response.json(
+      { ok: true, seq: latest.seq, rulesSeq: hub.getRulesBaseline(latest).rulesSeq },
+      { headers: HEADERS },
+    );
   }
   if (pathname === "/v1/ui/rules" && request.method === "PUT") {
     let body: unknown;

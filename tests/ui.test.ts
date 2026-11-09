@@ -364,3 +364,67 @@ test("a section the console does not know is a 404, and the door still wants the
   assert.equal((await call("/v1/ui/config", { key: "" })).status, 401);
   assert.equal((await call("/v1/ui/config/agents", { key: "nope", method: "PUT", body: {} })).status, 401);
 });
+
+// ---- Two editors, one file: a save may carry the rule version it read ----
+
+test("a section save names its version, and a stale version is refused without touching the disk", async () => {
+  const shown = await (await call("/v1/ui/config")).json();
+  assert.ok(Number.isSafeInteger(shown.rulesSeq) && shown.rulesSeq >= 1);
+  const before = readFileSync(rulesFile, "utf8");
+
+  // Another editor saves first: the section body is the same, only the version differs.
+  const first = await call("/v1/ui/config/settings", {
+    method: "PUT",
+    body: { section: { timezone: "Asia/Tokyo", askFirst: ["删数据"] }, rulesSeq: shown.rulesSeq },
+  });
+  assert.equal(first.status, 200);
+  const receipt = await first.json();
+  assert.equal(receipt.ok, true);
+  assert.ok(receipt.rulesSeq > shown.rulesSeq);
+  assert.equal(onDisk().timezone, "Asia/Tokyo");
+
+  // The second editor still holds the version it read, and its agents change must not land.
+  const stale = await call("/v1/ui/config/agents", {
+    method: "PUT",
+    body: {
+      section: { ...shown.agents, a2: { ...shown.agents.a2, name: "乙（改）" } },
+      rulesSeq: shown.rulesSeq,
+    },
+  });
+  assert.equal(stale.status, 409);
+  assert.match((await stale.json()).error, /重新读取/);
+  assert.equal(onDisk().agents.a2.name, shown.agents.a2.name);
+  assert.equal(onDisk().timezone, "Asia/Tokyo");
+
+  // With the receipt's version the same edit lands.
+  const retried = await call("/v1/ui/config/agents", {
+    method: "PUT",
+    body: {
+      section: { ...shown.agents, a2: { ...shown.agents.a2, name: "乙（改）" } },
+      rulesSeq: receipt.rulesSeq,
+    },
+  });
+  assert.equal(retried.status, 200);
+  assert.equal(onDisk().agents.a2.name, "乙（改）");
+  assert.notEqual(readFileSync(rulesFile, "utf8"), before);
+});
+
+test("a bare body keeps the old door, and a lookalike wrapper is not mistaken for a version", async () => {
+  const shown = await (await call("/v1/ui/config")).json();
+  // Bare bodies are what the web console still sends; they keep last-writer-wins.
+  const bare = await call("/v1/ui/config/settings", {
+    method: "PUT",
+    body: { timezone: "Asia/Shanghai", askFirst: shown.askFirst },
+  });
+  assert.equal(bare.status, 200);
+  assert.equal(onDisk().timezone, "Asia/Shanghai");
+
+  // A channel or source literally named "section"/"rulesSeq" is still a body: the wrapper is only recognised
+  // when rulesSeq is a positive integer, which no section body could be.
+  const lookalike = await call("/v1/ui/config/agents", {
+    method: "PUT",
+    body: { section: { name: "甲", worker: "w1", use: "claude" }, rulesSeq: "不是版本" },
+  });
+  assert.equal(lookalike.status, 400);
+  assert.match((await lookalike.json()).error, /不认识的字段|Agent/);
+});
