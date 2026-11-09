@@ -1,11 +1,33 @@
 import { desktopRuntimeStatusText } from "../../../host/desktop-run-contract.ts";
+import type { DesktopLaunchStatus } from "../../../host/desktop-launch-contract.ts";
 import type { createRendererRun } from "./run-controller.ts";
 
 type Controller = ReturnType<typeof createRendererRun>;
+/** Role words match the rest of the product: this computer is an execution machine, never a raw "worker". */
 const roleNames: Record<"hub-worker" | "worker", string> = {
-  "hub-worker": "中台＋本机 worker",
-  worker: "纯 worker",
+  "hub-worker": "中台＋执行机",
+  worker: "纯执行机",
 };
+/** The one honest sentence for each launch record. None of these claims anything is currently running. */
+function launchText(status: Readonly<DesktopLaunchStatus> | null): string {
+  if (!status) return "未确认";
+  switch (status.completion) {
+    case "complete":
+      return status.nextLaunch === "embedded"
+        ? "已授权，下次打开应用会启动本机中台与执行机"
+        : "已授权，下次打开应用会启动执行机";
+    case "prepared":
+      return "首次配置已保存，完成首次配置后才会生效";
+    case "legacy":
+      return "未授权，配置早于自动启动功能，需要手动启动";
+    case "first-run":
+      return "尚未完成首次配置";
+    case "recovery":
+      return "配置尚未完成，自动启动状态未知";
+    case "invalid":
+      return "自动启动状态无法确认";
+  }
+}
 const shortLabels: Record<string, string> = {
   stopped: "未启动",
   starting: "启动中",
@@ -33,7 +55,12 @@ export function mountRunCard(
   root: HTMLElement,
   control: Controller,
   openSetup: () => void,
-  setupMirror: { setupBusy(): boolean; setupLocked(): boolean },
+  setupMirror: {
+    setupBusy(): boolean;
+    setupLocked(): boolean;
+    // The launch record is a fact about configuration, not proof that anything is running.
+    launch?(): Readonly<DesktopLaunchStatus> | null;
+  },
 ) {
   const section = element("section", "", "panel run-panel");
   section.setAttribute("aria-labelledby", "run-title");
@@ -46,8 +73,19 @@ export function mountRunCard(
   statusText.setAttribute("role", "status");
   statusText.setAttribute("aria-live", "polite");
   line.append(badge, statusText);
-  const role = element("p", "", "muted run-role");
-  role.hidden = true;
+  // Facts are configuration/connection summary only. They never claim the runtime is online.
+  const facts = element("dl", "", "run-facts");
+  const fact = (label: string) => {
+    const row = element("div", "", "run-fact");
+    const term = element("dt", label);
+    const value = element("dd", "未确认");
+    row.append(term, value);
+    facts.append(row);
+    return value;
+  };
+  const roleValue = fact("本机角色");
+  const launchValue = fact("自动启动");
+  const syncValue = fact("离线待同步");
   const error = element("p", "", "run-error");
   error.setAttribute("role", "alert");
   error.hidden = true;
@@ -73,7 +111,9 @@ export function mountRunCard(
     start: element("p", "", "run-receipt run-receipt-start"),
     stop: element("p", "", "run-receipt run-receipt-stop"),
   };
-  section.append(title, line, role, admission, error, receipts.start, receipts.stop, actions, note);
+  const hint = element("p", "", "muted run-hint");
+  hint.hidden = true;
+  section.append(title, line, facts, hint, admission, error, receipts.start, receipts.stop, actions, note);
   root.append(section);
 
   function update() {
@@ -91,11 +131,14 @@ export function mountRunCard(
     start.disabled = true;
     stop.disabled = true;
     configure.disabled = true;
+    hint.hidden = true;
+    launchValue.textContent = launchText(setupMirror.launch?.() ?? null);
     if (state.kind === "loading") {
       badge.dataset.status = "loading";
       badge.textContent = shortLabels.loading;
       statusText.textContent = "正在读取本机运行状态。";
-      role.hidden = true;
+      roleValue.textContent = "读取中";
+      syncValue.textContent = "读取中";
       admission.hidden = true;
       error.hidden = true;
       return;
@@ -104,7 +147,8 @@ export function mountRunCard(
       badge.dataset.status = "unknown";
       badge.textContent = shortLabels.unknown;
       statusText.textContent = state.message;
-      role.hidden = true;
+      roleValue.textContent = "未确认";
+      syncValue.textContent = "未确认";
       admission.hidden = true;
       error.hidden = true;
       return;
@@ -113,12 +157,16 @@ export function mountRunCard(
     badge.dataset.status = snapshot.status;
     badge.textContent = shortLabels[snapshot.status] ?? snapshot.status;
     statusText.textContent = desktopRuntimeStatusText(snapshot);
-    role.hidden = snapshot.role === null;
-    if (snapshot.role) role.textContent = `本机角色：${roleNames[snapshot.role]}`;
+    roleValue.textContent = snapshot.role ? roleNames[snapshot.role] : "未确认";
+    syncValue.textContent = snapshot.pendingSync === null ? "未确认" : `${snapshot.pendingSync} 条`;
     admission.hidden = state.admission === null;
     if (state.admission) admission.textContent = state.admission;
     error.hidden = snapshot.error === null;
     if (snapshot.error) error.textContent = snapshot.error.message;
+    // Reconfiguration is not offered in the app: overwriting a configured machine is refused, so
+    // explain why the button is disabled instead of promising a wizard that will not open.
+    hint.hidden = snapshot.status === "unconfigured";
+    if (!hint.hidden) hint.textContent = "这台电脑已有配置，应用里不提供覆盖或切换角色。";
     configure.disabled = busy || snapshot.status !== "unconfigured";
     start.disabled =
       busy ||

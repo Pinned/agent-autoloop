@@ -463,10 +463,36 @@ main {
   background: var(--accent-bg);
   color: var(--blue);
 }
-.run-role,
+.run-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px 20px;
+  margin: 14px 0 0;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--border);
+}
+.run-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.run-fact dt {
+  font-size: 11px;
+  color: var(--muted);
+}
+.run-fact dd {
+  margin: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.run-hint,
 .run-admission {
   font-size: 12px;
   margin-top: 10px;
+}
+.run-hint {
+  color: var(--muted);
 }
 .run-admission {
   color: var(--muted);

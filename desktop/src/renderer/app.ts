@@ -102,6 +102,8 @@ const setup = createRendererSetup(window.desktop, () => {
   // Saving does not start a runtime. Completion only requests it; runtime is authoritative.
   if (setup.state.kind === "prepared" || setup.state.kind === "completed") run.refresh();
   if (setup.state.kind === "configured") run.refresh();
+  // The workers card's auto-start fact comes from the launch record, which can arrive later.
+  if (currentPage === "workers") runCard?.update();
   setupView?.render(false);
 });
 taskGate = () => run.state.kind === "ready" && run.state.snapshot.status === "running" &&
@@ -146,7 +148,7 @@ function updateRuntimeStatus() {
   status.textContent = desktopRuntimeStatusText(state.snapshot);
   status.dataset.status = state.snapshot.status;
   role.textContent =
-    state.snapshot.role === "hub-worker" ? "中台＋本机执行机" : state.snapshot.role === "worker" ? "纯执行机" : "";
+    state.snapshot.role === "hub-worker" ? "中台＋执行机" : state.snapshot.role === "worker" ? "纯执行机" : "";
 }
 function openSetup() {
   if (!setupView) setupView = mountSetupView(main, setup, () => render(currentPage));
@@ -253,6 +255,7 @@ function render(id: string, focus = true) {
     runCard = mountRunCard(host, run, openSetup, {
       setupBusy: () => setup.busy,
       setupLocked: () => setup.state.kind === "unknown-locked",
+      launch: () => setup.launch,
     });
     // The hub's own heartbeat and distribution; there is nothing to probe from here.
     const presence = document.createElement("div");

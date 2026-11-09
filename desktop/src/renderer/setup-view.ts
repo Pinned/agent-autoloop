@@ -2,7 +2,7 @@ import type { createRendererSetup } from "./setup-controller.ts";
 import { parseDesktopJoinInput } from "../../../host/desktop-setup-contract.ts";
 
 type Controller = ReturnType<typeof createRendererSetup>;
-const roles = { "hub-worker": "中台＋执行机", worker: "执行机" };
+const roles = { "hub-worker": "中台＋执行机", worker: "纯执行机" };
 
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, text = "", className = "") {
   const node = document.createElement(tag);

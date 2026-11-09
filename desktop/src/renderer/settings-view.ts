@@ -424,11 +424,12 @@ export function mountSettingsView(controller: Settings, options: SettingsViewOpt
   function connectionTab(): HTMLElement {
     const wrap = document.createElement("div");
     const role = options.role();
+    const legacy = options.legacyConfig();
     const note = document.createElement("p");
     note.className = "muted";
-    // A legacy record has a role but no automatic-start authorization; say so before offering a rewrite.
-    note.textContent = options.legacyConfig()
-      ? "此电脑已有旧配置，但没有自动启动授权。请先重新确认身份并请求启动；重新配置前不会覆盖旧配置。"
+    // A legacy record has a role but no automatic-start authorization; the app cannot grant one.
+    note.textContent = legacy
+      ? "这台电脑有旧配置，但没有自动启动授权。打开应用不会自动启动它：请先到执行机页手动启动。要改成自动启动，需要移除本机配置数据后重新完成首次配置。"
       : role === "worker"
         ? "此电脑是纯执行机：Agent、来源与通知通道由中台管理，本页只能查看连接方式。"
         : role === "hub-worker"
@@ -436,7 +437,8 @@ export function mountSettingsView(controller: Settings, options: SettingsViewOpt
           : "尚未确认此电脑的角色；启动本机运行服务后才能修改配置。";
     const buttonRow = document.createElement("div");
     buttonRow.className = "setup-actions";
-    const setup = button("重新配置此电脑的身份", true);
+    // The wizard only reports the existing configuration; it never overwrites one from here.
+    const setup = button("查看本机配置状态", true);
     setup.addEventListener("click", () => options.openSetup());
     buttonRow.append(setup);
     const credentials = document.createElement("div");
