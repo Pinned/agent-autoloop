@@ -43,8 +43,93 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
   const list = document.createElement("ul");
   list.className = "run-list";
   root.append(head, status, error, actions, list);
-  /** Which runs the user has unfolded; the rest show only their headline. */
-  const unfolded = new Set<number>();
+  function textLine(parent: HTMLElement, value: string) {
+    const line = document.createElement("p");
+    line.textContent = value;
+    parent.append(line);
+  }
+  function detailNode(runId: number) {
+    const node = document.createElement("div");
+    node.className = "run-detail";
+    const state = controller.detailState;
+    if (state.kind === "idle" || state.runId !== runId) return node;
+    if (state.kind === "loading") { textLine(node, "正在读取详情。"); return node; }
+    if (state.kind === "failed") {
+      textLine(node, state.message);
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.textContent = "重试详情";
+      retry.addEventListener("click", () => controller.openDetail(runId));
+      node.append(retry);
+      return node;
+    }
+    const data = state.data;
+    textLine(node, "详情从首批开始，按组手动加载；不是逐次尝试的完整审计记录。");
+    function sectionControl(section: "events" | "cards" | "related", label: string) {
+      const state = controller.sectionState[section];
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "detail-more";
+      button.disabled = state.kind === "loading" || state.kind === "end" || state.kind === "capped" ||
+        (section === "related" && data.association.kind === "unavailable");
+      button.textContent = state.kind === "loading" ? `正在读取${label}……` : state.kind === "failed" ? `重试${label}` : `加载更多${label}`;
+      button.addEventListener("click", () => {
+        // A detached button from a closed/replaced detail cannot request pages in a new run.
+        if (controller.detailState === stateSnapshot) controller.loadDetailMore(section);
+      });
+      if (state.kind === "failed") textLine(node, state.message);
+      else if (state.kind === "capped") textLine(node, "已达本次详情显示上限，仍有未显示数据");
+      else if (state.kind === "end" && !(section === "related" && data.association.kind === "unavailable")) textLine(node, "已显示本组全部数据。");
+      else if (state.kind === "loading") textLine(node, `正在读取${label}。`);
+      else if (state.kind === "idle") textLine(node, `${label}还有更多。`);
+      node.append(button);
+    }
+    const stateSnapshot = state;
+    const run = data.run;
+    const stateText = { queued: "排队中", claimed: "执行中", unknown: "待确认", done: "已完成", nothing: "无需处理", failed: "失败", cancelled: "已取消" };
+    textLine(node, `执行 #${run.id} · ${run.rule} → ${run.agent} · ${stateText[run.state]} · 尝试 ${run.attempts} 次`);
+    if (run.summary) textLine(node, run.summary);
+    if (run.error) textLine(node, run.error);
+    const times = [run.createdAt && `安排 ${when(run.createdAt)}`, run.claimedAt && `领取 ${when(run.claimedAt)}`,
+      run.finishedAt && `结束 ${when(run.finishedAt)}`, run.notBefore && `下次不早于 ${when(run.notBefore)}`].filter(Boolean);
+    if (times.length) textLine(node, times.join(" · "));
+    if (run.usage) textLine(node, [
+      run.usage.input !== null && `输入 ${run.usage.input}`, run.usage.output !== null && `输出 ${run.usage.output}`,
+      run.usage.cached !== null && `缓存 ${run.usage.cached}`, run.usage.cost !== null && `花费 ${run.usage.cost}`,
+    ].filter(Boolean).join(" / "));
+    if (run.truncated) textLine(node, "部分文字已截断。");
+    textLine(node, "触发事件");
+    if (!data.events.items.length) textLine(node, "本批没有触发事件。");
+    for (const event of data.events.items) {
+      textLine(node, [event.source, event.type, event.subject, event.summary, event.detail].filter(Boolean).join(" · "));
+      if (event.truncated) textLine(node, "部分事件文字已截断。");
+    }
+    sectionControl("events", "触发事件");
+    textLine(node, "相关卡片");
+    if (!data.cards.items.length) textLine(node, "本批没有相关卡片。");
+    for (const card of data.cards.items) {
+      textLine(node, `${card.kind === "ask" ? "提问" : "通知"} · ${card.title}`);
+      textLine(node, card.text);
+      card.options.forEach((option, index) => textLine(node, `${index + 1}. ${option}`));
+      if (card.recommend !== null) textLine(node, `建议选项：${card.recommend + 1}`);
+      if (card.choice !== null) textLine(node, `已选选项：${card.choice + 1}`);
+      if (card.answer !== null) textLine(node, `回答：${card.answer}`);
+      if (card.result !== null) textLine(node, `结果：${card.result}`);
+      if (card.truncated) textLine(node, "部分卡片文字已截断。");
+    }
+    sectionControl("cards", "相关卡片");
+    textLine(node, "关联执行记录");
+    if (data.association.kind === "unavailable") textLine(node, "关联信息不可用。");
+    else {
+      if (!data.relatedRuns.items.length) textLine(node, "本批没有关联执行记录。");
+      for (const related of data.relatedRuns.items) {
+        textLine(node, `执行 #${related.id} · ${related.rule} → ${related.agent} · ${related.summary}`);
+        if (related.truncated) textLine(node, "部分关联记录文字已截断。");
+      }
+    }
+    sectionControl("related", "关联执行记录");
+    return node;
+  }
 
   function when(stamp: string | null): string {
     if (!stamp) return "";
@@ -60,6 +145,8 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
     const top = document.createElement("button");
     top.type = "button";
     top.className = "run-head";
+    top.setAttribute("aria-expanded", String(expanded));
+    top.setAttribute("aria-label", `${expanded ? "收起" : "查看"}执行 #${run.id} 详情`);
     const badge = document.createElement("span");
     badge.className = `run-state ${run.state}`;
     badge.textContent = DESKTOP_TASKS_STATUS_MESSAGES[run.state];
@@ -70,8 +157,8 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
     to.textContent = `→ ${run.agent}`;
     top.append(badge, name, to);
     top.addEventListener("click", () => {
-      if (unfolded.has(run.id)) unfolded.delete(run.id);
-      else unfolded.add(run.id);
+      if (controller.detailState.runId === run.id) controller.closeDetail();
+      else controller.openDetail(run.id);
       update();
     });
     const meta = document.createElement("div");
@@ -84,45 +171,7 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
     if (run.summary) parts.push(run.summary);
     meta.textContent = parts.join(" · ");
     item.append(top, meta);
-    if (expanded) {
-      const detail = document.createElement("div");
-      detail.className = "run-detail";
-      const events = document.createElement("ul");
-      events.className = "run-events";
-      for (const event of run.events) {
-        const line = document.createElement("li");
-        const words = [event.source, event.type, event.subject, event.summary].filter(Boolean);
-        line.textContent = words.join(" · ");
-        events.append(line);
-      }
-      if (run.events.length) detail.append(events);
-      const timeline = document.createElement("p");
-      timeline.className = "run-times muted";
-      const times: string[] = [];
-      const claimed = when(run.claimedAt);
-      if (claimed) times.push(`开始 ${claimed}`);
-      const finished = when(run.finishedAt);
-      if (finished) times.push(`结束 ${finished}`);
-      const later = when(run.notBefore);
-      if (later) times.push(`下次不早于 ${later}`);
-      if (run.usage) {
-        const shown = [
-          run.usage.input !== null ? `输入 ${run.usage.input}` : null,
-          run.usage.output !== null ? `输出 ${run.usage.output}` : null,
-          run.usage.cost !== null ? `花费 ${run.usage.cost}` : null,
-        ].filter(Boolean);
-        if (shown.length) times.push(shown.join(" / "));
-      }
-      timeline.textContent = times.join(" · ");
-      if (times.length) detail.append(timeline);
-      if (run.error) {
-        const failure = document.createElement("p");
-        failure.className = "setup-error";
-        failure.textContent = run.error;
-        detail.append(failure);
-      }
-      if (detail.childNodes.length) item.append(detail);
-    }
+    if (expanded) item.append(detailNode(run.id));
     return item;
   }
 
@@ -139,7 +188,7 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
       status.hidden = false;
     }
     const runs = state.kind === "ready" ? state.runs : [];
-    list.replaceChildren(...runs.map((run) => runNode(run, unfolded.has(run.id))));
+    list.replaceChildren(...runs.map((run) => runNode(run, controller.detailState.runId === run.id)));
     // Loading more is offered exactly when the hub said older runs exist.
     moreButton.hidden = !(state.kind === "ready" && state.hasMore);
     const paging = controller.moreState;

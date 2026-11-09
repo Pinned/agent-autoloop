@@ -23,16 +23,18 @@ import {
   type Section,
 } from "../../host/desktop-task-query-contract.ts";
 
-export type TaskQuerySourceOptions = TodaySourceOptions;
+export type TaskQuerySourceOptions = TodaySourceOptions & {
+  schedule?: { now(): number; set(callback: () => void, ms: number): unknown; clear(handle: unknown): void };
+};
 export type TaskQueryError =
   "unavailable" | "no-hub" | "invalid" | "unauthorized" | "not-found" | "unsupported" | "timeout" | "aborted" | "error";
 export type TaskQueryResult<T> = { ok: true; data: T } | { ok: false; error: TaskQueryError };
 export type TaskQuerySource = {
   list(input?: RunListInput): Promise<TaskQueryResult<RunList>>;
-  detail(run: number): Promise<TaskQueryResult<RunDetail>>;
-  events(run: number, input?: RunSectionInput): Promise<TaskQueryResult<Page<EventItem>>>;
-  cards(run: number, input?: RunSectionInput): Promise<TaskQueryResult<Page<CardItem>>>;
-  related(run: number, input?: RunSectionInput): Promise<TaskQueryResult<Page<RunItem>>>;
+  detail(run: number, canRead?: () => boolean): Promise<TaskQueryResult<RunDetail>>;
+  events(run: number, input?: RunSectionInput, canRead?: () => boolean): Promise<TaskQueryResult<Page<EventItem>>>;
+  cards(run: number, input?: RunSectionInput, canRead?: () => boolean): Promise<TaskQueryResult<Page<CardItem>>>;
+  related(run: number, input?: RunSectionInput, canRead?: () => boolean): Promise<TaskQueryResult<Page<RunItem>>>;
   cancelAll(): void;
 };
 type Slot = "list" | "detail" | Section;
@@ -74,6 +76,12 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
   const readConfig = options.readConfig ?? readRuntimeConfig;
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? 1500;
+  const schedule = options.schedule ?? {
+    now: () => performance.now(),
+    set: (callback: () => void, ms: number) => setTimeout(callback, ms),
+    clear: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  };
+  let cancelGeneration = 0;
   // Fixed storage: each page/partition can replace only its own outstanding read.
   const slots: Record<Slot, Flight | undefined> = {
     list: undefined,
@@ -86,7 +94,17 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
   function request<T>(
     slot: Slot,
     prepare: () => { path: string; parse(bytes: Uint8Array): T },
+    canRead?: () => boolean,
   ): Promise<TaskQueryResult<T>> {
+    const admitted = cancelGeneration;
+    const qualified = () => {
+      try {
+        if (admitted !== cancelGeneration) return false;
+        if (canRead && !canRead()) return false;
+        const state = options.getState();
+        return state.status === "running" && state.role === "hub-worker" && (!canRead || canRead()) && admitted === cancelGeneration;
+      } catch { return false; }
+    };
     const denied = (error: TaskQueryError) => {
       slots[slot]?.stop();
       return Promise.resolve(failure(error));
@@ -114,18 +132,19 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
       return denied("error");
     }
     if (endpoint === "invalid" || endpoint === "no-hub") return denied(endpoint);
+    if (slot !== "list" && !qualified()) return denied("aborted");
     const { origin, owner } = endpoint;
     const url = origin + prepared.path;
     const key = JSON.stringify([url, owner]);
     const prior = slots[slot];
-    if (prior?.key === key) return prior.promise as Promise<TaskQueryResult<T>>;
+    if (!canRead && prior?.key === key) return prior.promise as Promise<TaskQueryResult<T>>;
     prior?.stop();
 
     const controller = new AbortController();
-    const deadline = performance.now() + timeoutMs;
+    const deadline = schedule.now() + timeoutMs;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let settled = false;
-    let timer: ReturnType<typeof setTimeout>;
+    let timer: unknown;
     let resolve!: (result: TaskQueryResult<T>) => void;
     const promise = new Promise<TaskQueryResult<T>>((yes) => {
       resolve = yes;
@@ -139,13 +158,15 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
       }
     }
     function inactive(): boolean {
-      if (!settled && performance.now() >= deadline) finish(failure("timeout"), true);
+      if (!settled && schedule.now() >= deadline) finish(failure("timeout"), true);
+      if (!settled && slot !== "list" && !qualified()) finish(failure("aborted"), true);
+      if (!settled && slots[slot] !== flight) finish(failure("aborted"), true);
       return settled;
     }
     function finish(result: TaskQueryResult<T>, abort = false) {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      try { schedule.clear(timer); } catch { /* Independent cleanup cannot prevent settlement. */ }
       if (slots[slot] === flight) slots[slot] = undefined;
       if (abort) {
         controller.abort();
@@ -155,7 +176,8 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
     }
     slots[slot] = flight;
     // Settlement is independent of fetch/reader cooperation; the deadline includes stalled body reads.
-    timer = setTimeout(() => finish(failure("timeout"), true), timeoutMs);
+    try { timer = schedule.set(() => finish(failure("timeout"), true), timeoutMs); }
+    catch { finish(failure("error"), true); }
 
     async function readBytes(response: Response, max: number): Promise<Uint8Array> {
       reader = response.body?.getReader();
@@ -181,7 +203,7 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
         size += next.value.byteLength;
         // Ready promises (including empty chunks) must not starve timeout/cancel macrotasks.
         if (++chunks % 32 === 0) {
-          await new Promise<void>((yes) => setTimeout(yes, 0));
+          await new Promise<void>((yes) => schedule.set(yes, 0));
           if (inactive()) throw new Error("obsolete-query");
         }
       }
@@ -190,13 +212,9 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
     }
     async function execute() {
       try {
-        const response = await fetchImpl(url, {
-          method: "GET",
-          headers: { authorization: `Bearer ${owner}` },
-          redirect: "error",
-          cache: "no-store",
-          signal: controller.signal,
-        });
+        const init: RequestInit = { method: "GET", headers: { authorization: `Bearer ${owner}` }, redirect: "error", cache: "no-store", signal: controller.signal };
+        if (inactive()) return;
+        const response = await fetchImpl(url, init);
         if (inactive()) {
           cancelBody(response.body);
           return;
@@ -256,18 +274,18 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
     return promise;
   }
 
-  function section<T>(name: Section, id: number, input: RunSectionInput, parse: (bytes: Uint8Array, run: number) => T) {
+  function section<T>(name: Section, id: number, input: RunSectionInput, parse: (bytes: Uint8Array, run: number) => T, canRead?: () => boolean) {
     return request(name, () => {
       const run = runId(id);
       const checked = parseRunSectionInput(input);
       if (checked.cursor !== undefined) decodeRunCursor(checked.cursor, run, name);
       return { path: `${ROOT}/${run}${queryString(checked, name)}`, parse: (bytes: Uint8Array) => parse(bytes, run) };
-    });
+    }, canRead);
   }
   return {
     list: (input = {}) =>
       request("list", () => ({ path: ROOT + queryString(parseRunListInput(input)), parse: parseRunListBytes })),
-    detail: (id) =>
+    detail: (id, canRead) =>
       request("detail", () => {
         const run = runId(id);
         return {
@@ -278,11 +296,12 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
             return data;
           },
         };
-      }),
-    events: (run, input = {}) => section("events", run, input, parseRunEventsBytes),
-    cards: (run, input = {}) => section("cards", run, input, parseRunCardsBytes),
-    related: (run, input = {}) => section("related", run, input, parseRelatedRunsBytes),
+      }, canRead),
+    events: (run, input = {}, canRead) => section("events", run, input, parseRunEventsBytes, canRead),
+    cards: (run, input = {}, canRead) => section("cards", run, input, parseRunCardsBytes, canRead),
+    related: (run, input = {}, canRead) => section("related", run, input, parseRelatedRunsBytes, canRead),
     cancelAll() {
+      cancelGeneration++;
       for (const slot of Object.keys(slots) as Slot[]) slots[slot]?.stop();
     },
   };
