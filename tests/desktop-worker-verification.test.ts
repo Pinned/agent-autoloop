@@ -10,6 +10,13 @@ const identity = { version: 1, kind: "worker", name: "mac" };
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
 const code = (value: unknown, expected: string) => assert.deepEqual(value, { ok: false, error: { code: expected } });
 
+// Each handshake spends its own timeoutMs from its own start, so a 5ms budget is a wall-clock
+// assertion that the first phase (protocol) finishes before the scheduler preempts this process —
+// measured tails on a loaded machine reach ~170ms, which is why the budget is 200ms instead.
+// Discrimination is unaffected: the fixture never exhausts in 200ms (~5000 of 20000 reads), so an
+// implementation that ignores the deadline still returns ok and fails the expected timeout.
+const BUDGET_MS = 200;
+
 // Bounded reader fixture avoids hanging the old implementation even when timer callbacks starve.
 function finiteWorkerBody(limit: number) {
   let reads = 0;
@@ -38,7 +45,7 @@ test("finite worker zero chunks allow second-phase timeout before exhaustion", a
     await verifyDesktopWorkerProfile(
       profile,
       { fetch: async () => (calls++ === 0 ? json(protocol) : fixture.response) },
-      { timeoutMs: 5 },
+      { timeoutMs: BUDGET_MS },
     ),
     "timeout",
   );
@@ -219,7 +226,7 @@ test("worker second-phase header/body deadlines, cancellation and redirect stay 
             );
           },
         },
-        { timeoutMs: 5 },
+        { timeoutMs: BUDGET_MS },
       ),
       "timeout",
     );
