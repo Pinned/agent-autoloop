@@ -3,8 +3,8 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { test } from "node:test";
-import { readFileSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { readFileSync, realpathSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
@@ -24,8 +24,8 @@ function fakeChild() {
 }
 
 test("smoke environment is an explicit whitelist with all homes isolated", async () => {
-  const { isolatedEnvironment } = await helpers();
-  const env = isolatedEnvironment("/tmp/fake-home", "/opt/node/bin/node", {
+  const { isolatedEnvironment, isolatedHomeFor } = await helpers();
+  const env = isolatedEnvironment("/tmp/fake-temp", "/opt/node/bin/node", {
     PATH: "/real/user/bin",
     HOME: "/real/home",
     NODE_OPTIONS: "--import /secret",
@@ -35,12 +35,16 @@ test("smoke environment is an explicit whitelist with all homes isolated", async
     DESKTOP_SMOKE: "1",
     LANG: "en_US.UTF-8",
   });
-  assert.equal(env.HOME, "/tmp/fake-home");
+  assert.equal(env.HOME, isolatedHomeFor("/tmp/fake-temp"));
+  assert.equal(env.HOME, "/tmp/fake-temp/home");
   assert.equal(env.USERPROFILE, env.HOME);
-  assert.equal(env.XDG_CONFIG_HOME, "/tmp/fake-home/config");
-  assert.equal(env.XDG_CACHE_HOME, "/tmp/fake-home/cache");
-  assert.equal(env.XDG_DATA_HOME, "/tmp/fake-home/data");
-  assert.equal(env.TMPDIR, "/tmp/fake-home/tmp");
+  assert.equal(env.XDG_CONFIG_HOME, "/tmp/fake-temp/home/config");
+  assert.equal(env.XDG_CACHE_HOME, "/tmp/fake-temp/home/cache");
+  assert.equal(env.XDG_DATA_HOME, "/tmp/fake-temp/home/data");
+  // The private temp root contains HOME; the reverse would make the app refuse its own home.
+  assert.equal(env.TMPDIR, "/tmp/fake-temp");
+  assert.equal(env.TMP, env.TMPDIR);
+  assert.equal(env.TEMP, env.TMPDIR);
   assert.equal(env.LANG, "en_US.UTF-8");
   assert.equal(env.PATH, "/opt/node/bin:/usr/bin:/bin:/usr/sbin:/sbin");
   for (const key of [
@@ -51,6 +55,31 @@ test("smoke environment is an explicit whitelist with all homes isolated", async
     "DESKTOP_SMOKE",
   ])
     assert.equal(env[key], undefined);
+});
+
+test("the private temp root keeps HOME below the inherited TMPDIR, as the app's guard requires", async () => {
+  const { isolatedEnvironment, isolatedHomeFor } = await helpers();
+  const { isolatedHome } = await import("../src/policy.ts");
+  const tempRoot = await mkdtemp(join(tmpdir(), "lifecycle-home-unit-"));
+  const previous = process.env.TMPDIR;
+  try {
+    const home = isolatedHomeFor(tempRoot);
+    const env = isolatedEnvironment(tempRoot, process.execPath, {});
+    assert.equal(env.TMPDIR, tempRoot);
+    // The guard resolves both paths, so the fixture must exist to be judged the way the app does.
+    await mkdir(env.HOME, { recursive: true });
+    // tmpdir() reads TMPDIR at call time; use the fixture's value, exactly as the child inherits it.
+    process.env.TMPDIR = env.TMPDIR;
+    assert.equal(isolatedHome(env.HOME, false), realpathSync(env.HOME));
+    // The old layout made TMPDIR a child of HOME, which the guard rejects: this test catches it.
+    process.env.TMPDIR = join(home, "tmp");
+    await mkdir(join(home, "tmp"), { recursive: true });
+    assert.throws(() => isolatedHome(home, false), /独立子目录/);
+  } finally {
+    if (previous === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = previous;
+    await rm(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("notification commands resolve to private harmless fixtures ahead of system binaries", async () => {

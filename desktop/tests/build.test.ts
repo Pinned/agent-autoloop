@@ -443,6 +443,18 @@ test("the tray's live glance listens to the hub's own stream and never polls", (
   assert.match(main, /停止运行中的一轮/);
 });
 
+test("document commit never waits on a loading flag Electron still reports inside the event", () => {
+  const main = read("../src/main.ts");
+  // Electron answers isLoadingMainFrame() === true from inside did-finish-load. Treating that as
+  // "not committed yet" never clears: finishDocument() is never called, the presentation stays
+  // blocked, and every user runtime action is refused as unavailable. Only beginDocument's
+  // token/committed-frame fences may decide whether this document is the current one.
+  assert.match(main, /window\.webContents\.on\("did-finish-load"/);
+  const handler = main.slice(main.indexOf('on("did-finish-load"'));
+  assert.doesNotMatch(handler.slice(0, handler.indexOf("});")), /isLoadingMainFrame\(\)/);
+  assert.match(handler, /presentation\.finishDocument\(token, page\)/);
+});
+
 test("system notifications are main-process only and click back to today", () => {
   const notifier = read("../src/notify.ts");
   const main = read("../src/main.ts");

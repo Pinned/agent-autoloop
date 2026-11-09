@@ -17,7 +17,19 @@ export async function createNotificationFixtures(root) {
   return fakeBin;
 }
 
-export function isolatedEnvironment(home, nodePath, source = {}, fakeBin) {
+/** The one place the home/private-temp relationship is defined, shared by the driver and tests. */
+export function isolatedHomeFor(tempRoot) {
+  return join(tempRoot, "home");
+}
+
+/**
+ * Every home gets its own private temporary directory, and the home itself *is* a child of it.
+ * The app's isolatedHome() accepts only a DESKTOP_HOME below os.tmpdir(); since TMPDIR is
+ * inherited, a home with TMPDIR=<home>/tmp would see itself as the temp root and refuse to run.
+ * The driver therefore passes a per-instance temp root and derives the home from it.
+ */
+export function isolatedEnvironment(tempRoot, nodePath, source = {}, fakeBin) {
+  const home = isolatedHomeFor(tempRoot);
   return {
     PATH: `${fakeBin ? `${fakeBin}:` : ""}${dirname(nodePath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
     HOME: home,
@@ -25,9 +37,9 @@ export function isolatedEnvironment(home, nodePath, source = {}, fakeBin) {
     XDG_CONFIG_HOME: join(home, "config"),
     XDG_CACHE_HOME: join(home, "cache"),
     XDG_DATA_HOME: join(home, "data"),
-    TMPDIR: join(home, "tmp"),
-    TMP: join(home, "tmp"),
-    TEMP: join(home, "tmp"),
+    TMPDIR: tempRoot,
+    TMP: tempRoot,
+    TEMP: tempRoot,
     LANG: source.LANG || "en_US.UTF-8",
     LC_ALL: source.LC_ALL || source.LANG || "en_US.UTF-8",
   };

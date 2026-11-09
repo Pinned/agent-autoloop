@@ -72,10 +72,25 @@ export function parseLifecycleEnv(
   throw new Error("业务生命周期冒烟需要 DESKTOP_LIFECYCLE_ROLE=hub 或 worker");
 }
 
+/**
+ * The renderer bootstraps its own launch-status read while the page loads, so an external caller
+ * asking for setup status right after load is told "busy" — one read at a time, by design. Wait
+ * for that first read to settle instead of treating a concurrent read as a broken first run.
+ */
+function settledStatusScript(): string {
+  return `const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const statusDeadline = Date.now() + ${RUN_TIMEOUT_MS};
+  let status = await window.desktop.setupStatus();
+  while (!status.ok && status.error && status.error.code === "busy" && Date.now() < statusDeadline) {
+    await wait(${POLL_MS});
+    status = await window.desktop.setupStatus();
+  }`;
+}
+
 /** A walks the first-run wizard the way a user would: read the status, then init as the hub. */
 export function lifecycleHubSetupScript(): string {
   return `(async () => {
-  const status = await window.desktop.setupStatus();
+  ${settledStatusScript()}
   const init = await window.desktop.initHub();
   const prepared = await window.desktop.launchStatus();
   if (!prepared.ok || prepared.operation !== "launch-status" || !(prepared.data.completion === "prepared")) return { status, init: null };
@@ -92,12 +107,13 @@ export function lifecycleHubRunScript(): string {
   if (!completed.ok || completed.operation !== "launch-status" || completed.data.completion !== "complete") return { start: null, running: null };
   const deadline = Date.now() + ${RUN_TIMEOUT_MS};
   let running = null;
+  let last = null;
   while (!running && Date.now() < deadline) {
-    const get = await window.desktop.runtimeGet();
-    if (get.ok && get.state.status === "running") running = get;
+    last = await window.desktop.runtimeGet();
+    if (last.ok && last.state.status === "running") running = last;
     else await wait(${POLL_MS});
   }
-  return { start, running };
+  return { start, running, last };
 })()`;
 }
 
@@ -172,8 +188,7 @@ export function lifecycleHubBusinessFinishScript(deadline: number): string {
 export function lifecycleWorkerStartScript(join: DesktopJoinInput): string {
   const input = JSON.stringify(join);
   return `(async () => {
-  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-  const status = await window.desktop.setupStatus();
+  ${settledStatusScript()}
   const joined = await window.desktop.joinWorker(${input});
   const prepared = await window.desktop.launchStatus();
   if (!prepared.ok || prepared.operation !== "launch-status" || prepared.data.completion !== "prepared") return { status, joined, start: null, running: null };
@@ -182,12 +197,13 @@ export function lifecycleWorkerStartScript(join: DesktopJoinInput): string {
   if (!completed.ok || completed.operation !== "launch-status" || completed.data.completion !== "complete") return { start: null, running: null };
   const deadline = Date.now() + ${RUN_TIMEOUT_MS};
   let running = null;
+  let last = null;
   while (!running && Date.now() < deadline) {
-    const get = await window.desktop.runtimeGet();
-    if (get.ok && get.state.status === "running" && get.state.role === "worker") running = get;
+    last = await window.desktop.runtimeGet();
+    if (last.ok && last.state.status === "running" && last.state.role === "worker") running = last;
     else await wait(${POLL_MS});
   }
-  return { status, joined, start, running };
+  return { status, joined, start, running, last };
 })()`;
 }
 
@@ -228,10 +244,11 @@ export async function runLifecycleHubDrive(port: LifecycleDrivePort, ruleCwd: st
   const run = (await port.evaluate(lifecycleHubRunScript())) as {
     start?: { ok?: boolean };
     running?: { state?: { status?: unknown; role?: unknown } } | null;
+    last?: { ok?: boolean; state?: { status?: unknown; role?: unknown; error?: unknown } } | null;
   };
   if (run.start?.ok !== true) return port.abort(`运行服务启动失败：${JSON.stringify(run.start)}`);
   if (run.running?.state?.status !== "running" || run.running?.state?.role !== "hub-worker")
-    return port.abort("运行服务未在期限内达到 hub-worker 运行态");
+    return port.abort(`运行服务未在期限内达到 hub-worker 运行态：${JSON.stringify(run.last ?? null)}`);
   console.log(LIFECYCLE_MARKERS.hubRunning);
   const creation = (await port.evaluate(lifecycleHubBusinessScript(ruleCwd))) as { stage?: string; created?: unknown; deadline?: number };
   if (creation.stage !== "create") return port.abort(`业务闭环未完成：${JSON.stringify(creation)}`);
@@ -269,6 +286,7 @@ export async function runLifecycleWorkerDrive(
     joined?: { ok?: boolean; data?: { role?: unknown } };
     start?: { ok?: boolean };
     running?: { state?: { status?: unknown; role?: unknown } } | null;
+    last?: { ok?: boolean; state?: { status?: unknown; role?: unknown; error?: unknown } } | null;
   };
   if (result.status?.ok !== true || result.status.data?.configuration !== "unconfigured")
     return port.abort(`首启状态不是未配置：${JSON.stringify(result.status)}`);
@@ -276,7 +294,7 @@ export async function runLifecycleWorkerDrive(
     return port.abort(`加入未确认：${JSON.stringify(result.joined)}`);
   if (result.start?.ok !== true) return port.abort(`运行服务启动失败：${JSON.stringify(result.start)}`);
   if (result.running?.state?.status !== "running" || result.running?.state?.role !== "worker")
-    return port.abort("运行服务未在期限内达到 worker 运行态");
+    return port.abort(`运行服务未在期限内达到 worker 运行态：${JSON.stringify(result.last ?? null)}`);
   console.log(LIFECYCLE_MARKERS.workerRunning);
   // B keeps serving claims until the driver confirms the hub is finished; the quit below then
   // exercises the exit path that drains a still-running service instead of abandoning it.
