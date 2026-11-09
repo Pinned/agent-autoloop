@@ -29,7 +29,6 @@ import {
 import { loadTheme, saveTheme } from "./preferences.ts";
 import { createSupervisor } from "./supervisor.ts";
 import { createRuntimeControl, SAFE_STOP_ERROR, type RuntimeControlState } from "./runtime-control.ts";
-import { createRuntimePresentation } from "./runtime-presentation.ts";
 import { createTasksSource, createTodaySource } from "./state-source.ts";
 import { createTaskSource } from "./task-source.ts";
 import { createHubWatcher, type HubGlance } from "./hub-watcher.ts";
@@ -38,6 +37,9 @@ import { createTaskCreateHandler } from "./task-create-control.ts";
 import { createTaskActionSource } from "./task-action-source.ts";
 import { createTaskActionIpc } from "./task-action-ipc.ts";
 import { parseDesktopRulesEntries } from "../../host/desktop-rules-contract.ts";
+import { createLaunchControl, createLaunchStatusRead, safelyAbortLifecycle } from "./launch-control.ts";
+import { createRuntimePresentation } from "./runtime-presentation.ts";
+import type { DesktopLaunchStatus } from "../../host/desktop-launch-contract.ts";
 import { createSetupControl } from "./setup-control.ts";
 import { createSetupRunner } from "./setup-runner.ts";
 import {
@@ -145,6 +147,7 @@ if (ownsAppLock)
           }),
       });
       const setupRunner = createSetupRunner({
+        ...(lifecycle && { installationDiscovery: "none" as const }),
         enabled: !app.isPackaged && !!home && !smoke,
         prepare: async (ownCleanup) => {
           const resourcesModule = pathToFileURL(join(base, "..", "scripts", "runtime.mjs")).href;
@@ -283,6 +286,16 @@ if (ownsAppLock)
           () => controller.getState(),
         ));
       }
+      const readLaunchStatus = createLaunchStatusRead(() =>
+        presentation.observe(() => setup.runSetup({ version: 1, operation: "launch-status" })));
+      const launch = createLaunchControl({
+        read: async (): Promise<DesktopLaunchStatus> => {
+          const response = await readLaunchStatus();
+          if (!response.ok || response.operation !== "launch-status") throw new Error("launch-status-unavailable");
+          return response.data;
+        },
+        start: () => performStart(),
+      });
       async function performStop(): Promise<DesktopRuntimeResponse> {
         return presentation.run("stop", async () => {
           await setup.runStop(() => controller.stop());
@@ -530,11 +543,27 @@ if (ownsAppLock)
           return desktopSetupFailure(operation, "invalid-request");
         }
         try {
-          return await presentation.observe(() => setup.runSetup(request));
+          const response = await (request.operation === "launch-status"
+            ? readLaunchStatus()
+            : presentation.observe(() => setup.runSetup(request)));
+          if (response.ok && response.operation === "complete") await launch.completed();
+          return response;
         } catch {
           return desktopSetupFailure(operation, "unknown");
         }
       }
+      ipcMain.handle(channels.launchStatus, (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        return setupRequest("launch-status", args);
+      });
+      ipcMain.handle(channels.probeHub, (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        return setupRequest("probe", args);
+      });
+      ipcMain.handle(channels.completeSetup, (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        return setupRequest("complete", args);
+      });
       ipcMain.handle(channels.setupStatus, (event, ...args: unknown[]) => {
         assertSender(event, window.webContents, page);
         return setupRequest("status", args);
@@ -611,6 +640,7 @@ if (ownsAppLock)
       });
       await window.loadFile(pagePath);
       window.show();
+      if (!smoke && !lifecycle) await launch.autoStart();
       if (lifecycle) {
         // The drive scripts run in the same renderer a user's clicks drive, so the checked path
         // is the shipped one. No new IPC, no preload change, no renderer knowledge of the drive.
@@ -620,10 +650,12 @@ if (ownsAppLock)
           // A failed drive must never masquerade as success: report, best-effort safe stop, exit non-zero.
           abort: (message) => {
             console.error(`业务生命周期冒烟失败：${message}`);
-            void setup
-              .prepareQuit(() => controller.stop())
-              .catch(() => false)
-              .finally(() => app.exit(1));
+            void safelyAbortLifecycle({
+              prepareQuit: () => setup.prepareQuit(() => controller.stop()),
+              exit: (code) => app.exit(code),
+            }).then((safe) => {
+              if (!safe) console.error("业务生命周期未确认安全停止，保留进程与证据，不强制退出。");
+            });
           },
         };
         const running =
@@ -704,7 +736,7 @@ if (ownsAppLock)
             result.runtimeEventSeen !== false ||
             result.navigateSeen !== false ||
             result.bridge.join(",") !==
-              "checkBuiltinAgents,getTheme,initHub,joinWorker,onNavigate,onRuntimeEvent,rulesGet,rulesPut,runtimeGet,runtimeStart,runtimeStop,setTheme,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,tasksGet,todayState,window" ||
+              "checkBuiltinAgents,completeSetup,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,probeHub,rulesGet,rulesPut,runtimeGet,runtimeStart,runtimeStop,setTheme,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,tasksGet,todayState,window" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||

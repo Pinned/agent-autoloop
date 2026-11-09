@@ -42,7 +42,8 @@ export function createSetupControl(options: {
       if (blocked) return Promise.resolve(desktopSetupFailure(request.operation, "unknown"));
       if (options.enabled === false || quitting)
         return Promise.resolve(desktopSetupFailure(request.operation, "unavailable"));
-      if (setupBusy || starts || stops || !runtimeIdle())
+      const readOnly = request.operation === "launch-status";
+      if (setupBusy || starts || stops || (!readOnly && !runtimeIdle()))
         return Promise.resolve(desktopSetupFailure(request.operation, "busy"));
       // Reserve synchronously, before request validation, prepare or any other await.
       setupBusy = true;
