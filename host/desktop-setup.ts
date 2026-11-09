@@ -45,6 +45,16 @@ export const DESKTOP_SYSTEM_DIRECTORIES = Object.freeze(
     : ["/usr/local/bin", "/usr/bin", "/bin"],
 );
 
+/**
+ * Where a terminal would search for an agent: the PATH the main process resolved from the user's
+ * own login shell, or the fixed system set when it could not. A directory list injected by a test
+ * still wins; this only decides the production default.
+ */
+export function desktopSearchDirectories(pathValue: string | undefined): string[] {
+  const fromPath = (pathValue ?? "").split(path.delimiter).filter((directory) => path.isAbsolute(directory));
+  return [...new Set(fromPath.length ? fromPath : DESKTOP_SYSTEM_DIRECTORIES)];
+}
+
 /** Host/test dependency only. Production callers supply no directories; renderer input cannot reach this API. */
 export function createDesktopDiscovery(directories: readonly string[] = DESKTOP_SYSTEM_DIRECTORIES): SetupDiscovery {
   if (directories.some((directory) => !path.isAbsolute(directory))) throw new Error("invalid-discovery");
@@ -387,7 +397,9 @@ async function main() {
       const driver = createDesktopSetupDriver({
         home,
         discovery:
-          process.env.DESKTOP_SETUP_DISCOVERY === "none" ? createDesktopDiscovery([]) : createDesktopDiscovery(),
+          process.env.DESKTOP_SETUP_DISCOVERY === "none"
+            ? createDesktopDiscovery([])
+            : createDesktopDiscovery(desktopSearchDirectories(process.env.PATH)),
         probe: () => {
           const port = desktopSetupPort();
           if (port === null) throw new Error("invalid-port");
