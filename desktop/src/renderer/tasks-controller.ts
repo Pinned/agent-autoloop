@@ -8,8 +8,33 @@ import type { DesktopBridge } from "../policy.ts";
 import { parseTaskHistoryResponse, TASK_HISTORY_MESSAGES, type TaskHistoryResponse } from "../../../host/desktop-task-history-contract.ts";
 import type { Section } from "../../../host/desktop-task-query-contract.ts";
 import { parseDesktopRuntimeEvent } from "../../../host/desktop-run-contract.ts";
+import {
+  DESKTOP_TASK_ACTION_MESSAGES,
+  parseDesktopTaskActionInput,
+  parseDesktopTaskActionResponse,
+  type DesktopTaskActionCode,
+} from "../../../host/desktop-task-action-contract.ts";
 
-export type TasksBridge = Pick<DesktopBridge, "tasksGet"> & Partial<Pick<DesktopBridge, "taskDetail" | "onRuntimeEvent">>;
+export type TasksBridge = Pick<DesktopBridge, "tasksGet"> &
+  Partial<Pick<DesktopBridge, "taskDetail" | "onRuntimeEvent" | "taskAction">>;
+/** What the detail page may ask for; the pure contract decides what may actually be sent. */
+export type TasksActionRequest =
+  | { readonly action: "answer"; readonly cardId: number; readonly input: { choice: number } | { text: string } }
+  | { readonly action: "resolve"; readonly cardId: number; readonly input: { reason: string } }
+  | { readonly action: "cancel"; readonly runId: number }
+  | { readonly action: "memo"; readonly runId: number; readonly input: { text: string } };
+export type TasksActionState =
+  | { readonly kind: "idle" }
+  | { readonly kind: "busy"; readonly request: TasksActionRequest }
+  | {
+      readonly kind: "settled";
+      readonly request: TasksActionRequest;
+      readonly message: string;
+      /** False for anything that must not be clicked again without a fresh authoritative read. */
+      readonly retryable: boolean;
+      /** An outcome that may already have happened; only a fresh read clears it. */
+      readonly mustReread: boolean;
+    };
 export type TasksDetailState =
   | { readonly kind: "idle"; readonly runId: null }
   | { readonly kind: "loading"; readonly runId: number }
@@ -61,6 +86,10 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
   let sectionStates = initialSections();
   // Old promises capture their tokens; the live controller holds only three slots.
   let pageFlights: Record<Section, PageFlight | null> = { events: null, cards: null, related: null };
+  // One owner write at a time, bound to the run it was made from. Retryability is decided per
+  // receipt: only answers that confirm "nothing was sent" may be clicked again directly.
+  let action: { readonly runId: number; readonly state: TasksActionState } | null = null;
+  let actionFlight: object | null = null;
   const current = (token: Session) => session === token && token.generation === detailGeneration && detailAllowed;
   function closeDetail() {
     detailGeneration++;
@@ -68,6 +97,8 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
     pageFlights = { events: null, cards: null, related: null };
     sectionStates = initialSections();
     detail = Object.freeze({ kind: "idle", runId: null });
+    action = null;
+    actionFlight = null;
     notify();
   }
   bridge.onRuntimeEvent?.(payload => {
@@ -85,8 +116,13 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
   function openDetail(runId: number) {
     if (!detailAllowed || load.kind !== "ready" || !load.runs.some(run => run.id === runId)) return;
     if (detail.runId === runId && (detail.kind === "loading" || detail.kind === "ready")) return;
+    startDetail(runId);
+  }
+  function startDetail(runId: number) {
     const token = Object.freeze({ generation: ++detailGeneration, runId });
     session = token;
+    // A receipt belongs to the run it was made from; another run never inherits it.
+    if (action?.runId !== runId) action = null;
     pageFlights = { events: null, cards: null, related: null };
     sectionStates = initialSections();
     const request = Object.freeze({ operation: "detail" as const, runId });
@@ -111,6 +147,9 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
       if (!current(token) || detail.kind !== "loading") return;
       sectionStates = groups;
       detail = next;
+      // A fresh authoritative read is exactly what an unresolved receipt was waiting for.
+      if (next.kind === "ready" && action?.runId === runId && action.state.kind === "settled" && action.state.mustReread)
+        action = Object.freeze({ runId, state: Object.freeze({ ...action.state, mustReread: false }) });
       notify();
     }
     try {
@@ -184,6 +223,165 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
       // A later render rebuilds the page from the authoritative state.
     }
   }
+  // Nothing left main: the click may be repeated once the cause is fixed.
+  const notSent = new Set<DesktopTaskActionCode>(["invalid", "busy", "unavailable", "no-hub", "config"]);
+  function settle(
+    runId: number,
+    request: TasksActionRequest,
+    message: string,
+    retryable: boolean,
+  ): void {
+    action = Object.freeze({
+      runId,
+      state: Object.freeze({ kind: "settled", request, message, retryable, mustReread: !retryable }),
+    });
+    notify();
+  }
+  function settleAction(
+    token: object,
+    runId: number,
+    request: TasksActionRequest,
+    value: unknown,
+    rejected: boolean,
+  ): void {
+    // A closed or switched detail drops its receipt; the next open re-reads the truth anyway.
+    if (actionFlight !== token) return;
+    actionFlight = null;
+    if (!detailAllowed || detail.kind !== "ready" || detail.runId !== runId) {
+      action = null;
+      notify();
+      return;
+    }
+    let message: string = DESKTOP_TASK_ACTION_MESSAGES.uncertain;
+    let retryable = false;
+    let confirmed = false;
+    if (!rejected) {
+      try {
+        const response = parseDesktopTaskActionResponse(value);
+        if (!response.ok) {
+          message = response.error.message;
+          retryable = notSent.has(response.error.code);
+        } else {
+          if (response.action !== request.action) throw new Error("mismatched-receipt");
+          // A receipt must name the exact target that was asked about, never a sibling.
+          if (response.action === "answer" || response.action === "resolve") {
+            if (!("cardId" in request) || response.cardId !== request.cardId) throw new Error("mismatched-receipt");
+            if (response.action === "answer")
+              message = response.result.changed
+                ? "中台已记录这次回答，正在读取最新状态。"
+                : "中台显示这张卡片已不是开放状态，本次回答未生效。";
+            else
+              message = response.result.changed
+                ? "中台已记录结案，正在读取最新状态。"
+                : "中台显示这张卡片已不是开放状态，本次结案未生效。";
+          } else {
+            if ("cardId" in request || response.runId !== request.runId) throw new Error("mismatched-receipt");
+            if (response.action === "cancel") message = "已请求停止；执行机确认进程组结束后才算结束。";
+            else
+              message = response.result.stopped
+                ? "已提交更正：原轮次将被停止，新的下一轮会并入队列。"
+                : "已提交更正：新的下一轮已入队，原轮次记录保留。";
+          }
+          confirmed = true;
+        }
+      } catch {
+        // An unrecognised receipt could mean the hub acted; never invite a direct retry.
+      }
+    }
+    settle(runId, request, message, retryable);
+    // A confirmed receipt is a hub fact: re-read instead of guessing the new local state.
+    if (confirmed) {
+      if (detail.kind === "ready" && detail.runId === runId) startDetail(runId);
+      refreshQuietly();
+    }
+  }
+  /** Keeps the list already on screen while the hub's newest page is merged in; failures stay silent. */
+  function refreshQuietly(): void {
+    if (flight) return;
+    flight = { kind: "load", before: undefined };
+    const finishQuiet = (value: unknown, rejected: boolean) => {
+      flight = null;
+      if (!rejected) {
+        try {
+          const response = parseDesktopTasksResponse(value);
+          const state = response.ok ? response.state : null;
+          if (state && state.kind === "ready" && load.kind === "ready") {
+            const fresh = state.snapshot.runs;
+            const seen = new Set(fresh.map((run) => run.id));
+            // The refreshed first page is authoritative; older pages survive only behind its cursor.
+            const boundary = state.snapshot.hasMore ? state.snapshot.nextBefore : null;
+            const kept = boundary === null
+              ? []
+              : load.runs.filter((run) => !seen.has(run.id) && run.id < boundary);
+            load = Object.freeze({
+              kind: "ready",
+              runs: Object.freeze([...fresh, ...kept]),
+              hasMore: state.snapshot.hasMore,
+              nextBefore: state.snapshot.nextBefore,
+            });
+          }
+        } catch {
+          // The detail re-read is the authoritative one; a list refresh may simply be skipped.
+        }
+      }
+      notify();
+    };
+    try {
+      void Promise.resolve(bridge.tasksGet(undefined)).then(
+        (value) => finishQuiet(value, false),
+        () => finishQuiet(undefined, true),
+      );
+    } catch {
+      finishQuiet(undefined, true);
+    }
+  }
+  function submitAction(request: TasksActionRequest): void {
+    if (!detailAllowed || detail.kind !== "ready" || actionFlight) return;
+    const runId = detail.runId;
+    // A receipt that may already have taken effect blocks another write on this run until a
+    // fresh authoritative read clears it. Retrying is the user's decision, not a hidden one.
+    if (action && action.runId === runId && action.state.kind === "settled" && action.state.mustReread) return;
+    if ("cardId" in request) {
+      const card = detail.data.cards.items.find((item) => item.id === request.cardId);
+      // Only an open card on the currently shown run can be acted on; the hub re-checks too.
+      if (!card || card.state !== "open") return;
+      if (request.action === "answer" && card.kind !== "ask") return;
+    } else if (request.runId !== runId) return;
+    else {
+      const state = detail.data.run.state;
+      // The kernel can refuse a correction it cannot resume; the desktop only withholds the clearly impossible.
+      if (request.action === "cancel" ? state !== "queued" && state !== "claimed" && state !== "unknown" : state === "queued")
+        return;
+    }
+    let draft;
+    try {
+      // The renderer holds the same boundary as main: a malformed draft never reaches the bridge.
+      draft = parseDesktopTaskActionInput(
+        request.action === "cancel"
+          ? { version: 1, action: "cancel", runId: request.runId, input: {} }
+          : "cardId" in request
+            ? { version: 1, action: request.action, cardId: request.cardId, input: request.input }
+            : { version: 1, action: "memo", runId: request.runId, input: request.input },
+      );
+    } catch {
+      settle(runId, request, DESKTOP_TASK_ACTION_MESSAGES.invalid, true);
+      return;
+    }
+    const token = Object.freeze({});
+    actionFlight = token;
+    action = Object.freeze({ runId, state: Object.freeze({ kind: "busy", request }) });
+    notify();
+    try {
+      const write = bridge.taskAction;
+      if (!write) throw new Error("missing-bridge");
+      void Promise.resolve(write(draft)).then(
+        (value) => settleAction(token, runId, request, value, false),
+        () => settleAction(token, runId, request, undefined, true),
+      );
+    } catch {
+      settleAction(token, runId, request, undefined, true);
+    }
+  }
   function degrade(): void {
     load = Object.freeze({ kind: "error", message: DESKTOP_TASKS_MESSAGES.error });
   }
@@ -242,9 +440,19 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
 
   return {
     get detailState(): TasksDetailState { return detail; },
+    /** The receipt of this run's last attempt; a re-read of the same run keeps it visible. */
+    get actionState(): TasksActionState {
+      return action ? action.state : Object.freeze({ kind: "idle" });
+    },
     openDetail,
     closeDetail,
     loadDetailMore,
+    /** Authoritative re-read of the shown run; also what clears an unresolved receipt. */
+    reread(): void {
+      if (!detailAllowed || detail.kind !== "ready") return;
+      startDetail(detail.runId);
+    },
+    submitAction,
     get sectionState(): Readonly<Record<Section, TasksSectionState>> { return sectionStates; },
     get loadState(): TasksLoadState {
       return load;

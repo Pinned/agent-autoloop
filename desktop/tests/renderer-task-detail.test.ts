@@ -2,7 +2,7 @@
 // Fake bridge and DOM only; no Electron, files, fetch, config or runtime.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createRendererTasks } from "../src/renderer/tasks-controller.ts";
+import { createRendererTasks, type TasksActionState } from "../src/renderer/tasks-controller.ts";
 import { mountTasksView } from "../src/renderer/tasks-view.ts";
 import { encodeRunCursor, type RunDetail } from "../../host/desktop-task-query-contract.ts";
 import type { DesktopBridge } from "../src/policy.ts";
@@ -252,5 +252,147 @@ test("view has three manual buttons and honest loading/error/end/capped text wit
     }
     assert.match(root.textContent, /已达本次详情显示上限，仍有未显示数据/); assert.doesNotMatch(root.textContent, /缩小查询|重开.*读完/);
     assert.equal(buttons()[1].disabled, true);
+  } finally { if (previous) Object.defineProperty(globalThis, "document", previous); else Reflect.deleteProperty(globalThis, "document"); }
+});
+
+const actionRun = (id: number, state: DesktopTasksRun["state"]) => ({ id, rule: "r", agent: "a", state, attempts: 1, createdAt: null,
+  claimedAt: null, finishedAt: null, notBefore: null, summary: "action", error: "", stopping: false, usage: null, events: [] });
+const openCard = (id: number, kind: "ask" | "notice" = "ask") => ({ id, kind, state: "open", title: "t", text: "x", options: kind === "ask" ? ["甲", "乙"] : [],
+  recommend: 0, choice: null, answer: null, result: null, createdAt: null, decidedAt: null, closedAt: null, truncated: false });
+function actionDetail(id: number, state: DesktopTasksRun["state"] = "claimed", cards: any[] = [openCard(3)]) {
+  const value = detail(id); value.data.run.state = state; value.data.cards = { items: cards, hasMore: false, nextCursor: null };
+  return value;
+}
+function actionFixture() {
+  const detailPending: { resolve(value: unknown): void; reject(value: unknown): void }[] = [];
+  const writes: any[] = [];
+  const writePending: { resolve(value: unknown): void; reject(value: unknown): void }[] = [];
+  let listCalls = 0;
+  let view: ReturnType<typeof mountTasksView> | undefined;
+  const bridge = {
+    tasksGet: async () => { listCalls++; return list; },
+    taskDetail(request: { operation: "detail"; runId: number }) {
+      return new Promise((resolve, reject) => detailPending.push({ resolve, reject }));
+    },
+    taskAction(input: unknown) { writes.push(input); return new Promise((resolve, reject) => writePending.push({ resolve, reject })); },
+    onRuntimeEvent() { return () => {}; },
+  } as unknown as Parameters<typeof createRendererTasks>[0];
+  const controller = createRendererTasks(bridge, () => view?.update());
+  return { controller, detailPending, writes, writePending, listCalls: () => listCalls, mount() { view = mountTasksView(controller); return view; } };
+}
+const settleWrite = async (f: ReturnType<typeof actionFixture>, value: unknown) => { f.writePending.at(-1)!.resolve(value); await flush(); };
+const settleDetail = async (f: ReturnType<typeof actionFixture>, value: unknown) => { f.detailPending.at(-1)!.resolve(value); await flush(); };
+async function openAction(f: ReturnType<typeof actionFixture>, value = actionDetail(7)) {
+  f.controller.refresh(); await flush(); f.controller.openDetail(7); await settleDetail(f, value);
+}
+test("a write is bound to the shown run and refuses closed cards and impossible run states", async () => {
+  const f = actionFixture(); await openAction(f, actionDetail(7, "claimed", [openCard(3, "notice")]));
+  f.controller.submitAction({ action: "answer", cardId: 3, input: { choice: 0 } }); // a notice cannot be answered
+  f.controller.submitAction({ action: "resolve", cardId: 99, input: { reason: "x" } }); // not on this run
+  f.controller.submitAction({ action: "memo", runId: 8, input: { text: "x" } }); // another run entirely
+  assert.equal(f.writes.length, 0);
+  f.controller.submitAction({ action: "resolve", cardId: 3, input: { reason: "已核实" } });
+  assert.equal(f.writes.length, 1);
+  assert.deepEqual(f.writes[0], { version: 1, action: "resolve", cardId: 3, input: { reason: "已核实" } });
+});
+test("a malformed draft settles retryable locally and never reaches the bridge", async () => {
+  const f = actionFixture(); await openAction(f);
+  f.controller.submitAction({ action: "answer", cardId: 3, input: { text: "   " } });
+  const state = f.controller.actionState;
+  assert.equal(state.kind, "settled");
+  if (state.kind === "settled") { assert.equal(state.retryable, true); assert.match(state.message, /操作内容不正确/); }
+  assert.equal(f.writes.length, 0);
+});
+test("one write at a time; a confirmed receipt re-reads instead of guessing and drops the old set", async () => {
+  const f = actionFixture(); await openAction(f);
+  f.controller.submitAction({ action: "answer", cardId: 3, input: { choice: 1 } });
+  const busy = f.controller.actionState;
+  assert.equal(busy.kind, "busy");
+  f.controller.submitAction({ action: "answer", cardId: 3, input: { choice: 1 } });
+  assert.equal(f.writes.length, 1);
+  await settleWrite(f, { version: 1, ok: true, action: "answer", cardId: 3, result: { changed: true, state: "decided" } });
+  // The narrowed getter is otherwise never re-read as a different variant.
+  const state: TasksActionState = f.controller.actionState;
+  assert.equal(state.kind, "settled");
+  if (state.kind === "settled") { assert.equal(state.retryable, false); assert.equal(state.mustReread, true); }
+  // The authoritative re-read replaces the detail and clears the unresolved marker.
+  assert.equal(f.detailPending.length, 2);
+  await settleDetail(f, actionDetail(7, "claimed", [{ ...openCard(3), state: "decided", choice: 1 }]));
+  const cleared = f.controller.actionState;
+  assert.equal(cleared.kind, "settled");
+  if (cleared.kind === "settled") assert.equal(cleared.mustReread, false);
+  assert.ok(f.listCalls() >= 2);
+});
+test("an uncertain receipt blocks a direct retry until a fresh read; a confirmed-not-sent receipt may be retried", async () => {
+  const f = actionFixture(); await openAction(f);
+  f.controller.submitAction({ action: "memo", runId: 7, input: { text: "更正" } });
+  await settleWrite(f, { version: 1, ok: false, error: { code: "uncertain", message: "无法确认操作结果，可能已执行，请勿直接重试。" } });
+  let state = f.controller.actionState;
+  assert.equal(state.kind, "settled");
+  if (state.kind === "settled") { assert.equal(state.retryable, false); assert.equal(state.mustReread, true); }
+  f.controller.submitAction({ action: "memo", runId: 7, input: { text: "更正" } });
+  assert.equal(f.writes.length, 1);
+  // Only an explicit authoritative re-read can clear an unresolved receipt.
+  f.controller.reread();
+  await settleDetail(f, actionDetail(7, "claimed"));
+  state = f.controller.actionState;
+  if (state.kind === "settled") assert.equal(state.mustReread, false);
+  f.controller.submitAction({ action: "memo", runId: 7, input: { text: "更正" } });
+  assert.equal(f.writes.length, 2);
+  await settleWrite(f, { version: 1, ok: false, error: { code: "no-hub", message: "此电脑没有运行本机中台，暂不能提交。" } });
+  state = f.controller.actionState;
+  if (state.kind === "settled") { assert.equal(state.retryable, true); assert.equal(state.mustReread, false); }
+});
+test("a bridge rejection and a mismatched receipt are uncertain, never a claimed success", async () => {
+  for (const reply of ["reject", "wrong-card", "wrong-action", "malformed"]) {
+    const f = actionFixture(); await openAction(f);
+    f.controller.submitAction({ action: "answer", cardId: 3, input: { choice: 0 } });
+    if (reply === "reject") { f.writePending.at(-1)!.reject(new Error("secret")); await flush(); }
+    else if (reply === "wrong-card") await settleWrite(f, { version: 1, ok: true, action: "answer", cardId: 4, result: { changed: true, state: "decided" } });
+    else if (reply === "wrong-action") await settleWrite(f, { version: 1, ok: true, action: "resolve", cardId: 3, result: { changed: true } });
+    else await settleWrite(f, { version: 1, ok: true });
+    const state = f.controller.actionState;
+    assert.equal(state.kind, "settled", reply);
+    if (state.kind === "settled") { assert.equal(state.retryable, false, reply); assert.match(state.message, /无法确认/, reply); }
+    assert.equal(f.detailPending.length, 1, reply);
+  }
+});
+test("closing or switching the run drops both the flight and its late receipt", async () => {
+  const f = actionFixture(); await openAction(f);
+  f.controller.submitAction({ action: "memo", runId: 7, input: { text: "更正" } });
+  f.controller.closeDetail();
+  await settleWrite(f, { version: 1, ok: true, action: "memo", runId: 7, result: { stopped: true } });
+  assert.equal(f.controller.actionState.kind, "idle");
+  await openAction(f, actionDetail(7));
+  f.controller.submitAction({ action: "memo", runId: 7, input: { text: "更正" } });
+  f.controller.openDetail(6); await settleDetail(f, actionDetail(6));
+  await settleWrite(f, { version: 1, ok: true, action: "memo", runId: 7, result: { stopped: true } });
+  assert.equal(f.controller.actionState.kind, "idle");
+  assert.equal(f.controller.detailState.runId, 6);
+});
+test("view offers answer/close/stop/correct with honest labels and a re-read instead of a retry", async () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", { configurable: true, value: { createElement: () => new Element() } });
+  try {
+    const f = actionFixture(); const view = f.mount(); await openAction(f); const root = view.root as unknown as Element;
+    const byClass = (name: string) => all(root).filter(x => x.className === name);
+    assert.equal(byClass("answer-choice").length, 2);
+    assert.equal(byClass("answer-text").length, 1);
+    assert.equal(byClass("memo-submit").length, 1);
+    assert.equal(byClass("cancel-run").length, 1);
+    assert.match(root.textContent, /回答保持当前轮次/);
+    assert.match(root.textContent, /更正不会改写本轮/);
+    // Stop is a two-step confirmation that only sends on the second click.
+    byClass("cancel-run")[0].fire();
+    assert.equal(byClass("cancel-run")[0].textContent, "确认停止");
+    assert.equal(f.writes.length, 0);
+    byClass("cancel-run")[0].fire();
+    assert.equal(f.writes.length, 1);
+    assert.deepEqual(f.writes[0], { version: 1, action: "cancel", runId: 7, input: {} });
+    await settleWrite(f, { version: 1, ok: false, error: { code: "uncertain", message: "无法确认操作结果，可能已执行，请勿直接重试。" } });
+    assert.equal(byClass("action-retry").length, 0);
+    assert.equal(byClass("action-reread").length, 1);
+    byClass("action-reread")[0].fire();
+    assert.equal(f.detailPending.length, 2);
   } finally { if (previous) Object.defineProperty(globalThis, "document", previous); else Reflect.deleteProperty(globalThis, "document"); }
 });
