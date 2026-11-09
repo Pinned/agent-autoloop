@@ -103,6 +103,9 @@ test("fixed path/method/security options, exact normalized body, fresh config; r
   let reads = 0;
   const f = fixture({
     readConfig: () => ({ hub: { listen: `127.0.0.1:${12000 + ++reads}` }, owner: `PRIVATE-${reads}` }),
+    // This case asserts request shape, not the deadline. A 50ms budget turns into a race for the
+    // whole request (config read + fetch + body) once the runner has many files in flight.
+    timeoutMs: 2000,
   });
   const got = await f.source.get();
   assert.deepEqual(got, { version: 3, ok: true, data: snapshot() });

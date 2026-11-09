@@ -1,4 +1,4 @@
-import type { DesktopBridge, Theme, ThemeState } from "../policy.ts";
+import type { DesktopBridge, ThemeState } from "../policy.ts";
 import { desktopRuntimeStatusText } from "../../../host/desktop-run-contract.ts";
 import { createRendererSetup } from "./setup-controller.ts";
 import { mountSetupView } from "./setup-view.ts";
@@ -14,6 +14,8 @@ import { createRendererRulesCas } from "./rules-cas-controller.ts";
 import { mountRulesCasView } from "./rules-cas-view.ts";
 import { createRendererTasks } from "./tasks-controller.ts";
 import { mountTasksView } from "./tasks-view.ts";
+import { createRendererSettings } from "./settings-controller.ts";
+import { mountSettingsView } from "./settings-view.ts";
 declare global {
   interface Window {
     desktop: DesktopBridge;
@@ -166,6 +168,27 @@ function applyTheme(state: ThemeState) {
   const select = document.querySelector<HTMLSelectElement>("#theme");
   if (select) select.value = state.preference;
 }
+// The settings page is app-level too: a draft survives navigation, and a refused or unconfirmed
+// save stays visible until the owner re-reads and reviews it.
+let settingsPage: ReturnType<typeof mountSettingsView> | undefined;
+const settings = createRendererSettings(
+  {
+    settingsGet: () => window.desktop.settingsGet(),
+    settingsPut: (input) => window.desktop.settingsPut(input),
+  },
+  () => {
+    if (currentPage === "settings") settingsPage?.update();
+  },
+);
+settingsPage = mountSettingsView(settings, {
+  role: () => (run.state.kind === "ready" ? run.state.snapshot.role : null),
+  legacyConfig: () => setup.launch?.completion === "legacy",
+  theme: () => theme.preference,
+  setTheme: (next) => {
+    window.desktop.setTheme(next).then(applyTheme, report);
+  },
+  openSetup,
+});
 function render(id: string, focus = true) {
   if (
     setup.state.kind === "reading-launch" ||
@@ -191,23 +214,11 @@ function render(id: string, focus = true) {
   }
   main.innerHTML = `<header class="page-head"><div class="page-head-copy"><div class="eyebrow">工作空间 / 本机工作台</div><h1 id="page-title">${page.title}</h1><p>${page.description}</p></div><div class="page-head-actions"></div></header>`;
   if (id === "settings") {
-    main.insertAdjacentHTML(
-      "beforeend",
-      `<section class="panel" aria-labelledby="appearance-title"><h2 id="appearance-title">桌面外观</h2><div class="setting-row"><div><label for="theme">主题</label><p>跟随系统，或固定为浅色、深色。</p></div><select id="theme"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></div></section><section class="panel"><h2>窗口与托盘</h2><p class="muted">关闭窗口只会收起到托盘。从托盘或应用菜单可恢复窗口；退出应用需要再次确认。</p></section>`,
-    );
-    const select = document.querySelector<HTMLSelectElement>("#theme")!;
-    select.value = theme.preference;
-    select.addEventListener("change", async () => {
-      select.disabled = true;
-      try {
-        applyTheme(await window.desktop.setTheme(select.value as Theme));
-      } catch (error) {
-        select.value = theme.preference;
-        report(error);
-      } finally {
-        select.disabled = false;
-      }
-    });
+    // The hub's own configuration, at the version it was read at; nothing here is stored locally.
+    // The view is mounted before the first render() call below, so it is always present here.
+    main.append(settingsPage!.root);
+    settingsPage!.update();
+    settings.refresh();
   } else if (id === "today") {
     // Today shows real local-hub data or a fixed not-running line; never placeholder numbers.
     const actions = main.querySelector<HTMLElement>(".page-head-actions")!;
@@ -249,24 +260,6 @@ function render(id: string, focus = true) {
     workersView = mountWorkersView(presence, workers);
     run.init();
     workers.refresh();
-  }
-  if (id === "settings") {
-    const section = document.createElement("section");
-    section.className = "panel setup-entry";
-    const title = document.createElement("h2");
-    title.textContent = "本机角色配置";
-    const description = document.createElement("p");
-    description.className = "muted";
-    description.textContent =
-      setup.launch?.completion === "legacy"
-        ? "此电脑已有旧配置，但没有自动启动授权。请在执行机页明确启动；本轮不会覆盖旧配置。"
-        : "可选择中台＋执行机或执行机。保存配置与完成首次配置并请求启动是两个独立操作。";
-    const button = document.createElement("button");
-    button.textContent = "配置此电脑";
-    button.type = "button";
-    button.addEventListener("click", openSetup);
-    section.append(title, description, button);
-    main.querySelector(".page-head")!.after(section);
   }
   if (focus) main.focus();
 }
