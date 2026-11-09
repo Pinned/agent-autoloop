@@ -502,6 +502,16 @@ test("form validation, add/remove and explicit clearing use the existing full co
 const COUNTED = "仅描述将提交的本机入口；不代表中台已接受，也不代表路由结果；非 local 规则不会被改动。";
 const second = { ...original, name: "第二个", types: ["task.other"], to: "a", cwd: "~/y" };
 
+test("the page names what it does not own before any edit starts", () =>
+  dom(async (f) => {
+    f.view.init();
+    await flush();
+    // The boundary is visible without opening a draft: this list is the local slots only.
+    assert.ok(f.text().includes("这里只编辑本机入口；其他来源的规则与定时任务请在中台网页控制台修改"));
+    // And it is not a claim about the save; the preview's own line stays the only save statement.
+    assert.equal(f.text().includes(COUNTED), false);
+  }));
+
 test("the preview states only what the save hands over for the local slots", () =>
   dom(async (f) => {
     f.view.init();
