@@ -133,8 +133,10 @@ test("lifecycle scripts drive only the real renderer bridge with bounded polling
   assert.match(lifecycleHubRunScript(), /get\.state\.status === "running"/);
   const awkward = `/tmp/rule cwd'with"quotes`;
   const business = lifecycleHubBusinessScript(awkward);
-  assert.match(business, /window\.desktop\.rulesGet\(\)/);
-  assert.match(business, /window\.desktop\.rulesPut\(/);
+  assert.match(business, /window\.desktop\.rulesCasGet\(\)/);
+  assert.match(business, /window\.desktop\.rulesCasPut\(/);
+  // The save is pinned to the version the discovery read saw, never to an unbounded whole-table write.
+  assert.match(business, /rulesSeq: agents\.data\.rulesSeq/);
   // The rule cwd is interpolated as JSON, so quotes and spaces in the directory cannot break out.
   assert.ok(
     business.includes(

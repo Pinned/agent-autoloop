@@ -36,7 +36,8 @@ import { createNotifier } from "./notify.ts";
 import { createTaskCreateHandler } from "./task-create-control.ts";
 import { createTaskActionSource } from "./task-action-source.ts";
 import { createTaskActionIpc } from "./task-action-ipc.ts";
-import { parseDesktopRulesEntries } from "../../host/desktop-rules-contract.ts";
+import { createRulesCasSource } from "./rules-cas-source.ts";
+import { createRulesCasIpc } from "./rules-cas-ipc.ts";
 import { createLaunchControl, createLaunchStatusRead, safelyAbortLifecycle } from "./launch-control.ts";
 import { createRuntimePresentation } from "./runtime-presentation.ts";
 import type { DesktopLaunchStatus } from "../../host/desktop-launch-contract.ts";
@@ -270,6 +271,13 @@ if (ownsAppLock)
         presentation,
         source: taskActionSource,
       });
+      // The automation page's editor: one rules version per draft, checked again by the hub on save.
+      const rulesCasSource = createRulesCasSource({ home: runtimeHome, getState: () => presentation.snapshot() });
+      const rulesCas = createRulesCasIpc({
+        source: rulesCasSource,
+        assertSender: (event) => assertSender(event, window.webContents, page),
+        gate: () => undefined,
+      });
       const showSafeError = (message: string) =>
         dialog.showMessageBox(window, {
           type: "error",
@@ -443,16 +451,20 @@ if (ownsAppLock)
         documentToken = undefined;
         committedFrame = undefined;
         presentation.invalidateDocument();
+        // The old document's rules reads and saves must not land after the new document exists.
+        rulesCas.invalidate();
       };
       window.webContents.on("did-start-loading", () => {
         if (!window.webContents.isLoadingMainFrame()) return;
         committedFrame = undefined;
         documentToken = presentation.beginDocument();
+        rulesCas.invalidate();
       });
       window.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
         if (isMainFrame && !isInPlace) {
           committedFrame = undefined;
           documentToken = presentation.beginDocument();
+          rulesCas.invalidate();
         }
       });
       window.webContents.on("did-frame-navigate", (_event, url, _code, _text, isMainFrame, processId, routingId) => {
@@ -475,7 +487,10 @@ if (ownsAppLock)
         if (trusted && documentToken === token && committedFrame === committed)
           presentation.finishDocument(token, page);
       });
-      window.webContents.on("destroyed", invalidateDocument);
+      window.webContents.on("destroyed", () => {
+        invalidateDocument();
+        rulesCas.dispose();
+      });
       window.webContents.on("will-navigate", (event) => event.preventDefault());
       window.webContents.on("will-frame-navigate", (event) => event.preventDefault());
       window.webContents.on("will-redirect", (event) => event.preventDefault());
@@ -626,18 +641,8 @@ if (ownsAppLock)
       }));
       // Answer/close/stop/correct one round through the hub's own doors; the input is checked before any request.
       ipcMain.handle(channels.taskAction, taskAction);
-      // The automation page's editor: whole-list read and whole-list replace through the same door.
-      ipcMain.handle(channels.rulesGet, async (event, ...args: unknown[]) => {
-        assertSender(event, window.webContents, page);
-        if (args.length !== 0) throw new Error("invalid-request");
-        return taskSource.rules();
-      });
-      ipcMain.handle(channels.rulesPut, async (event, ...args: unknown[]) => {
-        assertSender(event, window.webContents, page);
-        if (args.length !== 1) throw new Error("invalid-request");
-        const entries = parseDesktopRulesEntries(args[0]);
-        return taskSource.save(entries);
-      });
+      ipcMain.handle(channels.rulesCasGet, (event, ...args: unknown[]) => rulesCas.get(event, args));
+      ipcMain.handle(channels.rulesCasPut, (event, ...args: unknown[]) => rulesCas.put(event, args));
       await window.loadFile(pagePath);
       window.show();
       if (!smoke && !lifecycle) await launch.autoStart();
@@ -682,9 +687,8 @@ if (ownsAppLock)
         const taskEntries = await window.desktop.taskEntries();
         let invalidTaskRejected = false;
         try { await window.desktop.taskCreate({ type: 'Task', summary: 'x', detail: '' }); } catch { invalidTaskRejected = true; }
-        const rulesGet = await window.desktop.rulesGet();
-        let invalidRulesRejected = false;
-        try { await window.desktop.rulesPut([{ name: '', types: ['t'], to: 'c', cwd: '~/' }]); } catch { invalidRulesRejected = true; }
+        const rulesCasGet = await window.desktop.rulesCasGet();
+        const invalidRules = await window.desktop.rulesCasPut({ entries: [{ name: '', types: ['t'], to: 'c', cwd: '~/' }], rulesSeq: 1 });
         let runtimeEventSeen = false;
         const unsubscribe = window.desktop.onRuntimeEvent((event) => { runtimeEventSeen = true; });
         unsubscribe();
@@ -693,7 +697,7 @@ if (ownsAppLock)
         const offNavigate = window.desktop.onNavigate((target) => { navigateSeen = true; });
         offNavigate();
         offNavigate();
-        return { theme, dark, invalidRejected, pages, runtime, today, tasks, invalidPageRejected, taskEntries, invalidTaskRejected, rulesGet, invalidRulesRejected, runtimeEventSeen, navigateSeen, nodeAbsent: typeof require === 'undefined' && typeof process === 'undefined', bridge: Object.keys(window.desktop).sort() };
+        return { theme, dark, invalidRejected, pages, runtime, today, tasks, invalidPageRejected, taskEntries, invalidTaskRejected, rulesCasGet, invalidRules, runtimeEventSeen, navigateSeen, nodeAbsent: typeof require === 'undefined' && typeof process === 'undefined', bridge: Object.keys(window.desktop).sort() };
       })()`);
           const shots = join(base, "..", ".cache", "smoke");
           mkdirSync(shots, { recursive: true });
@@ -729,14 +733,16 @@ if (ownsAppLock)
             result.taskEntries.ok !== false ||
             result.taskEntries.error.code !== "unavailable" ||
             result.invalidTaskRejected !== true ||
-            !result.rulesGet ||
-            result.rulesGet.ok !== false ||
-            result.rulesGet.error.code !== "unavailable" ||
-            result.invalidRulesRejected !== true ||
+            !result.rulesCasGet ||
+            result.rulesCasGet.ok !== false ||
+            result.rulesCasGet.error.code !== "unavailable" ||
+            result.invalidRules.ok !== false ||
+            result.invalidRules.error.code !== "invalid" ||
+            result.invalidRules.error.outcome !== "not-sent" ||
             result.runtimeEventSeen !== false ||
             result.navigateSeen !== false ||
             result.bridge.join(",") !==
-              "checkBuiltinAgents,completeSetup,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,probeHub,rulesGet,rulesPut,runtimeGet,runtimeStart,runtimeStop,setTheme,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,tasksGet,todayState,window" ||
+              "checkBuiltinAgents,completeSetup,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,probeHub,rulesCasGet,rulesCasPut,runtimeGet,runtimeStart,runtimeStop,setTheme,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,tasksGet,todayState,window" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||

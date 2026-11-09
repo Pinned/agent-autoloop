@@ -1,7 +1,7 @@
-// Prevent loss of advanced rule fields and wildcard/concrete-type regressions in production views.
+// Prevent wildcard/concrete-type regressions in the production new-task dialog.
+// The rule editor's advanced-field preservation lives in rules-cas-view.test.ts.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mountRulesView } from "../src/renderer/rules-view.ts";
 import { mountTaskDialog } from "../src/renderer/task-view.ts";
 
 // A small DOM double exercises production event handlers, without Electron or any service.
@@ -69,65 +69,6 @@ function id(body: Element, name: string): Element {
   assert.ok(found, `missing ${name}`);
   return found;
 }
-
-test("the full rule form preserves every advanced field, then explicitly clears them", () =>
-  dom((body) => {
-    const original = {
-      name: "旧名",
-      types: ["task.*"],
-      to: "a1",
-      cwd: "~/x",
-      prompt: "提示",
-      skill: "技能",
-      parallel: 2,
-      group: "旧名",
-      tell: "never",
-      emits: { source: "app", types: ["result.*"] },
-    };
-    let updated: Record<string, unknown> | undefined;
-    const control = {
-      loadState: { kind: "ready", data: { entries: [original], agents: [], seq: 0 } },
-      saveState: { kind: "idle" },
-      draft: [original],
-      busy: false,
-      refresh() {},
-      beginEdit() {},
-      save() {},
-      cancelEdit() {},
-      removeEntry() {},
-      addEntry() {},
-      updateEntry(_index: number, raw: Record<string, unknown>) {
-        updated = raw;
-      },
-    };
-    const view = mountRulesView(control as unknown as Parameters<typeof mountRulesView>[0]);
-    body.append(view.root as unknown as Element);
-    view.update();
-    all(body)
-      .find((node) => node.tag === "button" && node.textContent === "编辑")!
-      .emit("click");
-    assert.equal(id(body, "rules-group").value, "旧名");
-    assert.equal(id(body, "rules-tell").value, "never");
-    assert.equal(id(body, "rules-emits-source").value, "app");
-    assert.equal(id(body, "rules-emits-types").value, "result.*");
-    id(body, "rules-name").value = "新名";
-    const form = all(body).find((node) => node.tag === "form")!;
-    form.emit("submit");
-    assert.deepEqual(updated, { ...original, name: "新名" });
-    for (const name of ["prompt", "skill", "parallel", "group", "tell", "emits-source", "emits-types"])
-      id(body, `rules-${name}`).value = "";
-    form.emit("submit");
-    assert.deepEqual(updated, {
-      name: "新名",
-      types: ["task.*"],
-      to: "a1",
-      cwd: "~/x",
-      prompt: "",
-      skill: "",
-      group: "",
-      tell: "",
-    });
-  }));
 
 test("a wildcard needs a matching concrete type, preserves selection on refresh and never guesses a suffix", () =>
   dom((body) => {

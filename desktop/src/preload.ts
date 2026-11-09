@@ -21,8 +21,8 @@ const bridge = Object.freeze<DesktopBridge>({
   taskEntries: () => ipcRenderer.invoke("desktop:task:entries"),
   taskCreate: (input) => ipcRenderer.invoke("desktop:task:create", { version: 3, input }),
   taskAction: (input) => ipcRenderer.invoke("desktop:tasks:action", input),
-  rulesGet: () => ipcRenderer.invoke("desktop:rules:get"),
-  rulesPut: (entries) => ipcRenderer.invoke("desktop:rules:put", entries),
+  rulesCasGet: () => ipcRenderer.invoke("desktop:rules:cas:get"),
+  rulesCasPut: (input) => ipcRenderer.invoke("desktop:rules:cas:put", input),
   onRuntimeEvent: (listener) => {
     const receiving = (_event: unknown, payload: unknown) => {
       listener(payload as never);
