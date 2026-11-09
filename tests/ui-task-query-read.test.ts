@@ -308,8 +308,11 @@ test("STATIC api wiring captures latest, authenticates once, immediately returns
     api,
     /const latest = hub\.getView\(\);\s*requireOwner\(request, latest\);\s*const read = uiRead\(request, latest\);\s*if \(read !== null\) return read;/,
   );
+  // One view is captured for the whole prologue and feeds both auth and the pure read. A later capture is
+  // allowed only as the save reply's version after the write; it must never re-authenticate or re-read.
+  const prologue = api.slice(0, api.indexOf("if (read !== null) return read;"));
+  assert.equal((prologue.match(/hub\.getView\(/g) ?? []).length, 1);
   assert.equal((api.match(/requireOwner\(/g) ?? []).length, 1);
-  assert.equal((api.match(/hub\.getView\(/g) ?? []).length, 1);
   assert.equal((api.match(/uiRead\(/g) ?? []).length, 1);
   assert.ok(api.indexOf("if (read !== null) return read;") < api.indexOf('pathname === "/v1/ui/rules"'));
   assert.match(

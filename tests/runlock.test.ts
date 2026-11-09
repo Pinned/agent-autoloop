@@ -342,7 +342,8 @@ test("official Node distinguishes BEGIN busy errcode=5 from corrupt errcode=26",
     const file = ${JSON.stringify(join(dir, "proof.db"))};
     const db = new DatabaseSync(file);
     db.exec('PRAGMA busy_timeout=0; BEGIN IMMEDIATE');
-    const probe = "import {DatabaseSync} from 'node:sqlite'; try {const db = new DatabaseSync(process.argv[1]); db.exec('PRAGMA busy_timeout=0; BEGIN IMMEDIATE');} catch(e) {console.log(e.errcode)}";
+    // Write the raw code: console.log formats numbers through inspect, which colors them when FORCE_COLOR is set.
+    const probe = "import {DatabaseSync} from 'node:sqlite'; try {const db = new DatabaseSync(process.argv[1]); db.exec('PRAGMA busy_timeout=0; BEGIN IMMEDIATE');} catch(e) {process.stdout.write(String(e.errcode))}";
     const run = () => spawnSync(process.execPath, ['--input-type=module', '-e', probe, file], {encoding:'utf8'}).stdout.trim();
     const busy = run(); db.exec('ROLLBACK'); db.close();
     writeFileSync(file, 'broken database');
