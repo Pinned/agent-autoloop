@@ -20,6 +20,9 @@ export type LocalReadingState =
 export function createRendererLocalReading(bridge: LocalReadingBridge, onChange: () => void) {
   let state: LocalReadingState = Object.freeze({ kind: "loading" });
   let flight = false;
+  // A request made while a read is in flight is trailing-coalesced, not dropped: a runtime
+  // transition must not be answered by a reading taken before it happened.
+  let pending = false;
 
   function notify() {
     try {
@@ -33,17 +36,25 @@ export function createRendererLocalReading(bridge: LocalReadingBridge, onChange:
     if (rejected) {
       state = Object.freeze({ kind: "error" });
       notify();
-      return;
+    } else {
+      try {
+        const snapshot = parseDesktopWorkerLocalReading(value);
+        state = Object.freeze(snapshot ? { kind: "ready", snapshot } : { kind: "empty" });
+      } catch {
+        // The main process is expected to answer with a contract snapshot; anything else is a read
+        // failure, never a source of numbers for the page.
+        state = Object.freeze({ kind: "error" });
+      }
+      notify();
     }
-    try {
-      const snapshot = parseDesktopWorkerLocalReading(value);
-      state = Object.freeze(snapshot ? { kind: "ready", snapshot } : { kind: "empty" });
-    } catch {
-      // The main process is expected to answer with a contract snapshot; anything else is a read
-      // failure, never a source of numbers for the page.
-      state = Object.freeze({ kind: "error" });
+    // The answer just adopted was computed when the previous read began; a request that arrived
+    // since then (a runtime transition) is answered by a read that starts now, not by that answer.
+    // At most one trailing read is owed, no matter how many requests arrived meanwhile.
+    if (pending) {
+      pending = false;
+      // A listener may already have started the next read; it covers the pending request.
+      if (!flight) begin();
     }
-    notify();
   }
   function begin() {
     flight = true;
@@ -68,9 +79,15 @@ export function createRendererLocalReading(bridge: LocalReadingBridge, onChange:
     get busy(): boolean {
       return flight;
     },
-    /** Page entry, the page refresh button and every runtime transition collapse into one read. */
+    /**
+     * Page entry, the page refresh button and every runtime transition converge here. At most one
+     * read is in flight; a request that arrives meanwhile earns exactly one trailing read.
+     */
     refresh(): void {
-      if (flight) return;
+      if (flight) {
+        pending = true;
+        return;
+      }
       void begin();
     },
   };
