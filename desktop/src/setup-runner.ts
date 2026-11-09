@@ -16,6 +16,12 @@ export type SetupResources = {
   home: string;
   /** A directory created and identity-owned by this request, never the user's HOME. */
   environmentHome: string;
+  /**
+   * The user's own terminal environment, resolved against their real HOME by the main process.
+   * Setup runs with an isolated HOME, so it cannot derive the directories its owner's start-up
+   * files add; without these, a Homebrew or ~/.local/bin agent is reported as not installed.
+   */
+  terminal?: { readonly shell?: string; readonly path?: string };
 };
 export type SetupCleanup = () => Promise<void>;
 
@@ -72,10 +78,13 @@ export function createSetupRunner(options: {
       )
         throw new Error("设置资源不可用");
       const env: NodeJS.ProcessEnv = {
+        // The user's own PATH when it resolved, so setup sees the same agents their terminal does.
+        // The fixed fallback covers a shell that could not answer, not a guess at the user's layout.
         PATH:
-          process.platform === "darwin"
+          resources.terminal?.path ??
+          (process.platform === "darwin"
             ? "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-            : "/usr/local/bin:/usr/bin:/bin",
+            : "/usr/local/bin:/usr/bin:/bin"),
         LANG: "en_US.UTF-8",
         HOME: resources.environmentHome,
         USERPROFILE: resources.environmentHome,
@@ -85,6 +94,9 @@ export function createSetupRunner(options: {
         TMP: resources.environmentHome,
         TEMP: resources.environmentHome,
         AGENT_AUTOLOOP_HOME: resources.home,
+        // The setup entry asks its own login shell about installations; with an isolated HOME it
+        // must be the user's shell, not whatever /bin/sh happens to be.
+        ...(resources.terminal?.shell && { SHELL: resources.terminal.shell }),
         ...(options.installationDiscovery === "none" && { DESKTOP_SETUP_DISCOVERY: "none" }),
         // The hub port override (the CLI's `init --port` equivalent) is the one environment knob
         // the main process passes through; the entry point validates it and fails closed on junk.

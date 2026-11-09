@@ -191,11 +191,15 @@ if (ownsAppLock)
           const resources = await ownDirectory("setup resources ");
           const environmentHome = await ownDirectory("setup environment ");
           await copySources(join(base, "..", ".."), resources);
+          const terminal = await resolveTerminalEnvironment();
           return {
             nodePath: runtime.node,
             entryPath: join(resources, "host", "desktop-setup.ts"),
             home: runtimeHome,
             environmentHome,
+            // Setup runs with an isolated HOME, so it cannot ask the user's start-up files where
+            // their agents are; the terminal resolved above is the only correct answer.
+            terminal,
           };
         },
       });

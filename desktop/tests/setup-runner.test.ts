@@ -41,7 +41,7 @@ const unknown = (): LocalProcessResult => ({
 });
 const code = (response: DesktopSetupResponse) => (response.ok ? null : response.error.code);
 
-function fixture(result: LocalProcessResult = completed()) {
+function fixture(result: LocalProcessResult = completed(), prepared: SetupResources = resources) {
   let prepares = 0;
   let processes = 0;
   let cleanups = 0;
@@ -52,7 +52,7 @@ function fixture(result: LocalProcessResult = completed()) {
       own(async () => {
         cleanups++;
       });
-      return resources;
+      return prepared;
     },
     runProcess: async (options) => {
       processes++;
@@ -152,6 +152,35 @@ test("environment is created from zero: only fixed paths, language and own HOME/
     "OPENAI_API_KEY",
   ])
     assert.equal(env[name], undefined);
+  // No inherited SHELL: an isolated setup must not claim the app's shell when none was resolved.
+  assert.equal(env.SHELL, undefined);
+});
+
+test("a resolved terminal replaces the guessed PATH and is the only extra value passed on", async () => {
+  const f = fixture(completed(), {
+    ...resources,
+    terminal: { shell: "/bin/zsh", path: "/opt/homebrew/bin:/Users/someone/.local/bin:/usr/bin:/bin" },
+  });
+  await f.runner.run(request());
+  const env = f.observed().env!;
+  // The user's own answer, not the fixed guess: this is how setup finds a Homebrew or
+  // ~/.local/bin agent whose directory no system file mentions.
+  assert.equal(env.PATH, "/opt/homebrew/bin:/Users/someone/.local/bin:/usr/bin:/bin");
+  assert.equal(env.SHELL, "/bin/zsh");
+  // Everything else remains created from zero.
+  assert.equal(env.HOME, resources.environmentHome);
+  assert.equal(env.AGENT_AUTOLOOP_HOME, resources.home);
+  for (const name of ["ZSH", "ZDOTDIR", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "NODE_OPTIONS"])
+    assert.equal(env[name], undefined, name);
+});
+
+test("a partially resolved terminal fills only what it has", async () => {
+  const f = fixture(completed(), { ...resources, terminal: { shell: "/bin/fish" } });
+  await f.runner.run(request());
+  const env = f.observed().env!;
+  assert.equal(env.SHELL, "/bin/fish");
+  // No PATH was resolved, so the fixed fallback stays rather than becoming empty.
+  assert.ok(["/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", "/usr/local/bin:/usr/bin:/bin"].includes(env.PATH!));
 });
 
 test("safe result is reconstructed and withheld until reverse-order owned cleanup finishes", async () => {

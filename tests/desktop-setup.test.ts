@@ -27,11 +27,13 @@ import {
 import {
   createDesktopDiscovery,
   createDesktopSetupDriver,
+  desktopSearchDirectories,
   desktopSetupPort,
   desktopSetupRuntimeSupported,
   DESKTOP_CONFIG_MAX_BYTES,
   DESKTOP_SETUP_PORT_VARIABLE,
   DESKTOP_SUPPORTED_NODE_MAJOR,
+  DESKTOP_SYSTEM_DIRECTORIES,
   readDesktopSetupRequest,
   readDesktopSetupStatus,
   type DesktopSetupDependencies,
@@ -275,6 +277,23 @@ test("restricted discovery sees only fixed injected directories and never execut
   );
   assert.equal(existsSync(marker), false);
   assert.throws(() => createDesktopDiscovery(["relative"]));
+});
+
+test("search directories come from the user's own PATH, and fall back to the fixed system set", () => {
+  // The terminal's PATH is the only place a Homebrew or ~/.local/bin agent will be named.
+  assert.deepEqual(desktopSearchDirectories("/opt/homebrew/bin:/Users/someone/.local/bin:/usr/bin:/bin"), [
+    "/opt/homebrew/bin",
+    "/Users/someone/.local/bin",
+    "/usr/bin",
+    "/bin",
+  ]);
+  // Duplicates collapse so each directory is probed once, in the order the terminal would.
+  assert.deepEqual(desktopSearchDirectories("/usr/bin:/usr/bin:/bin"), ["/usr/bin", "/bin"]);
+  // A relative or blank entry depends on an unknown cwd, so it never becomes a search root.
+  assert.deepEqual(desktopSearchDirectories("relative::/usr/bin"), ["/usr/bin"]);
+  // Nothing usable means the fixed system set: a shell that could not answer is not a guess.
+  for (const value of [undefined, "", "relative"])
+    assert.deepEqual(desktopSearchDirectories(value), [...DESKTOP_SYSTEM_DIRECTORIES]);
 });
 
 // Reject invalid allocator results before launch intent or config writes; valid boundaries never bind a socket.
