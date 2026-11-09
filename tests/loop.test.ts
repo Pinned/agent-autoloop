@@ -6,7 +6,8 @@
 // the user's Agents aren't told how to set it up, or something of the user's own is overwritten doing so, or a test install does it;
 // the question doesn't show on the desktop, shows again once answered, or a test run puts up a real notification.
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
+import { promisify } from "node:util";
 import {
   chmodSync,
   existsSync,
@@ -44,12 +45,31 @@ const env: NodeJS.ProcessEnv = {
 };
 delete env.AGENT_AUTOLOOP_RULES;
 delete env.AGENT_AUTOLOOP_PUBLIC_URL;
-const cli = (...args: string[]) =>
-  spawnSync(process.execPath, ["--disable-warning=ExperimentalWarning", bin, ...args], {
-    env,
-    encoding: "utf8",
-    timeout: 30_000,
-  });
+// Asynchronous on purpose: the hub lives in another process, and a spawnSync here blocks this
+// event loop past the server's 5s keepAliveTimeout. The socket is then closed under undici's
+// reuse pool and the next fetch fails with ECONNRESET — the only failure under load.
+const execFileAsync = promisify(execFile);
+const cli = async (...args: string[]) => {
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      process.execPath,
+      ["--disable-warning=ExperimentalWarning", bin, ...args],
+      {
+        env,
+        encoding: "utf8",
+        timeout: 30_000,
+      },
+    );
+    return { status: 0, stdout, stderr };
+  } catch (error) {
+    const failed = error as { code?: number | string; stdout?: string; stderr?: string };
+    return {
+      status: typeof failed.code === "number" ? failed.code : 1,
+      stdout: failed.stdout ?? "",
+      stderr: failed.stderr ?? "",
+    };
+  }
+};
 
 const freePort = () =>
   new Promise<number>((resolve) => {
@@ -99,11 +119,11 @@ after(async () => {
 
 test("one machine, one command: an event, a question, an answer, the work done", async () => {
   const port = await freePort();
-  const done = cli("init", "--no-service", "--command", script, "--port", String(port));
+  const done = await cli("init", "--no-service", "--command", script, "--port", String(port));
   assert.equal(done.status, 0, done.stderr);
   assert.equal(statSync(join(home, "config.json")).mode & 0o777, 0o600, "its keys are private");
-  assert.equal(cli("init", "--no-service").status, 1, "a second init doesn't overwrite the first");
-  assert.equal(cli("check").status, 0);
+  assert.equal((await cli("init", "--no-service")).status, 1, "a second init doesn't overwrite the first");
+  assert.equal((await cli("check")).status, 0);
   // Point the starter rule at something this test owns.
   const rules = JSON.parse(readFileSync(join(home, "rules.json"), "utf8"));
   mkdirSync(join(home, "work"));
@@ -124,11 +144,11 @@ test("one machine, one command: an event, a question, an answer, the work done",
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   assert.equal((await (await fetch(`${url}/healthz`)).json()).ok, true);
-  const second = cli("up");
+  const second = await cli("up");
   assert.equal(second.status, 1);
   assert.match(second.stderr, /已经在跑了/);
 
-  const emitted = cli("emit", "hello.world", "--subject", "x-1", "--summary", "你好");
+  const emitted = await cli("emit", "hello.world", "--subject", "x-1", "--summary", "你好");
   assert.equal(emitted.status, 0, emitted.stderr);
   assert.match(emitted.stdout, /交给了：试一下/);
 
@@ -147,14 +167,14 @@ test("one machine, one command: an event, a question, an answer, the work done",
   const card = asking.cards[0];
   assert.equal(card.title, "试跑：选一个颜色");
   assert.ok(readFileSync(join(home, "where.txt"), "utf8").includes("work"));
-  const waiting = cli("status");
+  const waiting = await cli("status");
   assert.match(waiting.stdout, /等你 1/);
   assert.match(waiting.stdout, new RegExp(`#${card.id} 试跑：选一个颜色`));
   assert.match(waiting.stdout, /2\. 绿色（推荐）/);
   assert.match(waiting.stdout, new RegExp(`agent-autoloop answer ${card.id} `));
 
-  assert.equal(cli("answer", String(card.id), "7").status, 1, "there's no seventh option");
-  const answered = cli("answer", String(card.id), "2");
+  assert.equal((await cli("answer", String(card.id), "7")).status, 1, "there's no seventh option");
+  const answered = await cli("answer", String(card.id), "2");
   assert.equal(answered.status, 0, answered.stderr);
   const finished = await until((s) =>
     s.runs.some((r: any) => r.summary === "你选了绿色，做完了" && r.state === "done"),
@@ -168,33 +188,35 @@ test("one machine, one command: an event, a question, an answer, the work done",
     ["试跑：选一个颜色", "运行 agent-autoloop status 查看"],
     "once, and not for the answer",
   );
-  assert.match(cli("answer", String(card.id), "1").stdout, /已经/);
+  assert.match((await cli("answer", String(card.id), "1")).stdout, /已经/);
 
-  const status = cli("status");
+  const status = await cli("status");
   assert.match(status.stdout, /在跑 0 · 排队 0 · 今天做完 2 · 等你 0/);
   assert.match(status.stdout, /你选了绿色，做完了/);
+  // `tell` reads its text from stdin, which execFile doesn't take; the wait below is short enough
+  // that this synchronous call cannot outlive the server's keep-alive.
   const told = spawnSync(process.execPath, ["--disable-warning=ExperimentalWarning", bin, "tell", "note-1"], {
     env,
     encoding: "utf8",
     input: "告诉你一声\n",
   });
   assert.match(told.stdout, /说了/);
-  assert.match(cli("status").stdout, /告诉你一声/);
-  cli("emit", "hello.notice");
+  assert.match((await cli("status")).stdout, /告诉你一声/);
+  await cli("emit", "hello.notice");
   const noticed = await until((s) => s.cards.some((c: any) => c.kind === "notice"));
   const notice = noticed.cards.find((c: any) => c.kind === "notice");
-  assert.match(cli("status").stdout, new RegExp(`处理完了：agent-autoloop answer ${notice.id}`));
-  assert.match(cli("answer", String(notice.id)).stdout, /结案了/);
+  assert.match((await cli("status")).stdout, new RegExp(`处理完了：agent-autoloop answer ${notice.id}`));
+  assert.match((await cli("answer", String(notice.id))).stdout, /结案了/);
 
   // Nobody at a terminal, as when an Agent is installing it: `try` says what's being asked and how to answer, and doesn't wait.
-  const tried = cli("try");
+  const tried = await cli("try");
   assert.equal(tried.status, 0, tried.stderr);
   assert.match(tried.stdout, /试跑：选一个颜色/);
   const id = /agent-autoloop answer (\d+) /.exec(tried.stdout)![1];
-  const resolved = cli("resolve", id, "不试了");
+  const resolved = await cli("resolve", id, "不试了");
   assert.match(resolved.stdout, /结案了/);
   assert.equal((await state()).recentCards.find((c: any) => c.id === Number(id)).result, "不试了");
-  assert.equal(cli("resolve", id).status, 1, "a result has to be written");
+  assert.equal((await cli("resolve", id)).status, 1, "a result has to be written");
   // The console is the one page served; what's going on is still read through the doors behind it.
   const page = await fetch(`${url}/`);
   assert.equal(page.status, 200);
