@@ -146,6 +146,7 @@ function fixture(body: Element) {
     gets: () => gets,
     button,
     id,
+    find,
     form: () => find((node) => node.tag === "form"),
     dialog: () => find((node) => node.tag === "dialog"),
     text: () =>
@@ -496,4 +497,56 @@ test("form validation, add/remove and explicit clearing use the existing full co
       to: original.to,
       cwd: original.cwd,
     });
+  }));
+
+const COUNTED = "仅描述将提交的本机入口；不代表中台已接受，也不代表路由结果；非 local 规则不会被改动。";
+const second = { ...original, name: "第二个", types: ["task.other"], to: "a", cwd: "~/y" };
+
+test("the preview states only what the save hands over for the local slots", () =>
+  dom(async (f) => {
+    f.view.init();
+    await flush();
+    const preview = f.find((node) => /\brules-preview\b/.test(node.className));
+    assert.equal(preview.hidden, true);
+    f.button("编辑").click();
+    assert.equal(preview.hidden, false);
+    assert.equal(preview.textContent, `本次保存将提交的本机入口与当前一致（共 1 条）。 ${COUNTED}`);
+    // A new entry is appended after the last local slot by the hub's own merge; the count says so.
+    f.controller.addEntry(second);
+    assert.equal(preview.textContent, `本次保存将提交 2 条本机入口：新增 1 条。 ${COUNTED}`);
+    // Changing any displayed field counts as a modification of that slot.
+    f.controller.updateEntry(0, { ...original, prompt: "改了" });
+    assert.equal(preview.textContent, `本次保存将提交 2 条本机入口：新增 1 条、修改 1 条。 ${COUNTED}`);
+    f.controller.removeEntry(1);
+    assert.equal(preview.textContent, `本次保存将提交 1 条本机入口：修改 1 条。 ${COUNTED}`);
+    // Removing every entry is the door's "clear all local entries" case, stated plainly.
+    f.controller.removeEntry(0);
+    assert.equal(preview.textContent, `本次保存将提交 0 条本机入口：删除全部 1 条。 ${COUNTED}`);
+    // Discarding the draft hides it; the preview never outlives the draft it describes.
+    f.button("放弃本地修改").click();
+    assert.equal(preview.hidden, true);
+  }));
+
+test("the preview compares every entry field, so an unchanged draft reports no change", () =>
+  dom(async (f) => {
+    f.view.init();
+    await flush();
+    const preview = f.find((node) => /\brules-preview\b/.test(node.className));
+    f.controller.beginEdit();
+    for (const field of ["name", "to", "cwd", "prompt", "skill", "group", "tell", "parallel"] as const)
+      f.controller.updateEntry(0, { ...original, [field]: original[field] });
+    f.controller.updateEntry(0, { ...original, types: [...original.types] });
+    f.controller.updateEntry(0, { ...original, emits: { ...original.emits, types: [...original.emits.types] } });
+    assert.equal(preview.textContent, `本次保存将提交的本机入口与当前一致（共 1 条）。 ${COUNTED}`);
+    for (const changed of [
+      { types: ["task.new"] },
+      { emits: { source: "app", types: ["done.other"] } },
+      { parallel: 3 },
+      { tell: "always" as const },
+      { group: "另一组" },
+    ])
+      f.controller.updateEntry(0, { ...original, ...changed });
+    assert.equal(preview.textContent, `本次保存将提交 1 条本机入口：修改 1 条。 ${COUNTED}`);
+    f.controller.updateEntry(0, original);
+    assert.equal(preview.textContent, `本次保存将提交的本机入口与当前一致（共 1 条）。 ${COUNTED}`);
   }));
