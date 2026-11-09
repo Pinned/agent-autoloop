@@ -39,6 +39,9 @@ export const DESKTOP_TASK_MESSAGES = Object.freeze({
   error: "新建任务失败，请稍后重试。",
   noEntry: "本机还没有能接住任务的事件入口，先在入口设置里加一个。",
   entryLoadFailed: "读取任务入口失败，请稍后重试。",
+  "not-sent": "这次任务未发送。请确认本机运行状态后，显式另建一条。",
+  rejected: "这次任务已明确被拒绝。请检查后，显式另建一条。",
+  uncertain: "无法确认这次任务是否已入队。请保留本次记录并人工核查，不要重复提交或另建同一任务。",
 } satisfies Record<string, string>);
 
 function withinBytes(value: string, max: number) {
@@ -216,4 +219,53 @@ export function desktopTaskCreateOf(value: DesktopTaskCreateResponse): DesktopTa
 
 export function desktopTaskEntriesOf(value: DesktopTaskEntriesResponse): DesktopTaskEntriesResponse {
   return parseDesktopTaskEntriesResponse(value);
+}
+
+export type DesktopTaskOutcome =
+  | { version: 3; outcome: "accepted"; receipt: Extract<DesktopTaskCreateResponse, { ok: true }> }
+  | { version: 3; outcome: "not-sent" | "rejected" | "uncertain"; message: string };
+
+/** V3 rejects all extra own keys, including symbols/non-enumerable keys, without invoking accessors. */
+function strictTaskRecord(value: unknown, keys: string[]): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== OBJECT)
+    throw new Error("字段不对");
+  const own = Reflect.ownKeys(value);
+  if (own.length !== keys.length || own.some((key) => typeof key !== "string" || !keys.includes(key)))
+    throw new Error("字段不对");
+  for (const key of keys) {
+    const property = Object.getOwnPropertyDescriptor(value, key);
+    if (!property || !("value" in property) || !property.enumerable || typeof property.value === "function")
+      throw new Error("字段不对");
+  }
+  return value as Record<string, unknown>;
+}
+
+export function parseDesktopTaskCreateRequest(value: unknown): DesktopTaskInput {
+  const request = strictTaskRecord(value, ["version", "input"]);
+  if (request.version !== 3) throw new Error("版本不对");
+  strictTaskRecord(request.input, ["type", "summary", "detail"]);
+  return parseDesktopTaskInput(request.input);
+}
+
+export function parseDesktopTaskOutcome(value: unknown): DesktopTaskOutcome {
+  const outcome = value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, "outcome")?.value : undefined;
+  if (outcome === "accepted") {
+    const accepted = strictTaskRecord(value, ["version", "outcome", "receipt"]);
+    if (accepted.version !== 3) throw new Error("版本不对");
+    const raw = strictTaskRecord(accepted.receipt, ["version", "ok", "result"]);
+    strictTaskRecord(raw.result, ["event", "duplicate", "routed"]);
+    const receipt = parseDesktopTaskCreateResponse(raw);
+    if (!receipt.ok) throw new Error("回执不对");
+    return { version: 3, outcome, receipt };
+  }
+  if (outcome === "not-sent" || outcome === "rejected" || outcome === "uncertain") {
+    const refusal = strictTaskRecord(value, ["version", "outcome", "message"]);
+    if (refusal.version !== 3 || refusal.message !== DESKTOP_TASK_MESSAGES[outcome]) throw new Error("回执不对");
+    return { version: 3, outcome, message: DESKTOP_TASK_MESSAGES[outcome] };
+  }
+  throw new Error("回执不对");
+}
+
+export function taskOutcomeOf(value: DesktopTaskOutcome): DesktopTaskOutcome {
+  return parseDesktopTaskOutcome(value);
 }
