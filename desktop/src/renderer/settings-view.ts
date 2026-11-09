@@ -127,7 +127,10 @@ export function mountSettingsView(controller: Settings, options: SettingsViewOpt
       editing = null;
       queueMicrotask(() => controller.cancelEdit());
     }
-    if (!available.some((item) => item.id === tab)) tab = available[0].id;
+    // The prototype's fallback is the role-and-connection group: it is the one group both roles
+    // keep, so losing a selection lands somewhere that still explains the machine's place.
+    if (!available.some((item) => item.id === tab))
+      tab = available.some((item) => item.id === "connection") ? "connection" : available[0].id;
     tabButtons = available.map((item) => {
       const button = document.createElement("button");
       button.type = "button";

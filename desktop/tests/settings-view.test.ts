@@ -209,8 +209,9 @@ test("a group that disappears takes the selection with it", () => {
   refresh(f.view);
   assert.equal(f.tabs.children.some((button) => button.dataset.tab === "sources"), false);
   const first = f.tabs.children[0];
+  // The prototype's own fallback: a lost selection lands on the group both roles keep.
   assert.equal(first.dataset.tab, "agents");
-  assert.ok(first.className.split(" ").includes("active"));
+  assert.equal(f.tabs.children.find((button) => button.className.split(" ").includes("active"))!.dataset.tab, "connection");
 });
 
 test("a draft inside a group the machine loses is dropped, not hidden", async () => {
@@ -234,6 +235,10 @@ test("a draft inside a group the machine loses is dropped, not hidden", async ()
   assert.equal(all(f.root).some((node) => node.id === "settings-sources-0-name"), false);
   await flush();
   refresh(f.view);
+  // A lost selection lands on the group both roles keep, as the prototype does.
+  const active = f.tabs.children.find((button) => button.className.split(" ").includes("active"))!;
+  assert.equal(active.dataset.tab, "connection");
+  click(f.tabs.children.find((button) => button.dataset.tab === "agents")!);
   const editors = all(f.root).filter((node) => node.tagName === "button" && node.textContent === "编辑本组配置");
   assert.equal(editors.length, 1);
   assert.equal(editors[0].disabled, false, "a stranded draft must not keep blocking the other groups");
