@@ -48,6 +48,37 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
     line.textContent = value;
     parent.append(line);
   }
+  function actionButton(parent: HTMLElement, className: string, label: string, disabled: boolean, onClick: () => void) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = className;
+    button.textContent = label;
+    button.disabled = disabled;
+    button.addEventListener("click", onClick);
+    parent.append(button);
+    return button;
+  }
+  function actionInput(parent: HTMLElement, label: string, maxLength: number) {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.setAttribute("aria-label", label);
+    input.setAttribute("placeholder", label);
+    input.setAttribute("maxlength", String(maxLength));
+    parent.append(input);
+    return input;
+  }
+  /**
+   * The receipt of the last write. Only an answer that confirms nothing left main may be sent
+   * again directly; an unresolved outcome offers a re-read, never a silent retry.
+   */
+  function actionStatus(node: HTMLElement) {
+    const state = controller.actionState;
+    if (state.kind === "idle") return;
+    textLine(node, state.kind === "busy" ? "正在提交操作，请勿重复点击。" : state.message);
+    if (state.kind !== "settled") return;
+    if (state.retryable) actionButton(node, "action-retry", "重新提交", false, () => controller.submitAction(state.request));
+    else if (state.mustReread) actionButton(node, "action-reread", "重新读取此执行", false, () => controller.reread());
+  }
   function detailNode(runId: number) {
     const node = document.createElement("div");
     node.className = "run-detail";
@@ -64,6 +95,9 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
       return node;
     }
     const data = state.data;
+    // Mirrors the controller's own guard: a write in flight or an unresolved outcome blocks new writes.
+    const actionState = controller.actionState;
+    const writes = actionState.kind !== "busy" && !(actionState.kind === "settled" && actionState.mustReread);
     textLine(node, "详情从首批开始，按组手动加载；不是逐次尝试的完整审计记录。");
     function sectionControl(section: "events" | "cards" | "related", label: string) {
       const state = controller.sectionState[section];
@@ -98,6 +132,35 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
       run.usage.cached !== null && `缓存 ${run.usage.cached}`, run.usage.cost !== null && `花费 ${run.usage.cost}`,
     ].filter(Boolean).join(" / "));
     if (run.truncated) textLine(node, "部分文字已截断。");
+    // Run-level writes share the same single window and the same honest receipt below.
+    const runActions = document.createElement("div");
+    runActions.className = "run-actions";
+    const fresh = () => controller.detailState === stateSnapshot;
+    const cancellable = run.state === "queued" || run.state === "claimed" || run.state === "unknown";
+    if (cancellable) {
+      let armed = false;
+      const stop = actionButton(runActions, "cancel-run", "停止执行", !writes, () => {
+        // Two-step confirmation: the second click is the one that may leave this machine.
+        if (!fresh()) return;
+        if (!armed) {
+          armed = true;
+          stop.textContent = "确认停止";
+          textLine(runActions, "停止只结束本机这一轮；时间线与成本记录保留。");
+          return;
+        }
+        controller.submitAction({ action: "cancel", runId: run.id });
+      });
+    }
+    if (run.state !== "queued") {
+      const memo = actionInput(runActions, "更正内容", 4000);
+      actionButton(runActions, "memo-submit", "提交更正", !writes, () => {
+        if (fresh()) controller.submitAction({ action: "memo", runId: run.id, input: { text: memo.value } });
+      });
+      // The kernel may decline a correction it cannot resume; this only promises what it can.
+      textLine(runActions, "更正不会改写本轮：原轮次保留结束记录，新的下一轮并入队列。");
+    }
+    if (runActions.children.length) node.append(runActions);
+    actionStatus(node);
     textLine(node, "触发事件");
     if (!data.events.items.length) textLine(node, "本批没有触发事件。");
     for (const event of data.events.items) {
@@ -116,6 +179,30 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
       if (card.answer !== null) textLine(node, `回答：${card.answer}`);
       if (card.result !== null) textLine(node, `结果：${card.result}`);
       if (card.truncated) textLine(node, "部分卡片文字已截断。");
+      if (card.state !== "open") continue;
+      const fresh = () => controller.detailState === stateSnapshot;
+      const block = document.createElement("div");
+      block.className = "card-actions";
+      if (card.kind === "ask") {
+        card.options.forEach((option, index) => actionButton(block, "answer-choice", option, !writes, () => {
+          if (fresh()) controller.submitAction({ action: "answer", cardId: card.id, input: { choice: index } });
+        }));
+        // A free-form answer is the same decision, not a new round.
+        const custom = actionInput(block, `自定义回答（卡片 #${card.id}）`, 4000);
+        actionButton(block, "answer-text", "提交回答", !writes, () => {
+          if (!fresh()) return;
+          controller.submitAction({ action: "answer", cardId: card.id, input: { text: custom.value } });
+        });
+        textLine(block, "回答保持当前轮次；只有中台确认为开放卡片才会生效。");
+      } else {
+        // A notice is closed by a short reason; the hub decides whether it is still open.
+        const reason = actionInput(block, `结案原因（卡片 #${card.id}）`, 1000);
+        actionButton(block, "resolve-submit", "结案", !writes, () => {
+          if (fresh()) controller.submitAction({ action: "resolve", cardId: card.id, input: { reason: reason.value } });
+        });
+        textLine(block, "结案后本轮留在完成列表，记录保留。");
+      }
+      node.append(block);
     }
     sectionControl("cards", "相关卡片");
     textLine(node, "关联执行记录");

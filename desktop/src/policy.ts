@@ -16,6 +16,10 @@ import type {
   DesktopRulesGetResponse,
   DesktopRulesSaveResponse,
 } from "../../host/desktop-rules-contract.ts";
+import type {
+  DesktopTaskActionInput,
+  DesktopTaskActionResponse,
+} from "../../host/desktop-task-action-contract.ts";
 
 export const channels = Object.freeze({
   themeGet: "desktop:theme:get",
@@ -33,6 +37,7 @@ export const channels = Object.freeze({
   taskDetail: "desktop:tasks:detail",
   taskEntries: "desktop:task:entries",
   taskCreate: "desktop:task:create",
+  taskAction: "desktop:tasks:action",
   rulesGet: "desktop:rules:get",
   rulesPut: "desktop:rules:put",
   // Main-to-renderer push only; the renderer never invokes this channel.
@@ -65,6 +70,8 @@ export interface DesktopBridge {
   taskEntries(): Promise<DesktopTaskEntriesResponse>;
   /** Create one task through the hub's own door; the input is checked again in main. */
   taskCreate(input: DesktopTaskInput): Promise<DesktopTaskOutcome>;
+  /** Answer, close, stop or correct one round through the hub's own door; checked again in main. */
+  taskAction(input: DesktopTaskActionInput): Promise<DesktopTaskActionResponse>;
   /** The whole entry list plus selectable agents, for the automation page's editor. */
   rulesGet(): Promise<DesktopRulesGetResponse>;
   /** Replace the whole entry list; the entries are checked before any request leaves main. */

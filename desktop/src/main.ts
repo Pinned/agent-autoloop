@@ -35,6 +35,8 @@ import { createTaskSource } from "./task-source.ts";
 import { createHubWatcher, type HubGlance } from "./hub-watcher.ts";
 import { createNotifier } from "./notify.ts";
 import { createTaskCreateHandler } from "./task-create-control.ts";
+import { createTaskActionSource } from "./task-action-source.ts";
+import { createTaskActionIpc } from "./task-action-ipc.ts";
 import { parseDesktopRulesEntries } from "../../host/desktop-rules-contract.ts";
 import { createSetupControl } from "./setup-control.ts";
 import { createSetupRunner } from "./setup-runner.ts";
@@ -257,6 +259,13 @@ if (ownsAppLock)
         assertSender: (event) => assertSender(event as Parameters<typeof assertSender>[0], window.webContents, page),
         presentation,
         source: detailSource,
+      });
+      // The write side of the same page: one owner action at a time, gated by the same lease.
+      const taskActionSource = createTaskActionSource({ home: runtimeHome, getState: () => presentation.snapshot() });
+      const taskAction = createTaskActionIpc({
+        assertSender: (event) => assertSender(event as Parameters<typeof assertSender>[0], window.webContents, page),
+        presentation,
+        source: taskActionSource,
       });
       const showSafeError = (message: string) =>
         dialog.showMessageBox(window, {
@@ -586,6 +595,8 @@ if (ownsAppLock)
         presentation,
         create: (input, canSend) => taskSource.create(input, canSend),
       }));
+      // Answer/close/stop/correct one round through the hub's own doors; the input is checked before any request.
+      ipcMain.handle(channels.taskAction, taskAction);
       // The automation page's editor: whole-list read and whole-list replace through the same door.
       ipcMain.handle(channels.rulesGet, async (event, ...args: unknown[]) => {
         assertSender(event, window.webContents, page);
@@ -693,7 +704,7 @@ if (ownsAppLock)
             result.runtimeEventSeen !== false ||
             result.navigateSeen !== false ||
             result.bridge.join(",") !==
-              "checkBuiltinAgents,getTheme,initHub,joinWorker,onNavigate,onRuntimeEvent,rulesGet,rulesPut,runtimeGet,runtimeStart,runtimeStop,setTheme,setupStatus,taskCreate,taskDetail,taskEntries,tasksGet,todayState,window" ||
+              "checkBuiltinAgents,getTheme,initHub,joinWorker,onNavigate,onRuntimeEvent,rulesGet,rulesPut,runtimeGet,runtimeStart,runtimeStop,setTheme,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,tasksGet,todayState,window" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||
