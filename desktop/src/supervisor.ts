@@ -19,6 +19,12 @@ export interface SupervisorOptions {
   entryPath: string;
   home: string;
   cwd?: string;
+  /**
+   * What the user's own terminal has, resolved against their real HOME before this launch. The
+   * child re-reads its login shell with an isolated HOME, so a PATH it derives itself would lose
+   * every directory the user's start-up files add.
+   */
+  terminal?: { readonly shell?: string; readonly path?: string };
   spawn?: (file: string, args: string[], options: SpawnOptions) => ChildProcess;
   readyTimeoutMs?: number;
   drainTimeoutMs?: number;
@@ -171,8 +177,24 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     try {
       // No inherited NODE_OPTIONS, Electron mode, config overrides, keys or service credentials.
       const env: NodeJS.ProcessEnv = {};
-      for (const key of ["HOME", "USERPROFILE", "PATH", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "SYSTEMROOT"])
+      for (const key of [
+        "HOME",
+        "USERPROFILE",
+        "PATH",
+        "SHELL",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "LANG",
+        "LC_ALL",
+        "SYSTEMROOT",
+      ])
         if (process.env[key] !== undefined) env[key] = process.env[key];
+      // The terminal's own answer replaces the inherited one: launchd hands a GUI app neither the
+      // user's SHELL nor the PATH their start-up files build, so agents installed by Homebrew or
+      // into ~/.local/bin would look missing. Only these two values cross over.
+      if (options.terminal?.path) env.PATH = options.terminal.path;
+      if (options.terminal?.shell) env.SHELL = options.terminal.shell;
       env.AGENT_AUTOLOOP_HOME = options.home;
       child = (options.spawn ?? nodeSpawn)(options.nodePath, [options.entryPath, "up", "--stop-mode", "drain"], {
         cwd: options.cwd ?? options.home,
