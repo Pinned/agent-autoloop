@@ -12,10 +12,10 @@ import type {
   DesktopTaskInput,
 } from "../../host/desktop-task-contract.ts";
 import type {
-  DesktopRuleEntry,
-  DesktopRulesGetResponse,
-  DesktopRulesSaveResponse,
-} from "../../host/desktop-rules-contract.ts";
+  DesktopRulesCasGetResponse,
+  DesktopRulesCasInput,
+  DesktopRulesCasPutResponse,
+} from "../../host/desktop-rules-cas-contract.ts";
 import type {
   DesktopTaskActionInput,
   DesktopTaskActionResponse,
@@ -41,8 +41,8 @@ export const channels = Object.freeze({
   taskEntries: "desktop:task:entries",
   taskCreate: "desktop:task:create",
   taskAction: "desktop:tasks:action",
-  rulesGet: "desktop:rules:get",
-  rulesPut: "desktop:rules:put",
+  rulesCasGet: "desktop:rules:cas:get",
+  rulesCasPut: "desktop:rules:cas:put",
   // Main-to-renderer push only; the renderer never invokes this channel.
   runtimeEvent: "desktop:runtime:event",
   navigate: "desktop:navigate",
@@ -78,10 +78,10 @@ export interface DesktopBridge {
   taskCreate(input: DesktopTaskInput): Promise<DesktopTaskOutcome>;
   /** Answer, close, stop or correct one round through the hub's own door; checked again in main. */
   taskAction(input: DesktopTaskActionInput): Promise<DesktopTaskActionResponse>;
-  /** The whole entry list plus selectable agents, for the automation page's editor. */
-  rulesGet(): Promise<DesktopRulesGetResponse>;
-  /** Replace the whole entry list; the entries are checked before any request leaves main. */
-  rulesPut(entries: DesktopRuleEntry[]): Promise<DesktopRulesSaveResponse>;
+  /** The whole entry list, selectable agents and the rules version a draft is based on. */
+  rulesCasGet(): Promise<DesktopRulesCasGetResponse>;
+  /** Replace the whole list only at that rules version; checked again in main before any request. */
+  rulesCasPut(input: DesktopRulesCasInput): Promise<DesktopRulesCasPutResponse>;
   /** Subscribe to main-pushed runtime state; the returned function unsubscribes. */
   onRuntimeEvent(listener: (event: DesktopRuntimeEvent) => void): () => void;
   /** Subscribe to main-pushed page navigation (tray card and notification clicks). */

@@ -135,8 +135,6 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
     "tasksGet",
     "taskEntries",
     "taskCreate",
-    "rulesGet",
-    "rulesPut",
   ]) {
     assert.match(blockOf(name), /assertSender\(event, window\.webContents, page\)/);
   }
@@ -155,6 +153,18 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(read("../src/task-action-ipc.ts"), /options\.assertSender\(event\);/);
   assert.match(read("../src/task-action-ipc.ts"), /args\.length !== 1/);
   assert.match(read("../src/task-action-ipc.ts"), /parseDesktopTaskActionInput\(args\[0\]\)/);
+  // The rules CAS has its own unit: both channels delegate, and that unit checks the same pinned
+  // sender, parses the pinned input and fences late replies before touching the response.
+  assert.match(blockOf("rulesCasGet"), /=> rulesCas\.get\(event, args\)\)/);
+  assert.match(blockOf("rulesCasPut"), /=> rulesCas\.put\(event, args\)\)/);
+  assert.match(main, /const rulesCas = createRulesCasIpc\(\{/);
+  assert.match(main, /assertSender: \(event\) => assertSender\(event, window\.webContents, page\)/);
+  const casIpc = read("../src/rules-cas-ipc.ts");
+  assert.match(casIpc, /options\.assertSender\(event\);/);
+  assert.match(casIpc, /parseDesktopRulesCasInput\(payload\)/);
+  assert.match(casIpc, /parseDesktopRulesCasPutResponse\(reply\)/);
+  assert.match(main, /rulesCas\.invalidate\(\)/);
+  assert.match(main, /rulesCas\.dispose\(\)/);
   // The renderer is pushed state through the two fixed event channels, and nothing else.
   assert.equal((main.match(/webContents\.send\(/g) ?? []).length, 2);
   // Presentation wraps each snapshot once, then main posts that exact event; no second envelope.
@@ -190,8 +200,8 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
     "onNavigate",
     "onRuntimeEvent",
     "probeHub",
-    "rulesGet",
-    "rulesPut",
+    "rulesCasGet",
+    "rulesCasPut",
     "runtimeGet",
     "runtimeStart",
     "runtimeStop",
@@ -298,20 +308,25 @@ test("the task source only ever fetches the two fixed hub task routes with the o
   assert.match(preload, /invoke\("desktop:task:create", \{ version: 3, input \}\)/);
 });
 
-test("the automation page edits the hub's own entries through the pure rules contract", () => {
+test("the automation page edits the hub's own entries through the versioned rules CAS contract", () => {
   const app = read("../src/renderer/app.ts");
-  const view = read("../src/renderer/rules-view.ts");
-  const controller = read("../src/renderer/rules-controller.ts");
+  const view = read("../src/renderer/rules-cas-view.ts");
+  const controller = read("../src/renderer/rules-cas-controller.ts");
   const main = read("../src/main.ts");
-  assert.match(app, /mountRulesView\(/);
+  assert.match(app, /mountRulesCasView\(/);
   assert.match(app, /rules\.refresh\(\)/);
+  assert.match(app, /rulesGet: \(\) => window\.desktop\.rulesCasGet\(\)/);
+  assert.match(app, /rulesPut: \(input\) => window\.desktop\.rulesCasPut\(input\)/);
   // Pure DOM construction only; the list and the dialog never serialise markup.
   assert.doesNotMatch(view, /innerHTML|insertAdjacentHTML|console\./);
   assert.doesNotMatch(controller, /node:|from ["'].*host\/(?:config|runtime|setup)\.ts/);
-  assert.match(controller, /from ["'].*host\/desktop-rules-contract\.ts/);
+  assert.match(controller, /from ["'].*host\/desktop-rules-cas-contract\.ts/);
   assert.match(view, /showModal\(\)/);
-  // The whole-list replacement is checked in main before any request leaves the process.
-  assert.match(main, /parseDesktopRulesEntries\(args\[0\]\)/);
+  // The save carries the version it started from; the hub refuses a stale one, and main hands the
+  // parsed input to the same single-flight unit the page talks to.
+  assert.match(view, /needsReview|丢弃草稿并重新读取/);
+  assert.match(main, /createRulesCasSource\(\{ home: runtimeHome, getState: \(\) => presentation\.snapshot\(\) \}\)/);
+  assert.match(main, /desktop:rules:cas:get|channels\.rulesCasGet/);
 });
 
 test("the tasks page shows the hub's run history through the pure tasks contract", () => {

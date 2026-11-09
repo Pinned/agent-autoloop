@@ -114,7 +114,7 @@ export function parseLifecycleTaskReceipt(value: unknown): DesktopTaskResult {
 }
 
 export function lifecycleHubBusinessScript(ruleCwd: string): string {
-  const entry = JSON.stringify([
+  const entries = JSON.stringify([
     { name: LIFECYCLE_RULE_NAME, types: [LIFECYCLE_TASK_TYPE], to: LIFECYCLE_AGENT_ID, cwd: ruleCwd },
   ]);
   const agentId = JSON.stringify(LIFECYCLE_AGENT_ID);
@@ -124,12 +124,13 @@ export function lifecycleHubBusinessScript(ruleCwd: string): string {
   const deadline = Date.now() + ${BUSINESS_TIMEOUT_MS};
   let agents = null;
   while (!agents && Date.now() < deadline) {
-    const got = await window.desktop.rulesGet();
+    const got = await window.desktop.rulesCasGet();
     if (got.ok && got.data.agents.some((agent) => agent.id === ${agentId})) agents = got;
     else await wait(${POLL_SLOW_MS});
   }
   if (!agents) return { stage: "agents" };
-  const saved = await window.desktop.rulesPut(${entry});
+  // The save uses the version this read saw; the hub refuses an overwrite of a newer configuration.
+  const saved = await window.desktop.rulesCasPut({ entries: ${entries}, rulesSeq: agents.data.rulesSeq });
   if (!saved.ok) return { stage: "rules", saved };
   const created = await window.desktop.taskCreate({ type: ${taskType}, summary: "业务生命周期冒烟", detail: "" });
   return { stage: "create", created, deadline };

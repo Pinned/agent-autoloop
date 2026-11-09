@@ -8,8 +8,8 @@ import { createRendererTask } from "./task-controller.ts";
 import { mountTaskDialog } from "./task-view.ts";
 import { createRendererRun } from "./run-controller.ts";
 import { mountRunCard } from "./run-view.ts";
-import { createRendererRules } from "./rules-controller.ts";
-import { mountRulesView } from "./rules-view.ts";
+import { createRendererRulesCas } from "./rules-cas-controller.ts";
+import { mountRulesCasView } from "./rules-cas-view.ts";
 import { createRendererTasks } from "./tasks-controller.ts";
 import { mountTasksView } from "./tasks-view.ts";
 declare global {
@@ -97,11 +97,18 @@ taskGate = () => run.state.kind === "ready" && run.state.snapshot.status === "ru
   run.state.snapshot.role === "hub-worker" && !setup.busy && setup.state.kind !== "unknown-locked";
 taskControl.gateChanged();
 // The automation page is app-level too: one entry list and one edit dialog, page switches only
-// re-attach the card, so an edit in progress is never lost to navigation.
-const rules = createRendererRules(window.desktop, () => {
-  if (currentPage === "automation") rulesPage?.update();
-});
-const rulesPage = mountRulesView(rules);
+// re-attach the card, so an edit in progress is never lost to navigation. The draft keeps the
+// rules version it started from; a changed version makes the save conflict instead of overwriting.
+const rules = createRendererRulesCas(
+  {
+    rulesGet: () => window.desktop.rulesCasGet(),
+    rulesPut: (input) => window.desktop.rulesCasPut(input),
+  },
+  () => {
+    if (currentPage === "automation") rulesPage?.update();
+  },
+);
+const rulesPage = mountRulesCasView(rules);
 // The tasks page is app-level too: page switches only re-attach the list and re-read page one.
 const tasks = createRendererTasks(window.desktop, () => {
   if (currentPage === "tasks") tasksPage?.update();
@@ -209,7 +216,7 @@ function render(id: string, focus = true) {
     );
     today.refresh();
   } else if (id === "automation") {
-    // The hub's own entries, read and replaced whole; no mock rules and no background triggers.
+    // The hub's own entries at their current rules version; no mock rules and no background triggers.
     main.append(rulesPage.root);
     rulesPage.update();
     rules.refresh();

@@ -48,12 +48,6 @@ test("the door is closed unless the local hub is running, and worker machines ne
     assert.equal(listed.error.code, "unavailable");
     const created = await s.create({ type: "task.dev", summary: "x", detail: "" });
     assert.deepEqual(created, { version: 3, outcome: "not-sent", message: DESKTOP_TASK_MESSAGES["not-sent"] });
-    const listedRules = await s.rules();
-    if (listedRules.ok) throw new Error("expected refusal");
-    assert.equal(listedRules.error.code, "unavailable");
-    const savedRules = await s.save([{ name: "x", types: ["task.dev"], to: "claude", cwd: "~/" }]);
-    if (savedRules.ok) throw new Error("expected refusal");
-    assert.equal(savedRules.error.code, "unavailable");
     assert.ok(!read && !called, status + " must not touch config or network");
   }
   const worker = source({ status: "running", role: "worker" }, () => {
@@ -64,12 +58,6 @@ test("the door is closed unless the local hub is running, and worker machines ne
   assert.equal(workerListed.error.code, "no-hub");
   const workerCreated = await worker.create({ type: "t", summary: "x", detail: "" });
   assert.deepEqual(workerCreated, { version: 3, outcome: "not-sent", message: DESKTOP_TASK_MESSAGES["not-sent"] });
-  const workerRules = await worker.rules();
-  if (workerRules.ok) throw new Error("expected refusal");
-  assert.equal(workerRules.error.code, "no-hub");
-  const workerSaved = await worker.save([{ name: "x", types: ["t"], to: "c", cwd: "~/" }]);
-  if (workerSaved.ok) throw new Error("expected refusal");
-  assert.equal(workerSaved.error.code, "no-hub");
 });
 
 test("entries and creation go to the fixed door routes with the owner credential", async () => {
@@ -177,106 +165,4 @@ test("the runtime config read is bounded and follows no symlinks", async () => {
   const broken = await s.entries();
   assert.equal(broken.ok, false);
   if (!broken.ok) assert.equal(broken.error.code, "error");
-});
-
-const fullPage = {
-  entries: [
-    {
-      name: "发布规则",
-      types: ["task.release", "task.release.*"],
-      to: "codex",
-      cwd: "~/work",
-      prompt: "照发布流程走",
-      skill: "release",
-      parallel: 2,
-      group: "发布规则",
-      tell: "never",
-      emits: { source: "local", types: ["result.*"] },
-    },
-  ],
-  agents: [{ id: "codex", name: "Codex", use: "full" }],
-  seq: 11,
-};
-
-test("the rules read returns the whole editor data with the owner credential", async () => {
-  const seen: { url: string; init: RequestInit }[] = [];
-  const s = source({ status: "running", role: "hub-worker" }, (url, init) => {
-    seen.push({ url: String(url), init: init ?? {} });
-    return Promise.resolve(new Response(JSON.stringify(fullPage)));
-  });
-  const rules = await s.rules();
-  assert.equal(rules.ok, true);
-  if (rules.ok) {
-    assert.deepEqual(rules.data.entries[0], fullPage.entries[0]);
-    assert.deepEqual(rules.data.agents, fullPage.agents);
-    assert.equal(rules.data.seq, 11);
-  }
-  assert.equal(seen.length, 1);
-  assert.equal(seen[0].url, "http://127.0.0.1:3350/v1/ui/rules");
-  assert.equal(seen[0].init.method, undefined);
-  assert.equal((seen[0].init.headers as Record<string, string>).authorization, "Bearer owner-key");
-});
-
-test("saving replaces the whole list at the fixed route and answers with what was kept", async () => {
-  const seen: { url: string; init: RequestInit }[] = [];
-  const s = source({ status: "running", role: "hub-worker" }, (url, init) => {
-    seen.push({ url: String(url), init: init ?? {} });
-    return Promise.resolve(new Response(JSON.stringify({ ok: true, ...fullPage })));
-  });
-  const saved = await s.save([{ name: "发布规则", types: ["task.release"], to: "codex", cwd: "~/work" }]);
-  assert.equal(saved.ok, true);
-  if (saved.ok) {
-    // The answer is the list the door kept, not a mirror of what was sent.
-    assert.equal(saved.data.entries.length, 1);
-    assert.equal(saved.data.entries[0].parallel, 2);
-    assert.equal(saved.data.seq, 11);
-  }
-  assert.equal(seen.length, 1);
-  assert.equal(seen[0].url, "http://127.0.0.1:3350/v1/ui/rules");
-  assert.equal(seen[0].init.method, "PUT");
-  assert.equal((seen[0].init.headers as Record<string, string>).authorization, "Bearer owner-key");
-  assert.equal((seen[0].init.headers as Record<string, string>)["content-type"], "application/json");
-  assert.deepEqual(JSON.parse(String(seen[0].init.body)), [
-    { name: "发布规则", types: ["task.release"], to: "codex", cwd: "~/work" },
-  ]);
-});
-
-test("an entry list that breaks the door's limits is refused before any request is sent", async () => {
-  let called = false;
-  const s = source({ status: "running", role: "hub-worker" }, () => {
-    called = true;
-    return Promise.resolve(new Response("{}"));
-  });
-  for (const bad of [
-    "nope",
-    [{ name: "", types: ["t"], to: "c", cwd: "~/" }],
-    [{ name: "x", types: [], to: "c", cwd: "~/" }],
-    [{ name: "x", types: ["t"], to: "c", cwd: "~", extra: 1 }],
-  ] as never[]) {
-    await assert.rejects(() => s.save(bad));
-  }
-  assert.ok(!called);
-});
-
-test("a save refusal text passes through, other failures keep the fixed message", async () => {
-  const refusal = source({ status: "running", role: "hub-worker" }, () =>
-    Promise.resolve(new Response(JSON.stringify({ error: "入口缺少 name" }), { status: 400 })),
-  );
-  const refused = await refusal.save([{ name: "x", types: ["t"], to: "c", cwd: "~/" }]);
-  assert.equal(refused.ok, false);
-  if (!refused.ok) {
-    assert.equal(refused.error.code, "invalid");
-    assert.equal(refused.error.message, "入口缺少 name");
-  }
-  for (const [name, fetchImpl] of [
-    ["network", () => Promise.reject(new Error("down"))],
-    ["status 500", () => Promise.resolve(new Response("boom", { status: 500 }))],
-    ["broken payload", () => Promise.resolve(new Response("<not json>"))],
-    ["poisoned list", () => Promise.resolve(new Response(JSON.stringify({ ok: true, entries: "x" })))],
-  ] as const) {
-    const s = source({ status: "running", role: "hub-worker" }, fetchImpl as TaskFetch);
-    const saved = await s.save([{ name: "x", types: ["t"], to: "c", cwd: "~/" }]);
-    assert.equal(saved.ok, false, name);
-    if (!saved.ok) assert.equal(saved.error.code, "error");
-  }
 });
