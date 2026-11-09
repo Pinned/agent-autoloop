@@ -494,7 +494,10 @@ if (ownsAppLock)
         const contents = window.webContents;
         const token = documentToken;
         const committed = committedFrame;
-        if (!token || !committed || contents.isDestroyed() || contents.isLoadingMainFrame()) return;
+        // Electron still reports the main frame as loading from inside this event, so gating on
+        // that flag would leave the document permanently uncommitted and every runtime action
+        // blocked. A newer navigation is already fenced by the token/committed-frame check below.
+        if (!token || !committed || contents.isDestroyed()) return;
         const frame = contents.mainFrame;
         const trusted = contents.getURL() === page && frame.url === page &&
           frame.processId === committed.processId && frame.routingId === committed.routingId;

@@ -40,7 +40,9 @@ function fixture(overrides: Partial<SettingsSourceOptions> = {}) {
         JSON.stringify(init?.method === "PUT" ? { ok: true, seq: 4, rulesSeq: 3 } : hub()),
       );
     },
-    timeoutMs: 50,
+    // A real deadline, not a scheduling assertion: under load the fetch stub plus TS module
+    // startup can exceed 50ms and would make "GET succeeds" intermittently fail on timing alone.
+    timeoutMs: 1000,
     ...overrides,
   });
   return { source, requests, reads: () => reads };

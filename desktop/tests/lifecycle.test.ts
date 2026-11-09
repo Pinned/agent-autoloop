@@ -113,24 +113,33 @@ test("lifecycle scripts drive only the real renderer bridge with bounded polling
     lifecycleWorkerStartScript(validJoin),
   ];
   for (const script of scripts) {
+    // These strings are spliced into the renderer as source. A syntax error there would surface
+    // only as an opaque drive abort, so parse every one here instead of trusting the regexes below.
+    assert.doesNotThrow(() => new Function(script), `生命周期脚本必须可解析：${script.slice(0, 80)}`);
     assert.match(script, /\(async \(\) => \{/);
     assert.doesNotMatch(script, /fetch\(|XMLHttpRequest|WebSocket|require\(|process\.|node:/);
   }
-  // The setup script is two straight awaits — no wait to bound. Every polling script is bounded
-  // by a deadline, so a stuck door can never hang the app.
-  for (const script of scripts.slice(1)) {
+  // Every wait is bounded: a stuck door or a busy read can never hang the app forever.
+  for (const script of scripts) {
     if (script === lifecycleHubBusinessFinishScript(TASK_DEADLINE)) {
       assert.match(script, new RegExp(`const deadline = ${TASK_DEADLINE};`));
       assert.match(script, /Date\.now\(\) < deadline/);
       assert.doesNotMatch(script, /Date\.now\(\) \+ \d+/);
-    } else assert.match(script, /Date\.now\(\) \+ \d+|deadline = Date\.now\(\) \+ \d+/);
+    } else assert.match(script, /[Dd]eadline = Date\.now\(\) \+ \d+/);
+  }
+  // The renderer bootstraps its own launch-status read, so a setup-status read right after load
+  // can legitimately be told "busy". Both drives must wait that out within a deadline instead of
+  // reading a concurrent read as a broken first run.
+  for (const script of [lifecycleHubSetupScript(), lifecycleWorkerStartScript(validJoin)]) {
+    assert.match(script, /status\.error\.code === "busy"/);
+    assert.match(script, /Date\.now\(\) < statusDeadline/);
   }
   assert.match(lifecycleHubSetupScript(), /window\.desktop\.setupStatus\(\)/);
   assert.match(lifecycleHubSetupScript(), /window\.desktop\.initHub\(\)/);
   assert.match(lifecycleHubRunScript(), /window\.desktop\.completeSetup\(\)/);
   assert.doesNotMatch(lifecycleHubRunScript(), /window\.desktop\.runtimeStart\(\)/);
   assert.match(lifecycleHubSetupScript(), /completion === "prepared"/);
-  assert.match(lifecycleHubRunScript(), /get\.state\.status === "running"/);
+  assert.match(lifecycleHubRunScript(), /\.state\.status === "running"/);
   const awkward = `/tmp/rule cwd'with"quotes`;
   const business = lifecycleHubBusinessScript(awkward);
   assert.match(business, /window\.desktop\.rulesCasGet\(\)/);
@@ -164,7 +173,7 @@ test("lifecycle scripts drive only the real renderer bridge with bounded polling
   assert.match(worker, /window\.desktop\.setupStatus\(\)/);
   // The join input is interpolated as strict JSON, so nothing in it can break out of the call.
   assert.ok(worker.includes(`await window.desktop.joinWorker(${JSON.stringify(validJoin)})`));
-  assert.match(worker, /get\.state\.role === "worker"/);
+  assert.match(worker, /\.state\.role === "worker"/);
 });
 
 test("sentinel wait resolves on the file and always ends at its cap", async () => {

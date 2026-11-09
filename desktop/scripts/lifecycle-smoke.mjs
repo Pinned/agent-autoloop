@@ -15,6 +15,7 @@ import {
   abortable,
   createNotificationFixtures,
   isolatedEnvironment,
+  isolatedHomeFor,
   pickLoopbackPort,
   portOpen,
   settleChildren,
@@ -41,6 +42,8 @@ process.on("SIGTERM", onInterrupt);
 
 let evidence;
 let fakeBin;
+let tempA;
+let tempB;
 let homeA;
 let homeB;
 let ruleCwd;
@@ -71,12 +74,13 @@ function launch(command, args, env, name) {
   return run;
 }
 
-function launchApp(home, drive, name) {
+function launchApp(tempRoot, drive, name) {
+  const home = isolatedHomeFor(tempRoot);
   return launch(
     electron,
     [fileURLToPath(new URL("..", import.meta.url))],
     {
-      ...isolatedEnvironment(home, process.execPath, process.env, fakeBin),
+      ...isolatedEnvironment(tempRoot, process.execPath, process.env, fakeBin),
       DESKTOP_HOME: home,
       DESKTOP_LIFECYCLE: "1",
       ...drive,
@@ -92,7 +96,7 @@ async function runCli(args) {
     process.execPath,
     args,
     {
-      ...isolatedEnvironment(homeA, process.execPath, process.env, fakeBin),
+      ...isolatedEnvironment(tempA, process.execPath, process.env, fakeBin),
       AGENT_AUTOLOOP_HOME: hubHome,
     },
     "worker-key",
@@ -135,19 +139,23 @@ async function waitForHealthz() {
 try {
   evidence = await mkdtemp(join(tmpdir(), "autoloop-lifecycle-"));
   fakeBin = await guarded(createNotificationFixtures(evidence));
-  homeA = join(evidence, "hub-home");
-  homeB = join(evidence, "worker-home");
+  // Each instance owns a private temp root, and its HOME is a child of it: that is the only
+  // arrangement the app's isolatedHome() accepts once TMPDIR is inherited by the child.
+  tempA = join(evidence, "hub-temp");
+  tempB = join(evidence, "worker-temp");
+  homeA = isolatedHomeFor(tempA);
+  homeB = isolatedHomeFor(tempB);
   ruleCwd = join(evidence, "rule-cwd");
   hubHome = join(homeA, "runtime-home");
   sentinel = join(homeB, "quit");
+  // The app resolves DESKTOP_HOME with realpath(), so each home must exist before launch; creating
+  // them recursively also creates the private temp roots above them.
   await Promise.all(
-    [homeA, homeB, ruleCwd, join(homeA, "tmp"), join(homeB, "tmp")].map((path) =>
-      mkdir(path, { recursive: true, mode: 0o700 }),
-    ),
+    [homeA, homeB, ruleCwd].map((path) => mkdir(path, { recursive: true, mode: 0o700 })),
   );
   PORT = await guarded(pickLoopbackPort());
   const hub = launchApp(
-    homeA,
+    tempA,
     {
       DESKTOP_LIFECYCLE_ROLE: "hub",
       DESKTOP_LIFECYCLE_RULE_CWD: ruleCwd,
@@ -183,7 +191,7 @@ try {
     }),
   });
   const worker = launchApp(
-    homeB,
+    tempB,
     {
       DESKTOP_LIFECYCLE_ROLE: "worker",
       DESKTOP_SETUP_PORT: String(PORT),
