@@ -27,7 +27,7 @@ import {
 import { loadTheme, saveTheme } from "./preferences.ts";
 import { createSupervisor } from "./supervisor.ts";
 import { createRuntimeControl, SAFE_STOP_ERROR, type RuntimeControlState } from "./runtime-control.ts";
-import { desktopRuntimeEventOf } from "./runtime-event.ts";
+import { createRuntimePresentation } from "./runtime-presentation.ts";
 import { createTasksSource, createTodaySource } from "./state-source.ts";
 import { createTaskSource } from "./task-source.ts";
 import { createHubWatcher, type HubGlance } from "./hub-watcher.ts";
@@ -37,8 +37,6 @@ import { parseDesktopRulesEntries } from "../../host/desktop-rules-contract.ts";
 import { createSetupControl } from "./setup-control.ts";
 import { createSetupRunner } from "./setup-runner.ts";
 import {
-  desktopRuntimeFailure,
-  desktopRuntimeSnapshotOf,
   desktopRuntimeStatusText,
   type DesktopRuntimeResponse,
 } from "../../host/desktop-run-contract.ts";
@@ -236,8 +234,22 @@ if (ownsAppLock)
         desktopRuntimeStatusText(state, {
           unavailable: smoke ? "纯壳验证，运行服务未启动" : "打包运行资源尚未提供，无法启动运行服务",
         });
-      let nativeOperation = false;
-      let nativeStopping = false;
+      const presentation = createRuntimePresentation({
+        page,
+        read: () => controller.getState(),
+        gates: () => ({
+          phase: quit?.phase ?? "idle",
+          busy: setup.busy,
+          blocked: setup.blocked,
+          quitting: setup.quitting,
+        }),
+        send: (event) => {
+          if (window && !window.isDestroyed() && !window.webContents.isDestroyed())
+            window.webContents.send(channels.runtimeEvent, event);
+        },
+        refresh: () => refreshMenus(),
+        report: (message) => console.error(message),
+      });
       const showSafeError = (message: string) =>
         dialog.showMessageBox(window, {
           type: "error",
@@ -249,37 +261,17 @@ if (ownsAppLock)
       // The single gated entry both the tray/menu actions and the renderer IPC share.
       // Admission failures answer ok:false; the outcome of a performed run lives in the snapshot's error field.
       async function performStart(): Promise<DesktopRuntimeResponse> {
-        if (quit.quitting || nativeStopping || nativeOperation) return desktopRuntimeFailure("busy");
-        if (setup.blocked) return desktopRuntimeFailure("unknown");
-        nativeOperation = true;
-        refreshMenus();
-        try {
-          const state = await setup.runStart(
-            () => controller.start(),
-            () => controller.getState(),
-          );
-          return { version: 1, ok: true, state: desktopRuntimeSnapshotOf(state) };
-        } catch {
-          return desktopRuntimeFailure("unknown");
-        } finally {
-          nativeOperation = false;
-          refreshMenus();
-        }
+        return presentation.run("start", () => setup.runStart(
+          () => controller.start(),
+          () => controller.getState(),
+        ));
       }
       async function performStop(): Promise<DesktopRuntimeResponse> {
-        if (quit.quitting || nativeStopping) return desktopRuntimeFailure("busy");
-        nativeStopping = true;
-        refreshMenus();
-        try {
+        return presentation.run("stop", async () => {
           await setup.runStop(() => controller.stop());
-          // An unsafe stop is a run outcome, not an admission failure: the snapshot carries it.
-          return { version: 1, ok: true, state: desktopRuntimeSnapshotOf(controller.getState()) };
-        } catch {
-          return desktopRuntimeFailure("unknown");
-        } finally {
-          nativeStopping = false;
-          refreshMenus();
-        }
+          // An unsafe stop remains a historical outcome in the receipt, not a presentation gate.
+          return controller.getState();
+        });
       }
       async function runtimeAction(action: "start" | "stop") {
         const response = action === "start" ? await performStart() : await performStop();
@@ -304,19 +296,12 @@ if (ownsAppLock)
           ...(state.error ? [{ label: state.error.message, enabled: false }] : []),
           {
             label: "启动运行服务",
-            enabled:
-              !nativeOperation &&
-              !nativeStopping &&
-              !setup.busy &&
-              !setup.blocked &&
-              !setup.quitting &&
-              !quit?.quitting &&
-              ["stopped", "unconfigured", "failed"].includes(state.status),
+            enabled: presentation.canRun("start") && ["stopped", "unconfigured", "failed"].includes(state.status),
             click: () => void runtimeAction("start"),
           },
           {
             label: "停止本机运行服务",
-            enabled: !nativeStopping && !quit?.quitting && state.status !== "unavailable",
+            enabled: presentation.canRun("stop") && state.status !== "unavailable",
             click: () => void runtimeAction("stop"),
           },
         ];
@@ -353,12 +338,9 @@ if (ownsAppLock)
           );
         }
       }
-      controller.subscribe((state) => {
-        // Every runtime change re-decides whether the tray should be listening to the stream at all.
-        watcher.sync();
-        refreshMenus();
-        if (window && !window.isDestroyed())
-          window.webContents.send(channels.runtimeEvent, desktopRuntimeEventOf(state));
+      controller.subscribe(() => {
+        // Owner data-source gates are unchanged; presentation reads the latest runtime, never this callback's old state.
+        try { watcher.sync(); } finally { presentation.changed(); }
       });
       nativeTheme.themeSource = loadTheme(prefsHome);
       session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
@@ -391,6 +373,7 @@ if (ownsAppLock)
         webPreferences: webPreferences(join(base, "preload.cjs")),
       });
       quit = createLifecycle({
+        onPhase: () => presentation.changed(),
         hide: () => window.hide(),
         restore,
         exit: () => app.quit(),
@@ -424,6 +407,45 @@ if (ownsAppLock)
       window.on("close", (event) => {
         if (!quit.close()) event.preventDefault();
       });
+      let documentToken: object | undefined;
+      let committedFrame: { processId: number; routingId: number } | undefined;
+      const invalidateDocument = () => {
+        documentToken = undefined;
+        committedFrame = undefined;
+        presentation.invalidateDocument();
+      };
+      window.webContents.on("did-start-loading", () => {
+        if (!window.webContents.isLoadingMainFrame()) return;
+        committedFrame = undefined;
+        documentToken = presentation.beginDocument();
+      });
+      window.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+        if (isMainFrame && !isInPlace) {
+          committedFrame = undefined;
+          documentToken = presentation.beginDocument();
+        }
+      });
+      window.webContents.on("did-frame-navigate", (_event, url, _code, _text, isMainFrame, processId, routingId) => {
+        if (!isMainFrame) return;
+        if (url !== page) { invalidateDocument(); return; }
+        committedFrame = { processId, routingId };
+      });
+      window.webContents.on("render-process-gone", invalidateDocument);
+      window.webContents.on("did-fail-load", (_event, _code, _description, _url, isMainFrame) => {
+        if (isMainFrame) invalidateDocument();
+      });
+      window.webContents.on("did-finish-load", () => {
+        const contents = window.webContents;
+        const token = documentToken;
+        const committed = committedFrame;
+        if (!token || !committed || contents.isDestroyed() || contents.isLoadingMainFrame()) return;
+        const frame = contents.mainFrame;
+        const trusted = contents.getURL() === page && frame.url === page &&
+          frame.processId === committed.processId && frame.routingId === committed.routingId;
+        if (trusted && documentToken === token && committedFrame === committed)
+          presentation.finishDocument(token, page);
+      });
+      window.webContents.on("destroyed", invalidateDocument);
       window.webContents.on("will-navigate", (event) => event.preventDefault());
       window.webContents.on("will-frame-navigate", (event) => event.preventDefault());
       window.webContents.on("will-redirect", (event) => event.preventDefault());
@@ -490,14 +512,10 @@ if (ownsAppLock)
         } catch {
           return desktopSetupFailure(operation, "invalid-request");
         }
-        const flight = setup.runSetup(request);
-        refreshMenus();
         try {
-          return await flight;
+          return await presentation.observe(() => setup.runSetup(request));
         } catch {
           return desktopSetupFailure(operation, "unknown");
-        } finally {
-          refreshMenus();
         }
       }
       ipcMain.handle(channels.setupStatus, (event, ...args: unknown[]) => {
@@ -520,7 +538,7 @@ if (ownsAppLock)
       ipcMain.handle(channels.runtimeGet, (event, ...args: unknown[]) => {
         assertSender(event, window.webContents, page);
         if (args.length !== 0) throw new Error("invalid-request");
-        return { version: 1, ok: true, state: desktopRuntimeSnapshotOf(controller.getState()) };
+        return { version: 1, ok: true, state: presentation.snapshot() };
       });
       ipcMain.handle(channels.runtimeStart, async (event, ...args: unknown[]) => {
         assertSender(event, window.webContents, page);

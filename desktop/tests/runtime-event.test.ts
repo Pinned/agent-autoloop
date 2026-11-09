@@ -22,8 +22,11 @@ async function producer() {
 
 test("main sends the shared event producer, never the bare snapshot", () => {
   const main = readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
-  assert.match(main, /import\s*\{\s*desktopRuntimeEventOf\s*\}\s*from\s*["']\.\/runtime-event\.ts["']/);
-  assert.match(main, /\.send\(channels\.runtimeEvent,\s*desktopRuntimeEventOf\(state\)\)/);
+  assert.match(main, /import\s*\{\s*createRuntimePresentation\s*\}\s*from\s*["']\.\/runtime-presentation\.ts["']/);
+  assert.match(main, /\.send\(channels\.runtimeEvent,\s*event\)/);
+  assert.match(main, /state:\s*presentation\.snapshot\(\)/);
+  assert.match(main, /presentation\.run\("start"/);
+  assert.match(main, /presentation\.run\("stop"/);
   assert.doesNotMatch(main, /\.send\(channels\.runtimeEvent,\s*desktopRuntimeSnapshotOf\(state\)\)/);
 });
 
