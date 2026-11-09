@@ -105,6 +105,44 @@ test("spawn uses injected independent resources and dedicated IPC; ready is mand
   assert.equal((await stopClean(f)).status, "stopped");
 });
 
+test("the terminal's own shell and PATH reach the child, and nothing else of the login environment", async () => {
+  const f = fixture({
+    terminal: { shell: "/bin/zsh", path: "/opt/homebrew/bin:/Users/someone/.local/bin:/usr/bin:/bin" },
+  });
+  const first = f.supervisor.start();
+  await until(() => f.children.length === 1);
+  // A GUI launch inherits launchd's bare PATH and no SHELL; without these two a Homebrew or
+  // ~/.local/bin agent would be reported as not installed.
+  assert.equal(f.calls[0].options.env?.SHELL, "/bin/zsh");
+  assert.equal(f.calls[0].options.env?.PATH, "/opt/homebrew/bin:/Users/someone/.local/bin:/usr/bin:/bin");
+  // Resolving the terminal must not become a way to inherit the whole login environment.
+  for (const key of ["ZSH", "ZDOTDIR", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AGENT_AUTOLOOP_RULES", "NODE_OPTIONS"])
+    assert.equal(f.calls[0].options.env?.[key], undefined, key);
+  f.children[0].ready();
+  await first;
+  assert.equal((await stopClean(f)).status, "stopped");
+});
+
+test("without a resolved terminal the inherited values stand, and a partial answer only fills what it has", async () => {
+  const f = fixture();
+  const first = f.supervisor.start();
+  await until(() => f.children.length === 1);
+  assert.equal(f.calls[0].options.env?.SHELL, process.env.SHELL);
+  f.children[0].ready();
+  await first;
+  assert.equal((await stopClean(f)).status, "stopped");
+
+  const shellOnly = fixture({ terminal: { shell: "/bin/fish" } });
+  const second = shellOnly.supervisor.start();
+  await until(() => shellOnly.children.length === 1);
+  assert.equal(shellOnly.calls[0].options.env?.SHELL, "/bin/fish");
+  // No PATH was resolved, so the inherited one is used rather than an empty one.
+  assert.equal(shellOnly.calls[0].options.env?.PATH, process.env.PATH);
+  shellOnly.children[0].ready();
+  await second;
+  assert.equal((await stopClean(shellOnly)).status, "stopped");
+});
+
 test("messages are versioned, validated and sanitized, snapshots cannot mutate state", async () => {
   const f = fixture();
   const states: unknown[] = [];

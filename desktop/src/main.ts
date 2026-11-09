@@ -44,6 +44,7 @@ import { createLaunchControl, createLaunchStatusRead, safelyAbortLifecycle } fro
 import { createRuntimePresentation } from "./runtime-presentation.ts";
 import type { DesktopLaunchStatus } from "../../host/desktop-launch-contract.ts";
 import { createSetupControl } from "./setup-control.ts";
+import { resolveTerminalEnvironment } from "./login-environment.ts";
 import { createSetupRunner } from "./setup-runner.ts";
 import {
   desktopRuntimeStatusText,
@@ -136,7 +137,15 @@ if (ownsAppLock)
           const resources = await mkdtemp(join(prefsHome, "runtime resources "));
           ownCleanup(() => rm(resources, { recursive: true, force: true }));
           await copySources(join(base, "..", ".."), resources);
-          return { nodePath: runtime.node, entryPath: join(resources, "bin", "agent-autoloop.ts"), home: runtimeHome };
+          // Resolved against the user's real HOME, before the child's own HOME is isolated: their
+          // terminal's PATH is the only place a Homebrew or ~/.local/bin agent will be found.
+          const terminal = await resolveTerminalEnvironment();
+          return {
+            nodePath: runtime.node,
+            entryPath: join(resources, "bin", "agent-autoloop.ts"),
+            home: runtimeHome,
+            terminal,
+          };
         },
         supervisorFactory: (options) =>
           createSupervisor({
