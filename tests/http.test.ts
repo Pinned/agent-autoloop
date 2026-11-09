@@ -373,6 +373,32 @@ test("someone else's webhook goes through its source's adapter: signed, or not t
   assert.equal((await call("/v1/in/nowhere", { raw: items })).status, 404);
 });
 
+test("a rating of a delivered run is the owner's alone, and only after the run ended as done", async () => {
+  await call("/v1/events", { key: keys.app, body: note(60) });
+  const job = (await call("/v1/work?claim=c-fb&wait=0", { key: keys.w1 })).json.job;
+  const path = `/v1/runs/${job.run}/feedback`;
+  const rating = { kind: "交付满意", text: "做得对" };
+  assert.equal((await call(path, { body: rating })).status, 401, "no key");
+  assert.equal((await call(path, { key: keys.w1, body: rating })).status, 401, "a worker's key is not the owner's");
+  assert.equal((await call(path, { key: keys.app, body: rating })).status, 401, "a source's key is not the owner's");
+  assert.equal((await call(path, { key: keys.owner, body: rating })).status, 400, "claimed but not delivered");
+  await call(`/v1/runs/${job.run}/result`, { key: job.token, body: { outcome: "done", summary: "做了" } });
+  assert.equal((await call(path, { key: keys.owner, body: { kind: "随便", text: "x" } })).status, 400);
+  assert.equal((await call(path, { key: keys.owner, body: { kind: "交付满意", text: " " } })).status, 400);
+  const saved = await call(path, { key: keys.owner, body: rating });
+  assert.deepEqual([saved.status, saved.json.ok], [200, true]);
+  assert.ok(Number.isSafeInteger(saved.json.id));
+  assert.deepEqual(
+    all<{ run_id: number; kind: string; text: string }>("SELECT run_id,kind,text FROM feedback WHERE id = ?", [
+      saved.json.id,
+    ]),
+    [{ run_id: job.run, kind: "交付满意", text: "做得对" }],
+  );
+  // The run keeps the outcome it had; a rating is a record, not a new turn.
+  assert.equal(one<{ state: string }>("SELECT state FROM runs WHERE id = ?", [job.run])!.state, "done");
+  assert.equal((await call("/v1/runs/99999/feedback", { key: keys.owner, body: rating })).status, 404);
+});
+
 test("the console is the only page: everything else is read through the doors", async () => {
   for (const path of ["/", "/app.js", "/style.css"]) {
     const page = await call(path);

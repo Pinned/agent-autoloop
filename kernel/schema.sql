@@ -124,3 +124,14 @@ CREATE TABLE keys (
   PRIMARY KEY (kind, name)
 );
 
+-- The owner's record of how a finished delivery went. This is a note kept beside the run, not a new event type
+-- (events may themselves be called "feedback.new"): it never enqueues, never changes a run's outcome, and never
+-- reopens the thread. Only an owner can add one, and only to a run that already ended as done.
+CREATE TABLE feedback (
+  id INTEGER PRIMARY KEY,
+  run_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  text TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+

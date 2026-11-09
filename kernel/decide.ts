@@ -445,6 +445,21 @@ function memo(draft: Draft, id: number, given: Row) {
   return { stopped: working };
 }
 
+/** The owner's note on how a finished delivery went. It is a record, not a new turn: no event, no card, no queue
+ *  entry, and the run keeps the outcome it already had. Only a run that ended as done can be rated. */
+function feedback(draft: Draft, id: number, given: Row) {
+  const run = draft.view.get("runs", id);
+  if (!run) throw new NotFound("没有这一轮");
+  if (run.state !== "done") throw new InputError("只有已完成的一轮可以提交交付反馈");
+  const kind = given?.kind;
+  if (kind !== "交付满意" && kind !== "需要改善" && kind !== "内容错误") throw new InputError("反馈类型不正确");
+  const text = typeof given?.text === "string" ? given.text.trim() : "";
+  if (!text) throw new InputError("请填写反馈内容");
+  if ([...text].length > 4000) throw new InputError("反馈最多 4000 字");
+  const row = add(draft, "feedback", { run_id: id, kind, text, created_at: draft.at });
+  return { ok: true, id: row.id };
+}
+
 function nextCard(draft: Draft, channel: string) {
   const { now } = draft;
   for (const card of draft.view.deliveryCandidates(channel, now)) {
@@ -565,6 +580,7 @@ const HANDLERS: Record<string, (draft: Draft, ...args: any[]) => unknown> = {
   },
   answer,
   memo,
+  feedback,
   nextCard,
   delivered(draft, channel, id, version, ref) {
     if (!draft.view.get("cards", id)) throw new NotFound("没有这张卡片");
