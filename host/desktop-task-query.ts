@@ -13,18 +13,22 @@ import {
   parseRunItem,
   parseEventItem,
   parseCardItem,
+  parseFeedbackItem,
   parseRunList,
   parseRunDetail,
   parseRunEvents,
   parseRunCards,
   parseRelatedRuns,
+  parseRunFeedback,
   type RunList,
   type RunDetail,
   type Page,
   type EventItem,
   type CardItem,
+  type FeedbackItem,
   type RunItem,
   type Section,
+  type PageSection,
 } from "./desktop-task-query-contract.ts";
 type Row = Record<string, SQLOutputValue>;
 const field = (alias: string, name: string) => `json_extract(${alias}.data,'$.${name}')`;
@@ -69,6 +73,12 @@ const CARD_SELECT = [
   stamp("c", "created_at", "createdAt"),
   stamp("c", "decided_at", "decidedAt"),
   stamp("c", "closed_at", "closedAt"),
+].join(", ");
+const FEEDBACK_SELECT = [
+  `${field("f", "id")} AS id`,
+  short("f", "kind", 16),
+  short("f", "text", 4000),
+  stamp("f", "created_at", "createdAt"),
 ].join(", ");
 // Literals here match the expression indexes owned by evolve; never create alternate indexes or tables.
 const EVENT_JOIN = `FROM projections re JOIN projections e ON e.collection='events' AND e.key=CAST(${field("re", "event_id")} AS TEXT)
@@ -182,7 +192,7 @@ function associated(view: View, id: number): boolean {
   );
   return row?.available === 1;
 }
-function nextCursor(run: number, section: Section, id: number): string {
+function nextCursor(run: number, section: PageSection, id: number): string {
   return encodeRunCursor(
     section === "events"
       ? { version: 1, run, section, lastKey: `${run}:${id}` }
@@ -193,7 +203,7 @@ function paged<T extends { id: number }>(
   rows: Row[],
   limit: number,
   run: number,
-  section: Section,
+  section: PageSection,
   convert: (row: Row) => T,
 ): Page<T> {
   const result: Page<T> = { items: [], hasMore: false, nextCursor: null };
@@ -324,6 +334,34 @@ export function pageRelatedRuns(view: View, run: number, input: unknown = {}): P
     params,
   );
   return parseRelatedRuns(paged(rows, limit, run, "related", runOf), run);
+}
+function feedbackOf(row: Row): FeedbackItem {
+  const cut = clipped(row);
+  return parseFeedbackItem({
+    id: row.id,
+    kind: row.kind,
+    text: cut.text("text", 4000),
+    createdAt: cut.text("createdAt", 64, true),
+    truncated: cut.truncated,
+  });
+}
+export function pageRunFeedback(view: View, run: number, input: unknown = {}): Page<FeedbackItem> {
+  runId(run);
+  const query = parseRunSectionInput(input),
+    limit = query.limit ?? 20;
+  const cursor = query.cursor === undefined ? null : decodeRunCursor(query.cursor, run, "feedback");
+  requiredRun(view, run);
+  const params: SQLInputValue[] = [run];
+  if (cursor?.section === "feedback") params.push(cursor.lastId);
+  params.push(limit + 1);
+  // Notes about a delivery, newest first. A rating never rewrote the run, so there is nothing to join.
+  const rows = all(
+    view,
+    `SELECT ${FEEDBACK_SELECT} FROM projections f WHERE f.collection='feedback' AND ${field("f", "run_id")}=?
+    ${cursor ? `AND ${field("f", "id")}<?` : ""} ORDER BY +${field("f", "id")} DESC LIMIT ?`,
+    params,
+  );
+  return parseRunFeedback(paged(rows, limit, run, "feedback", feedbackOf), run);
 }
 export function readRunDetail(view: View, run: number): RunDetail {
   const result: RunDetail = {

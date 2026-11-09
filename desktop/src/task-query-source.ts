@@ -12,6 +12,7 @@ import {
   parseRunEventsBytes,
   parseRunCardsBytes,
   parseRelatedRunsBytes,
+  parseRunFeedbackBytes,
   type RunListInput,
   type RunSectionInput,
   type RunList,
@@ -19,8 +20,9 @@ import {
   type Page,
   type EventItem,
   type CardItem,
+  type FeedbackItem,
   type RunItem,
-  type Section,
+  type PageSection,
 } from "../../host/desktop-task-query-contract.ts";
 
 export type TaskQuerySourceOptions = TodaySourceOptions & {
@@ -35,9 +37,10 @@ export type TaskQuerySource = {
   events(run: number, input?: RunSectionInput, canRead?: () => boolean): Promise<TaskQueryResult<Page<EventItem>>>;
   cards(run: number, input?: RunSectionInput, canRead?: () => boolean): Promise<TaskQueryResult<Page<CardItem>>>;
   related(run: number, input?: RunSectionInput, canRead?: () => boolean): Promise<TaskQueryResult<Page<RunItem>>>;
+  feedback(run: number, input?: RunSectionInput, canRead?: () => boolean): Promise<TaskQueryResult<Page<FeedbackItem>>>;
   cancelAll(): void;
 };
-type Slot = "list" | "detail" | Section;
+type Slot = "list" | "detail" | PageSection;
 type Flight = {
   key: string;
   promise: Promise<TaskQueryResult<unknown>>;
@@ -48,7 +51,7 @@ const LIST_FIELDS = ["limit", "before", "q", "state", "rule", "agent", "source",
 const SECTION_FIELDS = ["limit", "cursor"] as const;
 const failure = (error: TaskQueryError): TaskQueryResult<never> => ({ ok: false, error });
 
-function queryString(input: RunListInput | RunSectionInput, section?: Section): string {
+function queryString(input: RunListInput | RunSectionInput, section?: PageSection): string {
   const params = new URLSearchParams();
   if (section !== undefined) params.set("section", section);
   for (const field of section === undefined ? LIST_FIELDS : SECTION_FIELDS) {
@@ -89,6 +92,7 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
     events: undefined,
     cards: undefined,
     related: undefined,
+    feedback: undefined,
   };
 
   function request<T>(
@@ -274,7 +278,7 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
     return promise;
   }
 
-  function section<T>(name: Section, id: number, input: RunSectionInput, parse: (bytes: Uint8Array, run: number) => T, canRead?: () => boolean) {
+  function section<T>(name: PageSection, id: number, input: RunSectionInput, parse: (bytes: Uint8Array, run: number) => T, canRead?: () => boolean) {
     return request(name, () => {
       const run = runId(id);
       const checked = parseRunSectionInput(input);
@@ -300,6 +304,7 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
     events: (run, input = {}, canRead) => section("events", run, input, parseRunEventsBytes, canRead),
     cards: (run, input = {}, canRead) => section("cards", run, input, parseRunCardsBytes, canRead),
     related: (run, input = {}, canRead) => section("related", run, input, parseRelatedRunsBytes, canRead),
+    feedback: (run, input = {}, canRead) => section("feedback", run, input, parseRunFeedbackBytes, canRead),
     cancelAll() {
       cancelGeneration++;
       for (const slot of Object.keys(slots) as Slot[]) slots[slot]?.stop();

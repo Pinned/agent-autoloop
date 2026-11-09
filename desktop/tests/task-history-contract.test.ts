@@ -25,6 +25,7 @@ import {
   type RunItem,
   type EventItem,
   type CardItem,
+  type FeedbackItem,
 } from "../../host/desktop-task-query-contract.ts";
 
 const run = (id = 12): RunItem => ({
@@ -70,6 +71,13 @@ const card = (id = 9): CardItem => ({
   truncated: false,
 });
 const page = <T>(items: T[] = []) => ({ items, hasMore: false, nextCursor: null });
+const feedback = (id = 9): FeedbackItem => ({
+  id,
+  kind: "交付满意",
+  text: "做得好",
+  createdAt: null,
+  truncated: false,
+});
 const detail = () => ({
   run: run(),
   association: { kind: "available" },
@@ -89,7 +97,7 @@ const request = (operation: TaskHistoryRequest["operation"]): TaskHistoryRequest
 const listRequest = request("list");
 const bad = (value: unknown, context: TaskHistoryRequest = listRequest) =>
   assert.throws(() => parseTaskHistoryResponse(value, context));
-const cursor = (section: "events" | "cards" | "related", id = 9, runId = 12) =>
+const cursor = (section: "events" | "cards" | "related" | "feedback", id = 9, runId = 12) =>
   encodeRunCursor(
     section === "events"
       ? { version: 1, run: runId, section, lastKey: `${runId}:${id}` }
@@ -111,7 +119,7 @@ function hostile(value: Record<string, unknown>): unknown[] {
   ];
 }
 
-test("five success data shapes retain exact v1 envelope and recursively frozen private copies", () => {
+test("six success data shapes retain exact v1 envelope and recursively frozen private copies", () => {
   assert.equal(TASK_HISTORY_VERSION, 1);
   const fixtures = [
     ["list", { items: [run()], hasMore: false, nextBefore: null }],
@@ -119,6 +127,7 @@ test("five success data shapes retain exact v1 envelope and recursively frozen p
     ["events", page([event()])],
     ["cards", page([card()])],
     ["related", page([run(3)])],
+    ["feedback", page([feedback()])],
   ] as const;
   for (const [operation, data] of fixtures) {
     const raw = success(data);
@@ -131,7 +140,7 @@ test("five success data shapes retain exact v1 envelope and recursively frozen p
     frozenTree(parsed);
     assert.equal(Object.isFrozen(data), false);
   }
-  for (const operation of ["list", "events", "cards", "related"] as const) {
+  for (const operation of ["list", "events", "cards", "related", "feedback"] as const) {
     const data = operation === "list" ? { items: [], hasMore: false, nextBefore: null } : page();
     assert.deepEqual(parseTaskHistoryResponse(success(data), request(operation)), success(data));
   }
@@ -156,7 +165,7 @@ test("nine errors have one fixed safe Chinese table and reject exception text", 
     const value = { version: 1, ok: false, error: { code, message: expected[code] } };
     assert.deepEqual(taskHistoryFailure(code), value);
     frozenTree(taskHistoryFailure(code));
-    for (const operation of ["list", "detail", "events", "cards", "related"] as const) {
+    for (const operation of ["list", "detail", "events", "cards", "related", "feedback"] as const) {
       assert.deepEqual(parseTaskHistoryResponse(value, request(operation)), value);
     }
     bad({ ...value, error: { code, message: "exception /private/token" } });
@@ -286,13 +295,13 @@ test("detail ID, section cursor and related self identity are checked against re
   bad(success({ ...detail(), run: run(13) }), request("detail"));
   bad(success({ ...detail(), relatedRuns: page([run()]) }), request("detail"));
   bad(success(page([run()])), request("related"));
-  for (const operation of ["events", "cards", "related"] as const) {
-    const item = operation === "events" ? event() : operation === "cards" ? card() : run(9);
+  for (const operation of ["events", "cards", "related", "feedback"] as const) {
+    const item = operation === "events" ? event() : operation === "cards" ? card() : operation === "feedback" ? feedback(9) : run(9);
     const data = { items: [item], hasMore: true, nextCursor: cursor(operation) };
     assert.deepEqual(parseTaskHistoryResponse(success(data), request(operation)), success(data));
     bad(success({ ...data, nextCursor: cursor(operation, 9, 13) }), request(operation));
     bad(success({ ...data, nextCursor: cursor(operation, 8) }), request(operation));
-    for (const other of ["events", "cards", "related"] as const)
+    for (const other of ["events", "cards", "related", "feedback"] as const)
       if (other !== operation) {
         bad(success({ ...data, nextCursor: cursor(other) }), request(operation));
       }

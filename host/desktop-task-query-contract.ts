@@ -66,10 +66,23 @@ export type RunDetail = {
   cards: Page<CardItem>;
   relatedRuns: Page<RunItem>;
 };
+export const FEEDBACK_KINDS = ["交付满意", "需要改善", "内容错误"] as const;
+export type FeedbackKind = (typeof FEEDBACK_KINDS)[number];
+/** The owner's recorded rating. Unlike an event or card it is not a turn: it never changed the run. */
+export type FeedbackItem = {
+  id: number;
+  kind: FeedbackKind;
+  text: string;
+  createdAt: string | null;
+  truncated: boolean;
+};
 export type Section = "events" | "cards" | "related";
+/** Feedback is read as its own page, not as a fourth field of the strict run detail. */
+export type FeedbackSection = "feedback";
+export type PageSection = Section | FeedbackSection;
 export type RunCursor =
   | { version: 1; run: number; section: "events"; lastKey: string }
-  | { version: 1; run: number; section: "cards" | "related"; lastId: number };
+  | { version: 1; run: number; section: "cards" | "related" | "feedback"; lastId: number };
 const encoder = new TextEncoder();
 function invalid(): never {
   throw new Error("invalid-task-query");
@@ -177,7 +190,7 @@ function cursor(value: unknown): RunCursor {
     if (!match || String(run) !== match[1] || String(runId(Number(match[2]))) !== match[2]) invalid();
     return { version: 1, run, section, lastKey };
   }
-  return { version: 1, run, section: oneOf(section, ["cards", "related"]), lastId: runId(item.lastId) };
+  return { version: 1, run, section: oneOf(section, ["cards", "related", "feedback"]), lastId: runId(item.lastId) };
 }
 export function encodeRunCursor(value: RunCursor): string {
   const json = JSON.stringify(cursor(value));
@@ -186,9 +199,9 @@ export function encodeRunCursor(value: RunCursor): string {
   if (encoded.length > 512) invalid();
   return encoded;
 }
-export function decodeRunCursor(value: unknown, run: number, section: Section): RunCursor {
+export function decodeRunCursor(value: unknown, run: number, section: PageSection): RunCursor {
   runId(run);
-  oneOf(section, ["events", "cards", "related"]);
+  oneOf(section, ["events", "cards", "related", "feedback"]);
   const encoded = text(value, 512, false);
   if (!/^[A-Za-z0-9_-]+$/.test(encoded)) invalid();
   try {
@@ -297,6 +310,16 @@ export function parseCardItem(value: unknown): CardItem {
     truncated: boolean(item.truncated),
   };
 }
+export function parseFeedbackItem(value: unknown): FeedbackItem {
+  const item = record(value, ["id", "kind", "text", "createdAt", "truncated"]);
+  return {
+    id: runId(item.id),
+    kind: oneOf(item.kind, FEEDBACK_KINDS),
+    text: text(item.text, 4000),
+    createdAt: timestamp(item.createdAt),
+    truncated: boolean(item.truncated),
+  };
+}
 function ordered(items: { id: number }[]) {
   for (let i = 1; i < items.length; i++) if (items[i - 1].id <= items[i].id) invalid();
 }
@@ -314,7 +337,7 @@ export function parseRunList(value: unknown): RunList {
 function page<T extends { id: number }>(
   value: unknown,
   run: number,
-  section: Section,
+  section: PageSection,
   parse: (value: unknown) => T,
 ): Page<T> {
   runId(run);
@@ -342,6 +365,7 @@ function page<T extends { id: number }>(
 export const parseRunEvents = (value: unknown, run: number) => page(value, run, "events", parseEventItem);
 export const parseRunCards = (value: unknown, run: number) => page(value, run, "cards", parseCardItem);
 export const parseRelatedRuns = (value: unknown, run: number) => page(value, run, "related", parseRunItem);
+export const parseRunFeedback = (value: unknown, run: number) => page(value, run, "feedback", parseFeedbackItem);
 export function parseRunDetail(value: unknown): RunDetail {
   const item = record(value, ["run", "association", "events", "cards", "relatedRuns"]);
   const run = parseRunItem(item.run);
@@ -378,3 +402,5 @@ export const parseRunCardsBytes = (value: Uint8Array, run: number) =>
   fromBytes(value, DETAIL_MAX_BYTES, (v) => parseRunCards(v, run));
 export const parseRelatedRunsBytes = (value: Uint8Array, run: number) =>
   fromBytes(value, DETAIL_MAX_BYTES, (v) => parseRelatedRuns(v, run));
+export const parseRunFeedbackBytes = (value: Uint8Array, run: number) =>
+  fromBytes(value, DETAIL_MAX_BYTES, (v) => parseRunFeedback(v, run));

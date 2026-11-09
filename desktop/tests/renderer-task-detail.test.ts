@@ -19,6 +19,7 @@ const detail = (id: number): { version: 1; ok: true; data: RunDetail } => ({ ver
   relatedRuns: { items: [], hasMore: false, nextCursor: null },
 } });
 function validDetail(id: number) { return detail(id); }
+const emptyFeedback = { version: 1, ok: true, data: { items: [], hasMore: false, nextCursor: null } };
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 function fixture() {
   const pending: { id: number; resolve(value: unknown): void; reject(value: unknown): void }[] = [];
@@ -26,6 +27,8 @@ function fixture() {
   const bridge = {
     tasksGet: async () => list,
     taskDetail(request: { operation: "detail"; runId: number }) {
+      // A delivered run also reads its ratings; that separate page never holds up the detail assertions.
+      if ((request as { operation: string }).operation === "feedback") return Promise.resolve(emptyFeedback);
       assert.equal(request.operation, "detail");
       return new Promise((resolve, reject) => pending.push({ id: request.runId, resolve, reject }));
     },
@@ -80,7 +83,7 @@ test("detail notify reentry cancels the old send and synchronous bridge throws d
   controller.openDetail(7); assert.equal(calls, 1); assert.equal(controller.detailState.kind, "failed");
 });
 class Element {
-  className = ""; type = ""; hidden = false; disabled = false; children: Element[] = []; private text = "";
+  className = ""; type = ""; hidden = false; disabled = false; value = ""; children: Element[] = []; private text = "";
   listeners = new Map<string, () => void>(); attributes = new Map<string, string>();
   set textContent(value: string) { this.text = value; this.children = []; }
   get textContent(): string { return this.text + this.children.map(x => x.textContent).join(" "); }
@@ -126,7 +129,11 @@ function pagedFixture(onChange: () => void = () => {}) {
   const pending: { request: any; resolve(value: unknown): void; reject(value: unknown): void }[] = [];
   let receive!: (value: unknown) => void, view: ReturnType<typeof mountTasksView> | undefined;
   const controller = createRendererTasks({ tasksGet: async () => list,
-    taskDetail(request: any) { return new Promise<any>((resolve, reject) => pending.push({ request, resolve, reject })); },
+    taskDetail(request: any) {
+      // The rating page is separate from detail paging; settle it immediately so it never queues here.
+      if (request.operation === "feedback") return Promise.resolve(emptyFeedback);
+      return new Promise<any>((resolve, reject) => pending.push({ request, resolve, reject }));
+    },
     onRuntimeEvent(listener: any) { receive = listener; return () => {}; } }, () => { onChange(); view?.update(); });
   return { controller, pending, receive: (value: unknown) => receive(value), mount() { view = mountTasksView(controller); return view; },
     async open(id = 7, first?: any) { controller.refresh(); await flush(); controller.openDetail(id);
@@ -186,6 +193,7 @@ test("notify/parser/bridge synchronous reentry is session fenced before and afte
   await flush(); assert.equal(f.controller.detailState.kind, "idle");
   let controller!: ReturnType<typeof createRendererTasks>, mode = "detail";
   controller = createRendererTasks({ tasksGet: async () => list, taskDetail(request: any): any {
+    if (request.operation === "feedback") return Promise.resolve(emptyFeedback);
     if (request.operation === "detail") { const value = detail(7); value.data.events = sectionPage("events", [900]).data; return Promise.resolve(value); }
     if (mode === "throw") throw undefined; controller.closeDetail(); return Promise.resolve(sectionPage("events", [800]));
   } }, () => {});
@@ -264,7 +272,7 @@ function actionDetail(id: number, state: DesktopTasksRun["state"] = "claimed", c
   return value;
 }
 function actionFixture() {
-  const detailPending: { resolve(value: unknown): void; reject(value: unknown): void }[] = [];
+  const detailPending: { request: any; resolve(value: unknown): void; reject(value: unknown): void }[] = [];
   const writes: any[] = [];
   const writePending: { resolve(value: unknown): void; reject(value: unknown): void }[] = [];
   let listCalls = 0;
@@ -272,7 +280,7 @@ function actionFixture() {
   const bridge = {
     tasksGet: async () => { listCalls++; return list; },
     taskDetail(request: { operation: "detail"; runId: number }) {
-      return new Promise((resolve, reject) => detailPending.push({ resolve, reject }));
+      return new Promise((resolve, reject) => detailPending.push({ request, resolve, reject }));
     },
     taskAction(input: unknown) { writes.push(input); return new Promise((resolve, reject) => writePending.push({ resolve, reject })); },
     onRuntimeEvent() { return () => {}; },
@@ -281,7 +289,9 @@ function actionFixture() {
   return { controller, detailPending, writes, writePending, listCalls: () => listCalls, mount() { view = mountTasksView(controller); return view; } };
 }
 const settleWrite = async (f: ReturnType<typeof actionFixture>, value: unknown) => { f.writePending.at(-1)!.resolve(value); await flush(); };
-const settleDetail = async (f: ReturnType<typeof actionFixture>, value: unknown) => { f.detailPending.at(-1)!.resolve(value); await flush(); };
+const settleDetail = async (f: ReturnType<typeof actionFixture>, value: unknown) => { f.detailPending.filter(x => x.request.operation === "detail").at(-1)!.resolve(value); await flush(); };
+const settleFeedback = async (f: ReturnType<typeof actionFixture>, value: unknown) => { f.detailPending.filter(x => x.request.operation === "feedback").at(-1)!.resolve(value); await flush(); };
+const feedbackCalls = (f: ReturnType<typeof actionFixture>) => f.detailPending.filter(x => x.request.operation === "feedback");
 async function openAction(f: ReturnType<typeof actionFixture>, value = actionDetail(7)) {
   f.controller.refresh(); await flush(); f.controller.openDetail(7); await settleDetail(f, value);
 }
@@ -394,5 +404,84 @@ test("view offers answer/close/stop/correct with honest labels and a re-read ins
     assert.equal(byClass("action-reread").length, 1);
     byClass("action-reread")[0].fire();
     assert.equal(f.detailPending.length, 2);
+  } finally { if (previous) Object.defineProperty(globalThis, "document", previous); else Reflect.deleteProperty(globalThis, "document"); }
+});
+const feedbackPage = (ids: number[], hasMore = false, runId = 7) => ({ version: 1, ok: true, data: {
+  items: ids.map(id => ({ id, kind: "交付满意", text: `评价 ${id}`, createdAt: null, truncated: false })),
+  hasMore, nextCursor: hasMore ? encodeRunCursor({ version: 1, run: runId, section: "feedback", lastId: ids.at(-1)! }) : null,
+} });
+test("a delivered run reads its ratings as a separate page that never delays or joins the detail", async () => {
+  const f = actionFixture(); f.controller.refresh(); await flush(); f.controller.openDetail(7);
+  await settleDetail(f, actionDetail(7, "claimed"));
+  assert.equal(feedbackCalls(f).length, 0, "a claimed run reads no ratings");
+  // Only a fresh read of the run can move it from claimed to delivered.
+  f.controller.closeDetail(); f.controller.openDetail(7); await settleDetail(f, actionDetail(7, "done"));
+  const [call] = feedbackCalls(f);
+  assert.deepEqual(call.request, { operation: "feedback", runId: 7, input: {} });
+  // The detail is already committed while the ratings are still in flight.
+  assert.equal(f.controller.detailState.kind, "ready"); assert.equal(f.controller.feedbackState.kind, "loading");
+  await settleFeedback(f, feedbackPage([9, 8]));
+  const state = f.controller.feedbackState;
+  assert.equal(state.kind, "end"); assert.deepEqual(state.items.map(x => x.id), [9, 8]);
+  assert.ok(!("feedback" in (f.controller.detailState as any).data), "ratings stay outside the strict detail snapshot");
+});
+test("ratings page behind its own cursor, fenced by close and never merged into the other groups", async () => {
+  const f = actionFixture(); f.controller.refresh(); await flush(); f.controller.openDetail(7); await settleDetail(f, actionDetail(7, "done"));
+  await settleFeedback(f, feedbackPage([9], true));
+  assert.equal(f.controller.feedbackState.kind, "idle");
+  const cursor = (f.controller.feedbackState as any).nextCursor;
+  f.controller.loadFeedbackMore(); assert.equal(feedbackCalls(f).length, 2);
+  assert.deepEqual(feedbackCalls(f)[1].request.input, { cursor });
+  await settleFeedback(f, feedbackPage([8]));
+  assert.equal(f.controller.feedbackState.kind, "end");
+  assert.deepEqual(f.controller.feedbackState.items.map(x => x.id), [9, 8]);
+  // A page that repeats or moves backwards is refused, keeping what was already shown.
+  f.controller.closeDetail(); f.controller.openDetail(7); await settleDetail(f, actionDetail(7, "done"));
+  await settleFeedback(f, feedbackPage([9], true));
+  f.controller.loadFeedbackMore(); await settleFeedback(f, feedbackPage([9]));
+  assert.equal(f.controller.feedbackState.kind, "failed");
+  assert.deepEqual(f.controller.feedbackState.items.map(x => x.id), [9]);
+  // A flight still in the air when another run opens must never append to that run's page.
+  f.controller.closeDetail(); f.controller.openDetail(7); await settleDetail(f, actionDetail(7, "done"));
+  await settleFeedback(f, feedbackPage([9], true));
+  f.controller.loadFeedbackMore(); const stale = feedbackCalls(f).at(-1)!;
+  assert.equal(f.controller.feedbackState.kind, "loading");
+  f.controller.openDetail(6);
+  assert.equal(f.controller.detailState.runId, 6, "opening another run resets the rating page");
+  stale.resolve(feedbackPage([8]));
+  await flush();
+  assert.equal(f.controller.feedbackState.kind, "idle");
+  assert.deepEqual(f.controller.feedbackState.items, []);
+});
+test("a rating is accepted only for a delivered run and its receipt is never treated as a rerun", async () => {
+  const f = actionFixture(); await openAction(f, actionDetail(7, "done"));
+  f.controller.submitAction({ action: "feedback", runId: 7, input: { kind: "交付满意", text: "做得好" } });
+  assert.deepEqual(f.writes[0], { version: 1, action: "feedback", runId: 7, input: { kind: "交付满意", text: "做得好" } });
+  await settleWrite(f, { version: 1, ok: true, action: "feedback", runId: 7, result: { ok: true, id: 12 } });
+  const state = f.controller.actionState;
+  assert.equal(state.kind, "settled");
+  if (state.kind === "settled") { assert.equal(state.retryable, false); assert.match(state.message, /不会触发新一轮/); }
+  // A confirmed receipt re-reads the run instead of guessing a new state.
+  assert.equal(f.detailPending.filter(x => x.request.operation === "detail").length, 2);
+  const claimed = actionFixture(); await openAction(claimed, actionDetail(7, "claimed"));
+  claimed.controller.submitAction({ action: "feedback", runId: 7, input: { kind: "交付满意", text: "做得好" } });
+  assert.equal(claimed.writes.length, 0, "a run that has not delivered cannot be rated");
+});
+test("view shows the three-kind rating form and its own paging control only for a delivered run", async () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", { configurable: true, value: { createElement: () => new Element() } });
+  try {
+    const f = actionFixture(); const view = f.mount(); await openAction(f, actionDetail(7, "done")); const root = view.root as unknown as Element;
+    const byClass = (name: string) => all(root).filter(x => x.className === name);
+    const kinds = all(root).find(x => x.attributes.get("aria-label") === "反馈类型")!;
+    assert.deepEqual(kinds.children.map(x => x.textContent), ["交付满意", "需要改善", "内容错误"]);
+    assert.equal(byClass("feedback-more").length, 1);
+    assert.equal(byClass("detail-more").length, 3, "the rating page keeps its own control");
+    kinds.value = "内容错误";
+    const text = all(root).find(x => x.attributes.get("aria-label") === "反馈内容")!;
+    text.value = " 日期写错了 ";
+    byClass("feedback-submit")[0].fire();
+    assert.deepEqual(f.writes[0], { version: 1, action: "feedback", runId: 7, input: { kind: "内容错误", text: "日期写错了" } });
+    assert.match(root.textContent, /反馈只记录评价，不自动重新执行/);
   } finally { if (previous) Object.defineProperty(globalThis, "document", previous); else Reflect.deleteProperty(globalThis, "document"); }
 });

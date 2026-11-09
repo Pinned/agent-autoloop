@@ -4,21 +4,29 @@ export const DESKTOP_TASK_ACTION_RAW_MAX_UTF16 = 16 * 1024;
 export const DESKTOP_TASK_ACTION_INPUT_MAX_BYTES = 32 * 1024;
 export const DESKTOP_TASK_ACTION_RESULT_MAX_BYTES = 1024;
 
-export type DesktopTaskAction = "answer" | "resolve" | "cancel" | "memo";
+export type DesktopTaskAction = "answer" | "resolve" | "cancel" | "memo" | "feedback";
+export type DesktopTaskFeedbackKind = "交付满意" | "需要改善" | "内容错误";
 export type DesktopTaskAnswerInput = { choice: number } | { text: string } | Record<string, never>;
 export type DesktopTaskActionInput =
   | { version: 1; action: "answer"; cardId: number; input: DesktopTaskAnswerInput }
   | { version: 1; action: "resolve"; cardId: number; input: { reason: string } }
   | { version: 1; action: "cancel"; runId: number; input: Record<string, never> }
-  | { version: 1; action: "memo"; runId: number; input: { text: string } };
+  | { version: 1; action: "memo"; runId: number; input: { text: string } }
+  | {
+      version: 1;
+      action: "feedback";
+      runId: number;
+      input: { kind: DesktopTaskFeedbackKind; text: string };
+    };
 export type DesktopTaskAnswerResult = { changed: boolean; state: "open" | "decided" | "closed" | "done" };
 export type DesktopTaskActionResult =
-  DesktopTaskAnswerResult | { changed: boolean } | { ok: true } | { stopped: boolean };
+  DesktopTaskAnswerResult | { changed: boolean } | { ok: true } | { stopped: boolean } | { ok: true; id: number };
 export type DesktopTaskActionSuccess =
   | { version: 1; ok: true; action: "answer"; cardId: number; result: DesktopTaskAnswerResult }
   | { version: 1; ok: true; action: "resolve"; cardId: number; result: { changed: boolean } }
   | { version: 1; ok: true; action: "cancel"; runId: number; result: { ok: true } }
-  | { version: 1; ok: true; action: "memo"; runId: number; result: { stopped: boolean } };
+  | { version: 1; ok: true; action: "memo"; runId: number; result: { stopped: boolean } }
+  | { version: 1; ok: true; action: "feedback"; runId: number; result: { ok: true; id: number } };
 export const DESKTOP_TASK_ACTION_MESSAGES = Object.freeze({
   invalid: "操作内容不正确，请检查。",
   busy: "正在提交操作，请勿重复点击。",
@@ -39,7 +47,8 @@ export type DesktopTaskActionResponse =
       error: { code: DesktopTaskActionCode; message: string };
     };
 const encoder = new TextEncoder();
-const actions: readonly DesktopTaskAction[] = ["answer", "resolve", "cancel", "memo"];
+const actions: readonly DesktopTaskAction[] = ["answer", "resolve", "cancel", "memo", "feedback"];
+const feedbackKinds: readonly DesktopTaskFeedbackKind[] = ["交付满意", "需要改善", "内容错误"];
 function invalid(): never {
   throw new Error(DESKTOP_TASK_ACTION_MESSAGES.invalid);
 }
@@ -113,6 +122,10 @@ export function parseDesktopTaskActionInput(value: unknown): DesktopTaskActionIn
   } else if (action === "memo") {
     raw = record(item.input, ["text"]);
     input = { text: text(raw.text) };
+  } else if (action === "feedback") {
+    raw = record(item.input, ["kind", "text"]);
+    if (typeof raw.kind !== "string" || !feedbackKinds.includes(raw.kind as DesktopTaskFeedbackKind)) invalid();
+    input = { kind: raw.kind as DesktopTaskFeedbackKind, text: text(raw.text) };
   } else {
     raw = record(item.input, []);
     input = {};
@@ -136,6 +149,10 @@ export function projectDesktopTaskActionResult(action: DesktopTaskAction, value:
     result = { ok: true };
   } else if (action === "memo") {
     result = { stopped: boolean(record(value, ["stopped"]).stopped) };
+  } else if (action === "feedback") {
+    const item = record(value, ["ok", "id"]);
+    if (item.ok !== true) invalid();
+    result = { ok: true, id: integer(item.id, 1) };
   } else invalid();
   bytes(result, DESKTOP_TASK_ACTION_RESULT_MAX_BYTES);
   return Object.freeze(result);
