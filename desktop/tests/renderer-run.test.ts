@@ -280,3 +280,119 @@ test("refresh re-reads after setup completes and ignores it while any flight is 
   assert.deepEqual(f.calls, ["get", "get", "get"]);
   assert.equal(f.gates.length, 3);
 });
+
+// Confirmed operation facts are separate from the latest pushed state.
+test("synchronous setup gate reentry cannot replace an already reserved operation token", async () => {
+  let control!: ReturnType<typeof createRendererRun>; let listener!: (value: unknown) => void;
+  let calls = 0; const pending = deferred<DesktopRuntimeResponse>();
+  control = createRendererRun({ runtimeGet: () => pending.promise, runtimeStart: () => { calls++; return pending.promise; }, runtimeStop: () => { calls++; return pending.promise; },
+    onRuntimeEvent(next) { listener = next; return () => {}; },
+  }, () => { control.stop(); return { setupLocked: false, setupBusy: false }; }, () => {});
+  listener(pushed(snap())); control.start(); assert.equal(calls, 1); assert.equal(control.busy, true);
+  pending.resolve(ok(snap())); await flush(); assert.equal(control.operationResults.start, null);
+  assert.equal(control.operationResults.stop?.status, "stopped");
+});
+test("late start and stop successes preserve newer pushes and both frozen receipt slots", async () => {
+  const f = fixture(); f.push(pushed(snap())); f.controller.start();
+  f.push(pushed(snap({ status: "unknown", pendingSync: 5 })));
+  f.gates[0].resolve(ok(snap({ status: "running", role: "hub-worker" }))); await flush();
+  assert.equal(readyState(f.controller.state).status, "unknown");
+  assert.equal(f.controller.operationResults.start?.status, "running");
+  f.controller.stop(); f.push(pushed(snap({ status: "running", pendingSync: 7 })));
+  const unsafe = snap({ status: "unknown", pendingSync: 4, error: { code: "safe-stop", message: DESKTOP_RUNTIME_ERROR_MESSAGES["safe-stop"] } });
+  f.gates[1].resolve(ok(unsafe)); await flush();
+  assert.equal(readyState(f.controller.state).status, "running");
+  assert.equal(f.controller.operationResults.stop?.error?.message, DESKTOP_RUNTIME_ERROR_MESSAGES["safe-stop"]);
+  assert.equal(f.controller.operationResults.start?.status, "running");
+  assert.ok(Object.isFrozen(f.controller.operationResults));
+  assert.ok(Object.isFrozen(f.controller.operationResults.stop));
+  assert.ok(Object.isFrozen(f.controller.operationResults.stop?.error));
+  const previous = f.controller.operationResults;
+  f.push(pushed(snap())); f.controller.start();
+  assert.equal(f.controller.operationResults, previous);
+  f.gates[2].resolve(ok(snap({ status: "failed", error: { code: "prepare", message: DESKTOP_RUNTIME_ERROR_MESSAGES.prepare } }))); await flush();
+  assert.notEqual(f.controller.operationResults, previous);
+  assert.equal(f.controller.operationResults.stop, previous.stop);
+  assert.equal(previous.start?.status, "running");
+});
+test("without intervening push success adopts normally; get and refusals never write receipts", async () => {
+  const f = fixture(); f.controller.init(); f.gates[0].resolve(ok(snap())); await flush();
+  assert.deepEqual(f.controller.operationResults, { start: null, stop: null });
+  f.controller.start(); f.gates[1].resolve(ok(snap({ status: "running" }))); await flush();
+  assert.equal(readyState(f.controller.state).status, "running");
+  const receipts = f.controller.operationResults;
+  f.controller.refresh(); f.gates[2].resolve(ok(snap())); await flush();
+  f.controller.start(); f.gates[3].resolve(fail("busy")); await flush();
+  assert.equal(f.controller.operationResults, receipts);
+  f.controller.start(); f.gates[4].resolve(fail("unavailable")); await flush();
+  assert.equal(f.controller.operationResults, receipts);
+});
+test("malformed rejected and unknown operation results lock despite a newer good push and preserve facts", async () => {
+  for (const outcome of ["malformed", "reject", "unknown"] as const) {
+    const f = fixture(); f.push(pushed(snap())); f.controller.start();
+    f.gates[0].resolve(ok(snap({ status: "running" }))); await flush();
+    const receipts = f.controller.operationResults;
+    f.controller.stop(); f.push(pushed(snap({ status: "running", pendingSync: 9 })));
+    if (outcome === "reject") f.gates[1].reject(new Error("private failure"));
+    else f.gates[1].resolve(outcome === "unknown" ? fail("unknown") : { version: 1, ok: true, state: { ...snap(), extra: true } });
+    await flush(); assert.equal(f.controller.state.kind, "locked");
+    assert.equal(f.controller.operationResults, receipts);
+    f.push(pushed(snap({ status: "running" }))); assert.equal(f.controller.state.kind, "ready");
+    assert.equal(f.controller.operationResults, receipts);
+  }
+});
+test("bridge reentry reserves flight before push and synchronous throw locks without releasing a later token", async () => {
+  let listener!: (value: unknown) => void;
+  let control!: ReturnType<typeof createRendererRun>;
+  const pending = deferred<DesktopRuntimeResponse>(); let starts = 0; let stops = 0;
+  control = createRendererRun({
+    runtimeGet() { throw new Error("unused"); },
+    runtimeStart() { starts++; listener(pushed(snap({ status: "running" }))); control.stop(); return pending.promise; },
+    runtimeStop() { stops++; throw undefined; },
+    onRuntimeEvent(next) { listener = next; return () => {}; },
+  }, () => ({ setupLocked: false, setupBusy: false }), () => {});
+  listener(pushed(snap())); control.start(); assert.equal(starts, 1); assert.equal(stops, 0);
+  pending.resolve(ok(snap({ status: "failed" }))); await flush();
+  assert.equal(readyState(control.state).status, "running"); assert.equal(control.operationResults.start?.status, "failed");
+  control.stop(); assert.equal(control.state.kind, "locked"); assert.equal(control.busy, false);
+});
+test("notify reentry starts a new token and old completion never clears it or queues a second read", async () => {
+  const gates: ReturnType<typeof deferred<DesktopRuntimeResponse>>[] = [];
+  let listener!: (value: unknown) => void; let control!: ReturnType<typeof createRendererRun>; let reenter = false;
+  const read = () => { const gate = deferred<DesktopRuntimeResponse>(); gates.push(gate); return gate.promise; };
+  control = createRendererRun({ runtimeGet: read, runtimeStart: read, runtimeStop: read,
+    onRuntimeEvent(next) { listener = next; return () => {}; },
+  }, () => ({ setupLocked: false, setupBusy: false }), () => { if (reenter && !control.busy) { reenter = false; control.stop(); } });
+  listener(pushed(snap())); control.start(); control.refresh(); reenter = true;
+  gates[0].resolve(ok(snap({ status: "running" }))); await flush();
+  assert.equal(gates.length, 2); assert.equal(control.busy, true);
+  gates[1].resolve(ok(snap())); await flush(); assert.equal(control.busy, false);
+  assert.equal(control.operationResults.start?.status, "running"); assert.equal(control.operationResults.stop?.status, "stopped");
+});
+
+test("receipt warnings remain visible in loading and locked views and never enable buttons", async () => {
+  const { mountRunCard } = await import("../src/renderer/run-view.ts");
+  class Node {
+    textContent = ""; className = ""; hidden = false; disabled = false; id = ""; type = "";
+    dataset: Record<string, string> = {}; children: Node[] = [];
+    append(...nodes: Node[]) { this.children.push(...nodes); }
+    setAttribute() {} addEventListener() {}
+  }
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", { configurable: true, value: { createElement: () => new Node() } });
+  try {
+    const unsafe = snap({ status: "unknown", pendingSync: 4, error: { code: "safe-stop", message: DESKTOP_RUNTIME_ERROR_MESSAGES["safe-stop"] } });
+    const f = fixture(); f.push(pushed(snap({ status: "running" }))); f.controller.stop(); f.gates[0].resolve(ok(unsafe)); await flush();
+    f.push({ version: 0 }); assert.equal(f.controller.state.kind, "locked");
+    const root = new Node(); const view = mountRunCard(root as unknown as HTMLElement, f.controller, () => {}, { setupBusy: () => false, setupLocked: () => false });
+    const nodes = (node: Node): Node[] => [node, ...node.children.flatMap(nodes)];
+    const all = nodes(root); const warning = all.find(node => node.className.includes("run-receipt-stop"))!;
+    assert.equal(warning.hidden, false); assert.match(warning.textContent, /上次已确认停止回执，并非当前状态/);
+    assert.ok(warning.textContent.includes(DESKTOP_RUNTIME_ERROR_MESSAGES["safe-stop"]));
+    assert.ok(all.filter(node => ["启动运行服务", "停止本机运行服务"].includes(node.textContent)).every(node => node.disabled));
+    const loading = { ...f.controller, state: { kind: "loading" as const } };
+    const root2 = new Node(); mountRunCard(root2 as unknown as HTMLElement, loading, () => {}, { setupBusy: () => false, setupLocked: () => false });
+    assert.equal(nodes(root2).find(node => node.className.includes("run-receipt-stop"))?.hidden, false);
+    view.update(); assert.equal(warning.hidden, false);
+  } finally { if (previous) Object.defineProperty(globalThis, "document", previous); else Reflect.deleteProperty(globalThis, "document"); }
+});
