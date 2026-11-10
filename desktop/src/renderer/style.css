@@ -120,16 +120,49 @@ h2 {
 :root:not([data-shell="workspace"]) .sidebar {
   display: none;
 }
-/* The first-run page is the whole window while it is up: no menu beside it, and a centred column
-   that reads as its own page rather than a panel tucked into a page that is not there. */
+/* The first-run page is the whole window while it is up: no menu beside it. It fills the window as
+   two columns - what this page is for on the left, the work itself on the right - instead of one
+   narrow card floating in empty space. Below 900px the columns stack.
+
+   Content starts at the top and flows down; it is deliberately not vertically centred. When a step
+   grows taller than the window, centring pushes its first line above the scroll origin, where no
+   amount of scrolling gets it back. Top alignment keeps "cannot see it" a scrolling problem. */
 :root[data-shell="setup"] main {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding: 32px 28px;
+  display: grid;
+  grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
+  align-items: start;
+  gap: 40px;
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 40px 28px;
 }
+:root[data-shell="setup"] .page-head {
+  position: sticky;
+  top: 0;
+  margin-bottom: 0;
+}
+/* The work column can be as wide as the window allows; the card holds a readable measure anyway
+   because the left column already consumes the excess width. */
 :root[data-shell="setup"] .setup-panel {
   width: 100%;
+  max-width: none;
+  margin-bottom: 0;
+}
+/* Prose inside the card stops at ~52 characters. A form can use the full card width, but a line of
+   body text that long loses its return sweep, so it never gets the chance. */
+:root[data-shell="setup"] .setup-panel p {
+  max-width: 56ch;
+}
+@media (max-width: 900px) {
+  :root[data-shell="setup"] main {
+    display: block;
+    padding: 26px 22px 34px;
+  }
+  :root[data-shell="setup"] .page-head {
+    position: static;
+    margin-bottom: 22px;
+  }
 }
 .sidebar {
   width: 184px;
@@ -386,6 +419,11 @@ main {
 .setup-form {
   display: grid;
   gap: 16px;
+}
+/* A grid child stretches by default; a full-width button reads as a primary action, so these
+   secondary "check" buttons would outshout the real submit button below them. */
+.setup-form > button {
+  justify-self: start;
 }
 .setup-choices {
   display: grid;

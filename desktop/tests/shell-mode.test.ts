@@ -34,12 +34,19 @@ test("the document's first frame is 'checking', so no menu is painted before the
     assert.match(html, new RegExp(`id="${id}"`), id);
 });
 
-test("the stylesheet hides the menu outside the workspace and centres the first-run page", () => {
+test("the stylesheet hides the menu outside the workspace and gives the first-run page the window", () => {
   const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
   assert.match(css, /:root:not\(\[data-shell="workspace"\]\) \.sidebar\s*\{\s*display:\s*none;/);
   assert.match(css, /:root\[data-shell="setup"\] main\s*\{/);
   // A disabled menu would still promise pages; hidden is the only honest state before a role exists.
   assert.doesNotMatch(css, /\.sidebar\[aria-disabled/);
+  // Vertically centring a column taller than the window pushes its first line above the scroll
+  // origin, where scrolling cannot reach it. The page must start at the top and flow down.
+  const setup = css.slice(css.indexOf(':root[data-shell="setup"] main {'));
+  const rule = setup.slice(0, setup.indexOf("}"));
+  assert.doesNotMatch(rule, /justify-content:\s*center/);
+  // Wide windows split the page into explanation + work instead of one narrow card in empty space.
+  assert.match(rule, /grid-template-columns:/);
 });
 
 test("the app never draws a page before the shell is a workspace", () => {
