@@ -15,6 +15,7 @@ const bridge = Object.freeze<DesktopBridge>({
   runtimeGet: () => ipcRenderer.invoke("desktop:runtime:get"),
   runtimeStart: () => ipcRenderer.invoke("desktop:runtime:start"),
   runtimeStop: () => ipcRenderer.invoke("desktop:runtime:stop"),
+  copyLaunchCommand: () => ipcRenderer.invoke("desktop:launch:copy-command"),
   todayState: () => ipcRenderer.invoke("desktop:state:today"),
   workersGet: () => ipcRenderer.invoke("desktop:workers:get"),
   workersLocal: () => ipcRenderer.invoke("desktop:workers:local"),

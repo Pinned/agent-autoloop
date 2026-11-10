@@ -126,8 +126,12 @@ h2 {
 
    Content starts at the top and flows down; it is deliberately not vertically centred. When a step
    grows taller than the window, centring pushes its first line above the scroll origin, where no
-   amount of scrolling gets it back. Top alignment keeps "cannot see it" a scrolling problem. */
-:root[data-shell="setup"] main {
+   amount of scrolling gets it back. Top alignment keeps "cannot see it" a scrolling problem.
+
+   The reconnect page is the same moment seen from the other side - a machine that is not a
+   workspace right now - so it shares the layout rather than inventing a second one. */
+:root[data-shell="setup"] main,
+:root[data-shell="reconnect"] main {
   display: grid;
   grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
   align-items: start;
@@ -137,29 +141,34 @@ h2 {
   margin: 0 auto;
   padding: 40px 28px;
 }
-:root[data-shell="setup"] .page-head {
+:root[data-shell="setup"] .page-head,
+:root[data-shell="reconnect"] .page-head {
   position: sticky;
   top: 0;
   margin-bottom: 0;
 }
 /* The work column can be as wide as the window allows; the card holds a readable measure anyway
    because the left column already consumes the excess width. */
-:root[data-shell="setup"] .setup-panel {
+:root[data-shell="setup"] .setup-panel,
+:root[data-shell="reconnect"] .setup-panel {
   width: 100%;
   max-width: none;
   margin-bottom: 0;
 }
 /* Prose inside the card stops at ~52 characters. A form can use the full card width, but a line of
    body text that long loses its return sweep, so it never gets the chance. */
-:root[data-shell="setup"] .setup-panel p {
+:root[data-shell="setup"] .setup-panel p,
+:root[data-shell="reconnect"] .setup-panel p {
   max-width: 56ch;
 }
 @media (max-width: 900px) {
-  :root[data-shell="setup"] main {
+  :root[data-shell="setup"] main,
+  :root[data-shell="reconnect"] main {
     display: block;
     padding: 26px 22px 34px;
   }
-  :root[data-shell="setup"] .page-head {
+  :root[data-shell="setup"] .page-head,
+  :root[data-shell="reconnect"] .page-head {
     position: static;
     margin-bottom: 22px;
   }
@@ -492,6 +501,29 @@ main {
 }
 .setup-status:empty {
   display: none;
+}
+/* The reconnect command is the whole point of that page: it must read as one line of shell to copy,
+   not as prose. It wraps on a narrow window rather than scrolling sideways, and the text stays
+   selectable so a failed copy is a nuisance instead of a dead end. */
+.reconnect-command {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel2);
+}
+.reconnect-command code {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
 }
 .run-line {
   display: flex;

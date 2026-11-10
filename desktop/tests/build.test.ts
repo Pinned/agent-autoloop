@@ -112,7 +112,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(main, /远程队列不会取消/);
   assert.match(main, /离线持久待同步/);
   assert.doesNotMatch(main, /restartPolicy|controller\.restart/);
-  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 26);
+  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 27);
   // Each handler is checked inside its own block: a cross-handler match would let a missing
   // sender check hide behind the next handler that has one.
   const blocks = main.split("ipcMain.handle(channels.").slice(1);
@@ -122,6 +122,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
     return block;
   };
   for (const name of [
+    "launchCommandCopy",
     "setupStatus",
     "launchStatus",
     "probeHub",
@@ -218,6 +219,7 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
   assert.deepEqual(methods, [
     "checkBuiltinAgents",
     "completeSetup",
+    "copyLaunchCommand",
     "getTheme",
     "initHub",
     "joinWorker",

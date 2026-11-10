@@ -1,5 +1,5 @@
 import type { DesktopBridge, ThemeState } from "../policy.ts";
-import { desktopRuntimeStatusText } from "../../../host/desktop-run-contract.ts";
+import { desktopRuntimeStatusText, type DesktopRuntimeSnapshot } from "../../../host/desktop-run-contract.ts";
 import { createRendererSetup } from "./setup-controller.ts";
 import { mountSetupView } from "./setup-view.ts";
 import { createRendererToday } from "./today-controller.ts";
@@ -19,6 +19,7 @@ import { createRendererTasks } from "./tasks-controller.ts";
 import { mountTasksView } from "./tasks-view.ts";
 import { createRendererSettings } from "./settings-controller.ts";
 import { mountSettingsView } from "./settings-view.ts";
+import { mountReconnectView } from "./reconnect-view.ts";
 import {
   eyebrowFor,
   navLabelFor,
@@ -28,7 +29,7 @@ import {
   type Page as NavigationPage,
   type Role,
 } from "./navigation.ts";
-import { shellMode, type ShellMode } from "./shell-mode.ts";
+import { attachedHubLost, shellMode, type ShellMode } from "./shell-mode.ts";
 declare global {
   interface Window {
     desktop: DesktopBridge;
@@ -71,9 +72,47 @@ let navigationDisabled = false;
 // Which shell the window may show. The launch record decides; the first frame is "checking", which
 // the document already carries, so no menu is ever painted on a machine that has no workspace.
 let shell: ShellMode = "checking";
+// The reconnect overlay answers a different question than the launch record: not "does this machine
+// have a workspace" but "is the hub behind it still answering". A configured workspace whose attached
+// hub stopped answering gets this page instead of the menu, because every page behind the menu would
+// be a read of a hub that is not there. The first-run page is never covered: a machine with no
+// workspace has nothing to reconnect.
+function runtimeForShell(): DesktopRuntimeSnapshot | null {
+  return run.state.kind === "ready" ? run.state.snapshot : null;
+}
+/** The launch record's decision, before the reconnect page is considered. */
+let shellBase: ShellMode = "checking";
+/**
+ * Re-derive the visible shell from the launch decision plus the runtime's reachability.
+ *
+ * `shellBase` is the only input the launch record may move. A runtime change re-runs this on the
+ * decision that was already taken, so a runtime push can never promote a machine to "workspace"
+ * before the launch read has answered — the menu would appear on a machine that has no workspace.
+ */
+function syncShell() {
+  const next: ShellMode =
+    shellBase === "workspace" && setupView === undefined && attachedHubLost(shellBase, runtimeForShell())
+      ? "reconnect"
+      : shellBase;
+  const wasReconnect = shell === "reconnect";
+  shell = next;
+  document.documentElement.dataset.shell = next;
+  if (next === "reconnect" && reconnectView === undefined) {
+    reconnectView = mountReconnectView(main, { copy: () => window.desktop.copyLaunchCommand(), exit: quitApp });
+  }
+  if (next !== "reconnect" && reconnectView !== undefined) {
+    reconnectView.dispose();
+    reconnectView = undefined;
+    // The page the user was on is still current; it was only covered. Rebuild it once this
+    // notification returns, so a render never re-enters the controller that is still notifying.
+    if (wasReconnect) queueMicrotask(() => {
+      if (shell === "workspace" && reconnectView === undefined) render(currentPage, false);
+    });
+  }
+}
 function applyShell(mode: ShellMode) {
-  shell = mode;
-  document.documentElement.dataset.shell = mode;
+  shellBase = mode;
+  syncShell();
 }
 // The tasks and workers pages exist in both roles but do not mean the same thing in them: a page
 // drawn before the runtime reported its role must be rebuilt once that role is known.
@@ -124,6 +163,7 @@ function syncNavigation(role: Role) {
 }
 let setupView: ReturnType<typeof mountSetupView> | undefined;
 let initialSetupPresented = false;
+let reconnectView: ReturnType<typeof mountReconnectView> | undefined;
 let runCard: ReturnType<typeof mountRunCard> | undefined;
 let todayView: ReturnType<typeof mountTodayView> | undefined;
 let workersView: ReturnType<typeof mountWorkersView> | undefined;
@@ -155,6 +195,10 @@ const run = createRendererRun(
   () => {
     taskControl.gateChanged();
     updateRuntimeStatus();
+    // Reachability is a runtime fact, so a hub that stops answering is what takes the workspace
+    // away — not a setup change. Only the decision already taken is re-projected: recomputing it
+    // here would let a runtime push promote the shell before the launch record has answered.
+    syncShell();
     // The runtime's role is the authoritative one; the launch record covers a stopped machine.
     syncNavigation(currentRole());
     if (currentPage === "workers") runCard?.update();
@@ -346,6 +390,11 @@ function render(id: string, focus = true) {
     if (!setup.leave()) return;
     setupView.dispose();
     setupView = undefined;
+    // The setup page masks the reconnect page by design. Removing it is the moment that mask comes
+    // off, and a hub that went away meanwhile pushed no further event — so the shell is asked again
+    // here. If the hub is gone, the reconnect page takes #main and no business page is drawn.
+    syncShell();
+    if (shell !== "workspace") return;
   }
   // The cards' DOM dies with the page; the controllers and their subscriptions live on.
   runCard = undefined;
@@ -430,9 +479,11 @@ document.querySelector("#view-connection")!.addEventListener("click", () => rend
 document.querySelector("#hide-window")!.addEventListener("click", () => {
   window.desktop.window("hide").catch(report);
 });
-document.querySelector("#quit-app")!.addEventListener("click", () => {
+document.querySelector("#quit-app")!.addEventListener("click", quitApp);
+// The one way out of the app, shared by the titlebar and a page that has no workspace behind it.
+function quitApp() {
   window.desktop.window("quit").catch(report);
-});
+}
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
   window.desktop.getTheme().then(applyTheme).catch(report);
 });
