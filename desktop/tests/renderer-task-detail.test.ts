@@ -50,11 +50,11 @@ test("refresh/runtime invalidation fence pending detail and preserve the old lis
   const f = fixture(); f.controller.refresh(); await flush();
   f.controller.openDetail(7); f.controller.refresh(); f.pending[0].resolve(validDetail(7)); await flush();
   assert.equal(f.controller.detailState.kind, "idle");
-  f.controller.openDetail(7); f.receive({ version: 1, state: { version: 1, status: "unavailable", role: null, pendingSync: 0, error: null } });
+  f.controller.openDetail(7); f.receive({ version: 1, state: { version: 1, status: "unavailable", role: null, ownership: "owned", pendingSync: 0, error: null } });
   f.pending[1].resolve(validDetail(7)); await flush(); assert.equal(f.controller.detailState.kind, "idle");
   assert.equal(f.controller.loadState.kind, "ready");
   f.controller.openDetail(7); assert.equal(f.pending.length, 2);
-  f.receive({ version: 1, state: { version: 1, status: "running", role: "hub-worker", pendingSync: 0, error: null } });
+  f.receive({ version: 1, state: { version: 1, status: "running", role: "hub-worker", ownership: "owned", pendingSync: 0, error: null } });
   f.controller.openDetail(7); f.pending[2].resolve(validDetail(7)); await flush(); assert.equal(f.controller.detailState.kind, "ready");
   f.receive({ version: 1, extra: true }); assert.equal((f.controller.detailState as { kind: string }).kind, "idle");
 });
@@ -174,8 +174,8 @@ test("close/switch/refresh/runtime ABA old settlement never appends or releases 
     if (boundary === "switch") f.controller.openDetail(6);
     else if (boundary === "refresh") { f.controller.refresh(); await flush(); f.controller.openDetail(7); }
     else { f.controller.closeDetail(); if (boundary === "runtime") {
-      f.receive({ version: 1, state: { version: 1, status: "unavailable", role: null, pendingSync: 0, error: null } });
-      f.receive({ version: 1, state: { version: 1, status: "running", role: "hub-worker", pendingSync: 0, error: null } });
+      f.receive({ version: 1, state: { version: 1, status: "unavailable", role: null, ownership: "owned", pendingSync: 0, error: null } });
+      f.receive({ version: 1, state: { version: 1, status: "running", role: "hub-worker", ownership: "owned", pendingSync: 0, error: null } });
     } f.controller.openDetail(7); }
     const id = boundary === "switch" ? 6 : 7, value = detail(id); value.data.cards = sectionPage("cards", [900], true, id).data;
     f.pending.at(-1)!.resolve(value); await flush(); f.controller.loadDetailMore("cards"); const count: number = f.pending.length;

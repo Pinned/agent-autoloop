@@ -21,7 +21,7 @@ const ack = { event: 1, duplicate: false, routed: ["值班规则"] };
 const accepted = (): DesktopTaskOutcome => ({ version: 3, outcome: "accepted", receipt: { version: 2, ok: true, result: { ...ack, routed: [...ack.routed] } } });
 const refusal = (outcome: "not-sent" | "uncertain" | "rejected"): DesktopTaskOutcome => ({ version: 3, outcome, message: DESKTOP_TASK_MESSAGES[outcome] });
 function presentationFixture() {
-  const state = { status: "running" as "running" | "stopped", role: "hub-worker" as "hub-worker" | null, pendingSync: 0, error: null };
+  const state = { status: "running" as "running" | "stopped", role: "hub-worker" as "hub-worker" | null, ownership: "owned" as const, pendingSync: 0, error: null };
   const gates = { phase: "idle" as "idle" | "confirming" | "preparing" | "quitting", busy: false, blocked: false, quitting: false };
   let readHook = () => {};
   const presentation = createRuntimePresentation({ page: "file:///trusted", read: () => { readHook(); return state; }, gates: () => gates, send: () => {}, refresh: () => {}, report: () => {} });

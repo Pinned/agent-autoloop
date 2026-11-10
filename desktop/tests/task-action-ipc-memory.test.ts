@@ -7,7 +7,7 @@ import { createTaskActionSource } from '../src/task-action-source.ts';
 import { createTaskActionIpc } from '../src/task-action-ipc.ts';
 import { createRuntimePresentation } from '../src/runtime-presentation.ts';
 function fixture() {
- let state:{status:'running'|'stopped';role:'hub-worker'|'worker'|null;pendingSync:number|null;error:{code:'service';message:string}|null}={status:'running',role:'hub-worker',pendingSync:0,error:null};
+ let state:{status:'running'|'stopped';role:'hub-worker'|'worker'|null;ownership:'owned';pendingSync:number|null;error:{code:'service';message:string}|null}={status:'running',role:'hub-worker',ownership:'owned',pendingSync:0,error:null};
  const gates={phase:'idle' as 'idle'|'quitting',busy:false,blocked:false,quitting:false};
  const p=createRuntimePresentation({page:'file:///trusted',read:()=>state,gates:()=>gates,send:()=>{},refresh:()=>{},report:()=>{}});
  p.finishDocument(p.beginDocument(),'file:///trusted');
@@ -55,8 +55,8 @@ test('closed gate, worker role, missing hub and bad config fail closed without s
   [f=>{f.gates.busy=true;f.p.changed();},'unavailable'],
   [f=>{f.gates.quitting=true;f.p.changed();},'unavailable'],
   // The IPC lease closes before the source: a worker-only role never even reaches the no-hub check.
-  [f=>{f.setState({status:'running',role:'worker',pendingSync:0,error:null});f.p.changed();},'unavailable'],
-  [f=>{f.setState({status:'stopped',role:null,pendingSync:0,error:null});f.p.changed();},'unavailable'],
+  [f=>{f.setState({status:'running',role:'worker',ownership:'owned',pendingSync:0,error:null});f.p.changed();},'unavailable'],
+  [f=>{f.setState({status:'stopped',role:null,ownership:'owned',pendingSync:0,error:null});f.p.changed();},'unavailable'],
   [f=>f.setConfig(()=>({hub:{listen:'0.0.0.0:80'},owner:'o'})),'config'],
  ];
  for(const [breakIt,code] of cases){const f=fixture();breakIt(f);const result=await f.ipc(f.event,answer);
@@ -64,9 +64,9 @@ test('closed gate, worker role, missing hub and bad config fail closed without s
 });
 test('the lease is acquired fresh per call and never reused across a runtime change',async()=>{
  const f=fixture();
- f.setState({status:'running',role:'worker',pendingSync:0,error:null});f.p.changed();
+ f.setState({status:'running',role:'worker',ownership:'owned',pendingSync:0,error:null});f.p.changed();
  const first=await f.ipc(f.event,answer);assert.equal(first.ok,false);assert.equal(f.seen.length,0);
- f.setState({status:'running',role:'hub-worker',pendingSync:0,error:null});f.p.changed();
+ f.setState({status:'running',role:'hub-worker',ownership:'owned',pendingSync:0,error:null});f.p.changed();
  const pending=f.ipc(f.event,answer);f.reply(receipt);const second=await pending;assert.equal(second.ok,true);
  assert.equal(f.seen.length,1);
 });
@@ -82,7 +82,7 @@ test('one write at a time; a duplicate click is busy and never becomes a second 
 test('a receipt the hub already recorded survives a gate change mid-request',async()=>{
  for(const boundary of ['role','quit','document']){
   const f=fixture();const pending=f.ipc(f.event,answer);
-  if(boundary==='role'){f.setState({status:'running',role:'worker',pendingSync:0,error:null});f.p.changed();}
+  if(boundary==='role'){f.setState({status:'running',role:'worker',ownership:'owned',pendingSync:0,error:null});f.p.changed();}
   else if(boundary==='quit'){f.gates.phase='quitting';f.p.changed();}
   else{f.p.invalidateDocument();f.p.finishDocument(f.p.beginDocument(),'file:///trusted');}
   f.reply(receipt);const result=await pending;

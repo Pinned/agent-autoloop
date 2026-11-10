@@ -13,7 +13,14 @@ import {
 import { createRendererRun, type RunBridge } from "../src/renderer/run-controller.ts";
 
 const snapshot = (overrides: Partial<DesktopRuntimeSnapshot> = {}) =>
-  desktopRuntimeSnapshotOf({ status: "stopped", role: null, pendingSync: null, error: null, ...overrides });
+  desktopRuntimeSnapshotOf({
+    status: "stopped",
+    role: null,
+    ownership: "owned",
+    pendingSync: null,
+    error: null,
+    ...overrides,
+  });
 
 async function producer() {
   const module = await import("../src/runtime-event.ts");

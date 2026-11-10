@@ -9,6 +9,7 @@ export function desktopRuntimeEventOf(state: RuntimeState): DesktopRuntimeEvent 
     state: desktopRuntimeSnapshotOf({
       status: state.status,
       role: state.role,
+      ownership: state.ownership,
       pendingSync: state.pendingSync,
       error: state.error,
     }),

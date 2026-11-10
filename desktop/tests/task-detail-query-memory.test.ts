@@ -8,7 +8,7 @@ import { createRuntimePresentation } from '../src/runtime-presentation.ts';
 import { encodeRunCursor } from '../../host/desktop-task-query-contract.ts';
 const detail = () => ({run:{id:7,rule:'r',agent:'a',state:'done',attempts:1,createdAt:null,claimedAt:null,finishedAt:null,notBefore:null,summary:'s',error:'',stopping:false,usage:null,truncated:false},association:{kind:'available'},events:{items:[],hasMore:false,nextCursor:null},cards:{items:[],hasMore:false,nextCursor:null},relatedRuns:{items:[],hasMore:false,nextCursor:null}});
 function fixture() {
- let state={status:'running' as 'running'|'stopped',role:'hub-worker' as 'hub-worker'|'worker',pendingSync:0,error:null};
+ let state={status:'running' as 'running'|'stopped',role:'hub-worker' as 'hub-worker'|'worker',ownership:'owned' as const,pendingSync:0,error:null};
  const gates={phase:'idle' as 'idle'|'quitting',busy:false,blocked:false,quitting:false};
  const p=createRuntimePresentation({page:'file:///trusted',read:()=>state,gates:()=>gates,send:()=>{},refresh:()=>{},report:()=>{}});
  p.finishDocument(p.beginDocument(),'file:///trusted');
@@ -40,7 +40,7 @@ test('every section refuses late response after setup/quit/role/document ABA',as
   if(boundary==='document'){f.p.invalidateDocument();f.p.finishDocument(f.p.beginDocument(),'file:///trusted');}
   else if(boundary==='setup'){f.gates.busy=true;f.p.changed();f.gates.busy=false;f.p.changed();}
   else if(boundary==='quit'){f.gates.phase='quitting';f.p.changed();f.gates.phase='idle';f.p.changed();}
-  else{f.setState({status:'running',role:'worker',pendingSync:0,error:null});f.p.changed();f.setState({status:'running',role:'hub-worker',pendingSync:0,error:null});f.p.changed();}
+  else{f.setState({status:'running',role:'worker',ownership:'owned',pendingSync:0,error:null});f.p.changed();f.setState({status:'running',role:'hub-worker',ownership:'owned',pendingSync:0,error:null});f.p.changed();}
   f.reply(payload(op));const result=await pending;assert.equal(result.ok,false);if(!result.ok)assert.equal(result.error.code,'aborted');assert.equal(f.scheduled.size,0);
  }
 });
