@@ -573,3 +573,17 @@ test("fixed renderer has restrictive CSP and no simulated business or network co
   assert.match(renderer, /执行机/);
   assert.match(renderer, /设置/);
 });
+
+test("every page's scope note gets its own spacing, not only the rules panel's", () => {
+  // The global reset zeroes paragraph margins, so a note is flush against its heading unless a
+  // rule says otherwise. That rule used to be scoped to .rules-panel alone, which left the same
+  // note on tasks, settings, workers and both local-reading panels tight against the title.
+  const css = read("../dist/renderer/style.css");
+  assert.match(css, /\.rules-head \.rules-intro\s*,/);
+  assert.match(css, /\.panel > \.rules-intro\s*\{/);
+  // Two notes in a row are separate facts, so they must not collapse into one block.
+  assert.match(css, /\.rules-intro \+ \.rules-intro\s*\{[^}]*margin-top:\s*\d+px/);
+  // The views that pair a title with a note really do use these containers.
+  for (const view of ["tasks-view", "settings-view", "workers-view", "local-reading-view", "local-summary-view"])
+    assert.match(read(`../src/renderer/${view}.ts`), /rules-intro/);
+});

@@ -817,8 +817,16 @@ main {
   padding: 10px 12px;
   resize: vertical;
 }
-.rules-panel .rules-intro {
+/* The one-line scope note that belongs to a panel title. The global reset zeroes paragraph
+   margins, so without this the note sits flush under its heading — while a direct child of
+   .panel gets the generic 12px paragraph gap instead. One compact spacing either way. */
+.rules-head .rules-intro,
+.panel > .rules-intro {
   margin: 4px 0 0;
+}
+/* Two stacked notes are two facts, not one wrapped paragraph. */
+.rules-intro + .rules-intro {
+  margin-top: 8px;
 }
 .rules-status {
   font-size: 12px;
