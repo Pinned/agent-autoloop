@@ -1,12 +1,18 @@
-import {
-  DESKTOP_TASKS_MESSAGES,
-  parseDesktopTasksResponse,
-  type DesktopTasksRun,
-  type DesktopTasksResponse,
-} from "../../../host/desktop-tasks-contract.ts";
+import { DESKTOP_TASKS_MESSAGES } from "../../../host/desktop-tasks-contract.ts";
 import type { DesktopBridge } from "../policy.ts";
-import { parseTaskHistoryResponse, TASK_HISTORY_MESSAGES, type TaskHistoryResponse } from "../../../host/desktop-task-history-contract.ts";
-import type { FeedbackItem, FeedbackKind, Section } from "../../../host/desktop-task-query-contract.ts";
+import {
+  parseTaskHistoryResponse,
+  TASK_HISTORY_MESSAGES,
+  type TaskHistoryResponse,
+} from "../../../host/desktop-task-history-contract.ts";
+import {
+  type FeedbackItem,
+  type FeedbackKind,
+  type RunItem,
+  type RunListInput,
+  type RunState,
+  type Section,
+} from "../../../host/desktop-task-query-contract.ts";
 import { parseDesktopRuntimeEvent } from "../../../host/desktop-run-contract.ts";
 import {
   DESKTOP_TASK_ACTION_MESSAGES,
@@ -15,7 +21,7 @@ import {
   type DesktopTaskActionCode,
 } from "../../../host/desktop-task-action-contract.ts";
 
-export type TasksBridge = Pick<DesktopBridge, "tasksGet"> &
+export type TasksBridge = Pick<DesktopBridge, "taskList"> &
   Partial<Pick<DesktopBridge, "taskDetail" | "onRuntimeEvent" | "taskAction">>;
 /** What the detail page may ask for; the pure contract decides what may actually be sent. */
 export type TasksActionRequest =
@@ -62,13 +68,18 @@ function initialSections(data?: DetailData): Readonly<Record<Section, TasksSecti
     !data[sectionKey(section)].hasMore ? "end" : data[sectionKey(section)].items.length >= ITEM_CAP ? "capped" : "idle" });
   return Object.freeze({ events: state("events"), cards: state("cards"), related: state("related") });
 }
+/** What the owner narrowed the server-side query to; empty fields are never sent. */
+export type TasksFilter = Readonly<{ q?: string; state?: RunState }>;
+type ListRequest = Readonly<{ operation: "list"; input: Readonly<RunListInput> }>;
+/** One read of the hub's own query; its filter travels with it so pages never mix filters. */
+type ListFlight = Readonly<{ kind: "load" | "page" | "refresh"; filter: TasksFilter; before: number | undefined }>;
 export type TasksLoadState =
   | { readonly kind: "loading" }
   | { readonly kind: "unavailable" | "no-hub"; readonly message: string }
   | { readonly kind: "error"; readonly message: string }
   | {
       readonly kind: "ready";
-      readonly runs: readonly DesktopTasksRun[];
+      readonly runs: readonly RunItem[];
       readonly hasMore: boolean;
       readonly nextBefore: number | null;
     };
@@ -76,16 +87,20 @@ export type TasksMoreState =
   { readonly kind: "idle" } | { readonly kind: "busy" } | { readonly kind: "failed"; readonly message: string };
 
 /**
- * The tasks page's data half: the hub's runs page, read one page at a time. The hub's own paging
- * cursor (`before`) walks into history; every page also repeats the active runs, so appended pages
- * are deduplicated by run id. Reads and pages each degrade to fixed text — a malformed result
- * costs one message, never unvalidated data — and each bridge call is single-flight, so a double
- * click never double-reads.
+ * The tasks page's data half: the hub's own run query, read one page at a time. Search and status
+ * are sent to the hub, so a filtered page is the server's answer over every run it can see — never
+ * a filter over the newest page already on screen. The hub's cursor (`before`) walks into history;
+ * every page also repeats its active runs, so appended pages are deduplicated by run id. A reply
+ * only lands while its own filter is still the live one: changing the query fences the old read
+ * instead of letting a late page answer a question the owner no longer asked. Reads and pages each
+ * degrade to fixed text — a malformed result costs one message, never unvalidated data — and each
+ * bridge call is single-flight, so a double click never double-reads.
  */
 export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
   let load: TasksLoadState = Object.freeze({ kind: "loading" });
   let more: TasksMoreState = Object.freeze({ kind: "idle" });
-  let flight: null | { kind: "load" | "page"; before: number | undefined } = null;
+  let flight: ListFlight | null = null;
+  let currentFilter: TasksFilter = Object.freeze({});
   let detail: TasksDetailState = Object.freeze({ kind: "idle", runId: null });
   let detailGeneration = 0;
   let detailAllowed = true;
@@ -390,29 +405,40 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
       refreshQuietly();
     }
   }
-  /** Keeps the list already on screen while the hub's newest page is merged in; failures stay silent. */
+  /** The exact query the hub should run: blank fields are omitted, never sent as empty filters. */
+  function listInput(filter: TasksFilter, before: number | undefined): RunListInput {
+    const input: RunListInput = {};
+    if (before !== undefined) input.before = before;
+    const q = filter.q?.trim();
+    if (q) input.q = q;
+    if (filter.state) input.state = filter.state;
+    return Object.freeze(input);
+  }
+  /** Keeps the list already on screen while the hub's newest page for the same filter is merged in. */
   function refreshQuietly(): void {
     if (flight) return;
-    flight = { kind: "load", before: undefined };
+    const token: ListFlight = Object.freeze({ kind: "refresh", filter: currentFilter, before: undefined });
+    flight = token;
+    const request: ListRequest = Object.freeze({ operation: "list", input: listInput(token.filter, undefined) });
     const finishQuiet = (value: unknown, rejected: boolean) => {
+      if (flight !== token) return; // A newer read owns the list now.
       flight = null;
       if (!rejected) {
         try {
-          const response = parseDesktopTasksResponse(value);
-          const state = response.ok ? response.state : null;
-          if (state && state.kind === "ready" && load.kind === "ready") {
-            const fresh = state.snapshot.runs;
+          const result = parseTaskHistoryResponse(value, request);
+          if (result.ok && load.kind === "ready") {
+            const fresh = result.data.items;
             const seen = new Set(fresh.map((run) => run.id));
             // The refreshed first page is authoritative; older pages survive only behind its cursor.
-            const boundary = state.snapshot.hasMore ? state.snapshot.nextBefore : null;
+            const boundary = result.data.hasMore ? result.data.nextBefore : null;
             const kept = boundary === null
               ? []
               : load.runs.filter((run) => !seen.has(run.id) && run.id < boundary);
             load = Object.freeze({
               kind: "ready",
               runs: Object.freeze([...fresh, ...kept]),
-              hasMore: state.snapshot.hasMore,
-              nextBefore: state.snapshot.nextBefore,
+              hasMore: result.data.hasMore,
+              nextBefore: result.data.nextBefore,
             });
           }
         } catch {
@@ -422,7 +448,7 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
       notify();
     };
     try {
-      void Promise.resolve(bridge.tasksGet(undefined)).then(
+      void Promise.resolve(bridge.taskList(request.input)).then(
         (value) => finishQuiet(value, false),
         () => finishQuiet(undefined, true),
       );
@@ -481,59 +507,64 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
       settleAction(token, runId, request, undefined, true);
     }
   }
-  function degrade(): void {
-    load = Object.freeze({ kind: "error", message: DESKTOP_TASKS_MESSAGES.error });
-  }
-  function finish(kind: "load" | "page", value: unknown, rejected: boolean) {
+  function finish(token: ListFlight, request: ListRequest, value: unknown, rejected: boolean) {
+    // A late reply to a superseded filter or a newer read has no say over what is on screen.
+    if (flight !== token) return;
     flight = null;
-    let response: DesktopTasksResponse | null = null;
+    let result: TaskHistoryResponse<"list"> | null = null;
     if (!rejected) {
       try {
-        response = parseDesktopTasksResponse(value);
+        result = parseTaskHistoryResponse(value, request);
       } catch {
         // Malformed results are display failures, never unvalidated data.
       }
     }
-    const state = response && response.ok ? response.state : null;
-    if (kind === "load") {
-      if (state) {
-        if (state.kind === "ready")
-          load = Object.freeze({
-            kind: "ready",
-            runs: Object.freeze(state.snapshot.runs),
-            hasMore: state.snapshot.hasMore,
-            nextBefore: state.snapshot.nextBefore,
-          });
-        else load = Object.freeze({ kind: state.kind, message: state.message });
-      } else degrade();
+    if (token.kind === "load") {
+      if (result?.ok)
+        load = Object.freeze({
+          kind: "ready",
+          runs: Object.freeze([...result.data.items]),
+          hasMore: result.data.hasMore,
+          nextBefore: result.data.nextBefore,
+        });
+      else if (result && (result.error.code === "unavailable" || result.error.code === "no-hub"))
+        load = Object.freeze({ kind: result.error.code, message: result.error.message });
+      else if (result) load = Object.freeze({ kind: "error", message: result.error.message });
+      else load = Object.freeze({ kind: "error", message: TASK_HISTORY_MESSAGES.error });
       more = Object.freeze({ kind: "idle" });
-    } else if (state && state.kind === "ready") {
+    } else if (result?.ok) {
       // Active runs ride along on every page; only runs the list does not have yet are appended.
       if (load.kind === "ready") {
         const seen = new Set(load.runs.map((run) => run.id));
-        const fresh = state.snapshot.runs.filter((run) => !seen.has(run.id));
+        const fresh = result.data.items.filter((run) => !seen.has(run.id));
         load = Object.freeze({
           kind: "ready",
           runs: Object.freeze([...load.runs, ...fresh]),
-          hasMore: state.snapshot.hasMore,
-          nextBefore: state.snapshot.nextBefore,
+          hasMore: result.data.hasMore,
+          nextBefore: result.data.nextBefore,
         });
       }
       more = Object.freeze({ kind: "idle" });
     } else {
-      // A failed page keeps the list already on screen; retrying costs one more click.
-      more = Object.freeze({ kind: "failed", message: DESKTOP_TASKS_MESSAGES.loadFailed });
+      // A failed page keeps the list already on screen; retrying costs one more click. The hub's
+      // own classification is more useful than a generic line, and a broken reply stays generic.
+      more = Object.freeze({
+        kind: "failed",
+        message: result ? result.error.message : DESKTOP_TASKS_MESSAGES.loadFailed,
+      });
     }
     notify();
   }
-  function read(kind: "load" | "page", before: number | undefined) {
-    flight = { kind, before };
+  function read(kind: "load" | "page", filter: TasksFilter, before: number | undefined) {
+    const token: ListFlight = Object.freeze({ kind, filter, before });
+    const request: ListRequest = Object.freeze({ operation: "list", input: listInput(filter, before) });
+    flight = token;
     if (kind === "load") load = Object.freeze({ kind: "loading" });
     else more = Object.freeze({ kind: "busy" });
     notify();
-    void Promise.resolve(bridge.tasksGet(before)).then(
-      (value) => finish(kind, value, false),
-      () => finish(kind, undefined, true),
+    void Promise.resolve(bridge.taskList(request.input)).then(
+      (value) => finish(token, request, value, false),
+      () => finish(token, request, undefined, true),
     );
   }
 
@@ -567,16 +598,36 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
     get busy(): boolean {
       return flight !== null;
     },
+    /** The filter the visible list was read with; the view keeps its controls in step with it. */
+    get filter(): TasksFilter {
+      return currentFilter;
+    },
     /** (Re)reads the first page; concurrent refreshes collapse into one call. */
     refresh(): void {
       if (detail.kind !== "idle") closeDetail();
       if (flight) return;
-      read("load", undefined);
+      read("load", currentFilter, undefined);
     },
-    /** Walks one page further into history with the hub's own cursor. */
+    /**
+     * The owner narrowed the list. The filter is the hub's own query input, so it is re-read from
+     * the server from page one; a read already in the air is fenced by the new filter, never
+     * appended to it. A filter equal to the live one is not re-sent.
+     */
+    setFilter(next: TasksFilter): void {
+      const q = next.q?.trim();
+      const filter: TasksFilter = Object.freeze({
+        ...(q ? { q } : {}),
+        ...(next.state ? { state: next.state } : {}),
+      });
+      if (filter.q === currentFilter.q && filter.state === currentFilter.state) return;
+      currentFilter = filter;
+      if (detail.kind !== "idle") closeDetail();
+      read("load", filter, undefined);
+    },
+    /** Walks one page further into history with the hub's own cursor, under the same filter. */
     loadMore(): void {
       if (flight || load.kind !== "ready" || !load.hasMore || load.nextBefore === null) return;
-      read("page", load.nextBefore);
+      read("page", currentFilter, load.nextBefore);
     },
   };
 }
