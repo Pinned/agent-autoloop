@@ -38,7 +38,7 @@ const createdAt = "2026-11-02T01:00:00.000Z";
 const claimedAt = "2026-11-02T01:00:05.000Z";
 const finishedAt = "2026-11-02T01:01:00.000Z";
 
-for (const phase of ["queued", "claimed", "done", "retry"] as const) {
+for (const phase of ["queued", "claimed", "done", "retry", "cancelled"] as const) {
   test(`real stateOf -> desktop preserves ${phase} run timestamps`, () => {
     const db = new DatabaseSync(":memory:");
     let view = empty(db);
@@ -60,9 +60,9 @@ for (const phase of ["queued", "claimed", "done", "retry"] as const) {
       if (phase !== "queued") {
         const job = act(claimedAt, "claimNext", "test-worker", "claim-1");
         assert.ok(job);
-        if (phase === "done" || phase === "retry") {
+        if (phase === "done" || phase === "retry" || phase === "cancelled") {
           act(finishedAt, "finish", job.run, job.token, {
-            outcome: phase === "done" ? "done" : "failed",
+            outcome: phase === "retry" ? "failed" : phase,
             summary: "Test result",
             ...(phase === "retry" ? { error: "Temporary failure" } : {}),
           });
@@ -85,8 +85,8 @@ for (const phase of ["queued", "claimed", "done", "retry"] as const) {
         [run.createdAt, run.claimedAt, run.finishedAt, run.notBefore],
         [
           createdAt,
-          phase === "claimed" || phase === "done" ? claimedAt : null,
-          phase === "done" ? finishedAt : null,
+          phase === "claimed" || phase === "done" || phase === "cancelled" ? claimedAt : null,
+          phase === "done" || phase === "cancelled" ? finishedAt : null,
           phase === "retry" ? "2026-11-02T01:06:00.000Z" : createdAt,
         ],
       );
