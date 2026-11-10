@@ -398,6 +398,33 @@ test("receipt warnings remain visible in loading and locked views and never enab
   } finally { if (previous) Object.defineProperty(globalThis, "document", previous); else Reflect.deleteProperty(globalThis, "document"); }
 });
 
+test("a gated runtime reads as unavailable control, never as missing resources", async () => {
+  const { mountRunCard } = await import("../src/renderer/run-view.ts");
+  class Node {
+    textContent = ""; className = ""; hidden = false; disabled = false; id = ""; type = "";
+    dataset: Record<string, string> = {}; children: Node[] = [];
+    append(...nodes: Node[]) { this.children.push(...nodes); }
+    setAttribute() {} addEventListener() {}
+  }
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", { configurable: true, value: { createElement: () => new Node() } });
+  try {
+    const f = fixture();
+    // The presentation projects a closed control plane (quit dialog, setup, document swap) this way.
+    f.push(pushed(snap({ status: "unavailable", role: null, pendingSync: 2 })));
+    const root = new Node();
+    mountRunCard(root as unknown as HTMLElement, f.controller, () => {}, { setupBusy: () => false, setupLocked: () => false });
+    const nodes = (node: Node): Node[] => [node, ...node.children.flatMap(nodes)];
+    const all = nodes(root);
+    assert.equal(all.find((node) => node.id === "run-status")?.textContent, "本机运行服务控制暂不可用");
+    assert.equal(all.find((node) => node.className === "run-badge")?.textContent, "暂不可用");
+    assert.doesNotMatch(all.map((node) => node.textContent).join(""), /运行资源不可用/);
+    // Still no control offered: the fence is what makes the state unavailable in the first place.
+    assert.equal(all.find((node) => node.textContent === "停止本机运行服务")?.disabled, true);
+    assert.equal(all.find((node) => node.textContent === "启动运行服务")?.disabled, true);
+  } finally { if (previous) Object.defineProperty(globalThis, "document", previous); else Reflect.deleteProperty(globalThis, "document"); }
+});
+
 test("the card's connection facts come from the snapshot and launch record, never from invented data", async () => {
   const { mountRunCard } = await import("../src/renderer/run-view.ts");
   class Node {
