@@ -1,4 +1,5 @@
 import { createTaskQuerySource } from "./task-query-source.ts";
+import { createTaskListIpc } from "./task-list-ipc.ts";
 import { createTaskDetailIpc } from "./task-detail-ipc.ts";
 import {
   app,
@@ -298,6 +299,12 @@ if (ownsAppLock)
         report: (message) => console.error(message),
       });
       const detailSource = createTaskQuerySource({ home: runtimeHome, getState: () => presentation.snapshot() });
+      // The list door: server-side search/filtering over the hub's own query, no lease. The source
+      // itself classifies unavailable/no-hub, so an unrelated runtime transition cannot abort a read.
+      const listIpc = createTaskListIpc({
+        assertSender: (event) => assertSender(event as Parameters<typeof assertSender>[0], window.webContents, page),
+        source: detailSource,
+      });
       const detailIpc = createTaskDetailIpc({
         assertSender: (event) => assertSender(event as Parameters<typeof assertSender>[0], window.webContents, page),
         presentation,
@@ -699,6 +706,8 @@ if (ownsAppLock)
         if (args.length !== 0) throw new Error("invalid-request");
         return taskSource.entries();
       });
+      // The tasks list's server-side search/filter door; the unit checks sender, arity and shape.
+      ipcMain.handle(channels.taskList, (event, ...args: unknown[]) => listIpc.read(event, args));
       // One task at a time through the hub's door; the input is validated before any request.
       ipcMain.handle(channels.taskDetail, (event, ...args: unknown[]) => detailIpc.read(event, args));
       ipcMain.handle(channels.taskCreate, createTaskCreateHandler({
@@ -823,7 +832,7 @@ if (ownsAppLock)
             result.runtimeEventSeen !== false ||
             result.navigateSeen !== false ||
             result.bridge.join(",") !==
-              "checkBuiltinAgents,completeSetup,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,probeHub,rulesCasGet,rulesCasPut,runtimeGet,runtimeStart,runtimeStop,setTheme,settingsGet,settingsPut,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,tasksGet,todayState,window,workersGet,workersLocal" ||
+              "checkBuiltinAgents,completeSetup,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,probeHub,rulesCasGet,rulesCasPut,runtimeGet,runtimeStart,runtimeStop,setTheme,settingsGet,settingsPut,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,taskList,tasksGet,todayState,window,workersGet,workersLocal" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||
