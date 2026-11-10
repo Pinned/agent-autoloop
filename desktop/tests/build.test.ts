@@ -587,3 +587,22 @@ test("every page's scope note gets its own spacing, not only the rules panel's",
   for (const view of ["tasks-view", "settings-view", "workers-view", "local-reading-view", "local-summary-view"])
     assert.match(read(`../src/renderer/${view}.ts`), /rules-intro/);
 });
+
+test("first-run reads answer from files before the runtime exists", () => {
+  const main = read("../src/main.ts");
+  const route = read("../src/setup-state-read.ts");
+  // The two observations are answered in process; every mutation and probe still waits on the
+  // private driver. Bundling the fs adapter into main is safe only because it imports no business host.
+  assert.match(main, /isSetupDiskRead\(request\.operation\)/);
+  assert.match(main, /readSetupState\(runtimeHome, request\.operation\)/);
+  assert.match(main, /: setupRunner\.run\(request\)/);
+  assert.match(route, /export function isSetupDiskRead/);
+  assert.match(route, /readDesktopSetupStatusFromDisk/);
+  assert.doesNotMatch(route, /from ["'].*host\/(?:runtime|config|setup)\.ts/);
+  assert.doesNotMatch(route, /node:fs|child_process/);
+  // A failed inspection must not answer `unknown`: that code latches the whole session closed.
+  assert.match(route, /desktopSetupFailure\(operation, "operation-failed"\)/);
+  const bundled = read("../dist/main.js");
+  assert.match(bundled, /isSetupDiskRead/);
+  assert.doesNotMatch(bundled, /Usage: node runtime\.mjs|host\/config\.ts|function checkRuntime/);
+});
