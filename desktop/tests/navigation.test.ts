@@ -1,7 +1,9 @@
 // The role → page projection is the product rule the prototype fixes: a pure worker sees this
 // machine's work, this machine's environment, and the connection — never a workspace it cannot
-// speak for. An unknown role must stay on the full workspace, because claiming a role the process
-// has not confirmed would show the wrong pages to an owner.
+// speak for. An unknown role resolves to the full workspace, because claiming a role the process
+// has not confirmed would show the wrong pages to an owner. Whether a menu may be shown at all is a
+// separate question decided by the launch record (see shell-mode.test.ts): an unconfigured machine
+// never reaches this projection's output, so "unknown role, full workspace" cannot leak a menu.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
@@ -13,7 +15,7 @@ import {
   workerPages,
 } from "../src/renderer/navigation.ts";
 
-test("an unknown role keeps the full workspace, in the prototype's order", () => {
+test("an unresolved role projects the full workspace, which only a configured machine may see", () => {
   assert.deepEqual(
     pagesFor(null).map((page) => page.nav),
     ["今天", "任务", "自动化", "执行机", "设置"],

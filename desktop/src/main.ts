@@ -763,6 +763,10 @@ if (ownsAppLock)
         let invalidRejected = false;
         try { await window.desktop.setTheme('credential'); } catch { invalidRejected = true; }
         const pages = [];
+        // The shell paints the menu only once the launch read says this machine has a workspace;
+        // waiting here observes the shipped rule instead of racing it.
+        for (let i = 0; i < 200 && document.documentElement.dataset.shell !== 'workspace'; i++)
+          await new Promise((r) => setTimeout(r, 25));
         for (const button of document.querySelectorAll('[data-page]')) { button.click(); pages.push(document.querySelector('h1').textContent); }
         await window.desktop.setTheme('system');
         const runtime = await window.desktop.runtimeGet();

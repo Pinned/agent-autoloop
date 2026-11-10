@@ -115,6 +115,22 @@ h2 {
   flex: 1;
   min-height: 0;
 }
+/* The menu belongs to the workspace, not to the window. Before a machine has a role there is no
+   page it could lead to, so it is hidden rather than disabled: a disabled menu still promises pages. */
+:root:not([data-shell="workspace"]) .sidebar {
+  display: none;
+}
+/* The first-run page is the whole window while it is up: no menu beside it, and a centred column
+   that reads as its own page rather than a panel tucked into a page that is not there. */
+:root[data-shell="setup"] main {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 32px 28px;
+}
+:root[data-shell="setup"] .setup-panel {
+  width: 100%;
+}
 .sidebar {
   width: 184px;
   flex-shrink: 0;
