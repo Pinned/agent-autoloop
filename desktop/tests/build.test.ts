@@ -418,6 +418,12 @@ test("the tasks page shows the hub's run history through the pure tasks contract
   assert.doesNotMatch(view, /innerHTML|insertAdjacentHTML|console\./);
   assert.doesNotMatch(controller, /node:|from ["'].*host\/(?:config|runtime|setup)\.ts/);
   assert.match(controller, /from ["'].*host\/desktop-tasks-contract\.ts/);
+  // The list is the hub's own query, not a local filter over the newest page already on screen.
+  assert.match(controller, /bridge\.taskList\(/);
+  assert.doesNotMatch(controller, /bridge\.tasksGet/);
+  assert.match(controller, /host\/desktop-task-query-contract\.ts/);
+  assert.match(view, /tasks-search/);
+  assert.match(view, /关键词只匹配任务摘要与失败原因/);
   // The same state door as today, with the hub's own paging cursor and never another route.
   assert.match(source, /createTasksSource/);
   assert.doesNotMatch(source, /\/v1\/(?:tell|ui|events|cards|runs|keys|in)\b/);

@@ -1,15 +1,16 @@
 import {
   DESKTOP_TASKS_MESSAGES,
   DESKTOP_TASKS_STATUS_MESSAGES,
-  type DesktopTasksRun,
 } from "../../../host/desktop-tasks-contract.ts";
 import type { createRendererTasks } from "./tasks-controller.ts";
-import { FEEDBACK_KINDS } from "../../../host/desktop-task-query-contract.ts";
+import { FEEDBACK_KINDS, RUN_STATES, type RunItem } from "../../../host/desktop-task-query-contract.ts";
 
 /**
- * The tasks page: the hub's real run history, newest first, one page at a time. All DOM is built
- * with createElement and lists are rebuilt by replaceChildren — no markup injection anywhere.
- * Clicking a run unfolds its story: the events that triggered it, its attempts, its timings.
+ * The tasks page: the hub's real run history, newest first, one page at a time. The search box and
+ * the status picker are the hub's own query inputs, so narrowing the list asks the hub and never
+ * filters the newest page already on screen. All DOM is built with createElement and lists are
+ * rebuilt by replaceChildren — no markup injection anywhere. Clicking a run unfolds its story: the
+ * events that triggered it, its attempts, its timings.
  */
 export function mountTasksView(controller: ReturnType<typeof createRendererTasks>): {
   root: HTMLElement;
@@ -26,6 +27,34 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
   intro.className = "muted rules-intro";
   intro.textContent = "本机中台安排的每一次执行：谁在推进、进展如何、因什么而起。";
   head.append(title, intro);
+  // The filter bar edits the hub's own query. Typing is debounced so one sentence is one read;
+  // a picker change is immediate. Blank fields are omitted by the controller, never sent empty.
+  const filters = document.createElement("div");
+  filters.className = "tasks-filters";
+  const search = document.createElement("input");
+  search.type = "text";
+  search.className = "tasks-search";
+  search.setAttribute("aria-label", "搜索任务摘要或失败原因");
+  search.setAttribute("placeholder", "搜索任务摘要或失败原因");
+  search.setAttribute("maxlength", "200");
+  const stateFilter = document.createElement("select");
+  stateFilter.className = "tasks-state-filter";
+  stateFilter.setAttribute("aria-label", "按状态筛选");
+  const everyState = document.createElement("option");
+  everyState.value = "";
+  everyState.textContent = "全部状态";
+  stateFilter.append(everyState);
+  for (const value of RUN_STATES) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = DESKTOP_TASKS_STATUS_MESSAGES[value];
+    stateFilter.append(option);
+  }
+  const scope = document.createElement("p");
+  scope.className = "muted tasks-filter-scope";
+  scope.textContent = "关键词只匹配任务摘要与失败原因，查询覆盖本机中台的全部执行记录，不是当前这一页。";
+  filters.append(search, stateFilter, scope);
+
   const status = document.createElement("p");
   status.className = "rules-status";
   const error = document.createElement("p");
@@ -43,7 +72,7 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
   actions.append(refreshButton, moreButton);
   const list = document.createElement("ul");
   list.className = "run-list";
-  root.append(head, status, error, actions, list);
+  root.append(head, filters, status, error, actions, list);
   function textLine(parent: HTMLElement, value: string) {
     const line = document.createElement("p");
     line.textContent = value;
@@ -121,8 +150,7 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
     }
     const stateSnapshot = state;
     const run = data.run;
-    const stateText = { queued: "排队中", claimed: "执行中", unknown: "待确认", done: "已完成", nothing: "无需处理", failed: "失败", cancelled: "已取消" };
-    textLine(node, `执行 #${run.id} · ${run.rule} → ${run.agent} · ${stateText[run.state]} · 尝试 ${run.attempts} 次`);
+    textLine(node, `执行 #${run.id} · ${run.rule} → ${run.agent} · ${DESKTOP_TASKS_STATUS_MESSAGES[run.state]} · 尝试 ${run.attempts} 次`);
     if (run.summary) textLine(node, run.summary);
     if (run.error) textLine(node, run.error);
     const times = [run.createdAt && `安排 ${when(run.createdAt)}`, run.claimedAt && `领取 ${when(run.claimedAt)}`,
@@ -286,7 +314,7 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
     return `${time.getFullYear()}-${pad(time.getMonth() + 1)}-${pad(time.getDate())} ${pad(time.getHours())}:${pad(time.getMinutes())}`;
   }
 
-  function runNode(run: DesktopTasksRun, expanded: boolean) {
+  function runNode(run: RunItem, expanded: boolean) {
     const item = document.createElement("li");
     item.className = "run-item";
     const top = document.createElement("button");
@@ -324,12 +352,17 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
 
   function update() {
     const state = controller.loadState;
+    const filter = controller.filter;
+    const narrowed = Boolean(filter.q || filter.state);
     if (state.kind === "loading") {
       status.textContent = "正在读取执行记录。";
       status.hidden = false;
     } else if (state.kind === "ready") {
-      status.textContent = state.runs.length ? "" : DESKTOP_TASKS_MESSAGES.noRun;
-      status.hidden = state.runs.length > 0;
+      // An empty answer to a narrowed query is not "this machine has no runs": say which it is.
+      status.textContent = state.runs.length
+        ? narrowed ? `已按当前条件显示 ${state.runs.length} 条${state.hasMore ? "，更早的还在服务端" : ""}。` : ""
+        : narrowed ? "没有符合条件的执行记录。" : DESKTOP_TASKS_MESSAGES.noRun;
+      status.hidden = status.textContent === "";
     } else {
       status.textContent = state.message;
       status.hidden = false;
@@ -349,12 +382,34 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
     refreshButton.disabled = busy;
   }
 
+  // One sentence is one query: typing waits for a pause, a status pick is immediate.
+  let typing: ReturnType<typeof setTimeout> | null = null;
+  function applyFilter() {
+    if (typing !== null) {
+      clearTimeout(typing);
+      typing = null;
+    }
+    const state = RUN_STATES.find((value) => value === stateFilter.value);
+    controller.setFilter({ q: search.value, state });
+  }
+  search.addEventListener("input", () => {
+    if (typing !== null) clearTimeout(typing);
+    typing = setTimeout(() => {
+      typing = null;
+      applyFilter();
+    }, 300);
+  });
+  stateFilter.addEventListener("change", applyFilter);
   refreshButton.addEventListener("click", () => controller.refresh());
   moreButton.addEventListener("click", () => controller.loadMore());
 
   return {
     root,
     init() {
+      // The controls start from the filter the controller actually holds, never a guess.
+      const filter = controller.filter;
+      search.value = filter.q ?? "";
+      stateFilter.value = filter.state ?? "";
       controller.refresh();
       update();
     },

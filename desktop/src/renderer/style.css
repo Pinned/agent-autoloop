@@ -825,6 +825,31 @@ main {
   color: var(--faint);
   margin: 14px 0 0;
 }
+.tasks-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+.tasks-filters input,
+.tasks-filters select {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 12px;
+}
+.tasks-filters input {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.tasks-filter-scope {
+  flex: 1 1 100%;
+  font-size: 12px;
+  margin: 0;
+}
 .rules-status:empty {
   display: none;
 }

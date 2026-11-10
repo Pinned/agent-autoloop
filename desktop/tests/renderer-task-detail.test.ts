@@ -4,14 +4,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createRendererTasks, type TasksActionState } from "../src/renderer/tasks-controller.ts";
 import { mountTasksView } from "../src/renderer/tasks-view.ts";
-import { encodeRunCursor, type RunDetail } from "../../host/desktop-task-query-contract.ts";
+import { encodeRunCursor, type RunDetail, type RunItem } from "../../host/desktop-task-query-contract.ts";
 import type { DesktopBridge } from "../src/policy.ts";
-import type { DesktopTasksResponse, DesktopTasksRun } from "../../host/desktop-tasks-contract.ts";
+import type { TaskHistoryResponse } from "../../host/desktop-task-history-contract.ts";
 
-const run = (id: number): DesktopTasksRun => ({ id, rule: "r", agent: "a", state: "done", attempts: 1, createdAt: null,
-  claimedAt: null, finishedAt: null, notBefore: null, summary: "list", error: "", stopping: false, usage: null, events: [] });
-const list: DesktopTasksResponse = { version: 1, ok: true, state: { kind: "ready", snapshot: { version: 1, now: "2026-11-01T12:00:00Z",
-  timezone: "UTC", runs: [run(7), run(6)], hasMore: false, nextBefore: null } } };
+const run = (id: number): RunItem => ({ id, rule: "r", agent: "a", state: "done", attempts: 1, createdAt: null,
+  claimedAt: null, finishedAt: null, notBefore: null, summary: "list", error: "", stopping: false, usage: null, truncated: false });
+const list: TaskHistoryResponse<"list"> = { version: 1, ok: true, data: { items: [run(7), run(6)], hasMore: false, nextBefore: null } };
 const detail = (id: number): { version: 1; ok: true; data: RunDetail } => ({ version: 1, ok: true, data: {
   run: { id, rule: "r", agent: "a", state: "done", attempts: 1, createdAt: null, claimedAt: null,
     finishedAt: null, notBefore: null, summary: "detail", error: "", stopping: false, usage: null, truncated: false }, association: { kind: "available" },
@@ -25,7 +24,7 @@ function fixture() {
   const pending: { id: number; resolve(value: unknown): void; reject(value: unknown): void }[] = [];
   let receive!: (value: unknown) => void;
   const bridge = {
-    tasksGet: async () => list,
+    taskList: async () => list,
     taskDetail(request: { operation: "detail"; runId: number }) {
       // A delivered run also reads its ratings; that separate page never holds up the detail assertions.
       if ((request as { operation: string }).operation === "feedback") return Promise.resolve(emptyFeedback);
@@ -33,7 +32,7 @@ function fixture() {
       return new Promise((resolve, reject) => pending.push({ id: request.runId, resolve, reject }));
     },
     onRuntimeEvent(listener: (value: unknown) => void) { receive = listener; return () => {}; },
-  } as unknown as Pick<DesktopBridge, "tasksGet" | "taskDetail" | "onRuntimeEvent">;
+  } as unknown as Pick<DesktopBridge, "taskList" | "taskDetail" | "onRuntimeEvent">;
   let view: ReturnType<typeof mountTasksView> | undefined;
   const controller = createRendererTasks(bridge, () => view?.update());
   return { controller, pending, receive: (value: unknown) => receive(value), mount() { view = mountTasksView(controller); return view; } };
@@ -72,7 +71,7 @@ test("detail notify reentry cancels the old send and synchronous bridge throws d
   let controller!: ReturnType<typeof createRendererTasks>;
   let calls = 0, reenter = true;
   const bridge = {
-    tasksGet: async () => list,
+    taskList: async () => list,
     taskDetail() { calls++; throw undefined; },
   };
   controller = createRendererTasks(bridge, () => {
@@ -128,7 +127,7 @@ const sectionPage = (section: SectionName, ids: number[], hasMore = true, runId 
 function pagedFixture(onChange: () => void = () => {}) {
   const pending: { request: any; resolve(value: unknown): void; reject(value: unknown): void }[] = [];
   let receive!: (value: unknown) => void, view: ReturnType<typeof mountTasksView> | undefined;
-  const controller = createRendererTasks({ tasksGet: async () => list,
+  const controller = createRendererTasks({ taskList: async () => list,
     taskDetail(request: any) {
       // The rating page is separate from detail paging; settle it immediately so it never queues here.
       if (request.operation === "feedback") return Promise.resolve(emptyFeedback);
@@ -192,7 +191,7 @@ test("notify/parser/bridge synchronous reentry is session fenced before and afte
   pending.resolve(new Proxy(sectionPage("events", [800]), { ownKeys(target) { f.controller.closeDetail(); return Reflect.ownKeys(target); } }));
   await flush(); assert.equal(f.controller.detailState.kind, "idle");
   let controller!: ReturnType<typeof createRendererTasks>, mode = "detail";
-  controller = createRendererTasks({ tasksGet: async () => list, taskDetail(request: any): any {
+  controller = createRendererTasks({ taskList: async () => list, taskDetail(request: any): any {
     if (request.operation === "feedback") return Promise.resolve(emptyFeedback);
     if (request.operation === "detail") { const value = detail(7); value.data.events = sectionPage("events", [900]).data; return Promise.resolve(value); }
     if (mode === "throw") throw undefined; controller.closeDetail(); return Promise.resolve(sectionPage("events", [800]));
@@ -263,11 +262,11 @@ test("view has three manual buttons and honest loading/error/end/capped text wit
   } finally { if (previous) Object.defineProperty(globalThis, "document", previous); else Reflect.deleteProperty(globalThis, "document"); }
 });
 
-const actionRun = (id: number, state: DesktopTasksRun["state"]) => ({ id, rule: "r", agent: "a", state, attempts: 1, createdAt: null,
-  claimedAt: null, finishedAt: null, notBefore: null, summary: "action", error: "", stopping: false, usage: null, events: [] });
+const actionRun = (id: number, state: RunItem["state"]) => ({ id, rule: "r", agent: "a", state, attempts: 1, createdAt: null,
+  claimedAt: null, finishedAt: null, notBefore: null, summary: "action", error: "", stopping: false, usage: null, truncated: false });
 const openCard = (id: number, kind: "ask" | "notice" = "ask") => ({ id, kind, state: "open", title: "t", text: "x", options: kind === "ask" ? ["甲", "乙"] : [],
   recommend: 0, choice: null, answer: null, result: null, createdAt: null, decidedAt: null, closedAt: null, truncated: false });
-function actionDetail(id: number, state: DesktopTasksRun["state"] = "claimed", cards: any[] = [openCard(3)]) {
+function actionDetail(id: number, state: RunItem["state"] = "claimed", cards: any[] = [openCard(3)]) {
   const value = detail(id); value.data.run.state = state; value.data.cards = { items: cards, hasMore: false, nextCursor: null };
   return value;
 }
@@ -278,7 +277,7 @@ function actionFixture() {
   let listCalls = 0;
   let view: ReturnType<typeof mountTasksView> | undefined;
   const bridge = {
-    tasksGet: async () => { listCalls++; return list; },
+    taskList: async () => { listCalls++; return list; },
     taskDetail(request: { operation: "detail"; runId: number }) {
       return new Promise((resolve, reject) => detailPending.push({ request, resolve, reject }));
     },
