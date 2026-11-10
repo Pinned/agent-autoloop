@@ -1,4 +1,5 @@
 import type { TaskHistoryRequest, TaskHistoryResponse } from "../../host/desktop-task-history-contract.ts";
+import type { RunListInput } from "../../host/desktop-task-query-contract.ts";
 import { realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, relative, sep } from "node:path";
@@ -48,6 +49,8 @@ export const channels = Object.freeze({
   /** What this machine's own runtime reported it holds; a display reading, not lifecycle proof. */
   workersLocal: "desktop:workers:local",
   tasksGet: "desktop:tasks:get",
+  /** Server-side search and filtering over the hub's own run query, not a local slice of 60 runs. */
+  taskList: "desktop:tasks:list",
   taskDetail: "desktop:tasks:detail",
   taskEntries: "desktop:task:entries",
   taskCreate: "desktop:task:create",
@@ -91,6 +94,8 @@ export interface DesktopBridge {
   workersLocal(): Promise<DesktopWorkerSnapshot | null>;
   /** The runs page for the tasks list; `before` pages further into history. */
   tasksGet(before?: number): Promise<DesktopTasksResponse>;
+  /** One page of the hub's run query; `q/state/rule/agent/source/type` filter on the server. */
+  taskList(input?: RunListInput): Promise<TaskHistoryResponse<"list">>;
   taskDetail<R extends Exclude<TaskHistoryRequest, { operation: "list" }>>(request: R): Promise<TaskHistoryResponse<R["operation"]>>;
   /** The real rule entries the new-task panel offers, from the local hub while it runs. */
   taskEntries(): Promise<DesktopTaskEntriesResponse>;

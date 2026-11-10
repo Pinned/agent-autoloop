@@ -112,7 +112,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(main, /远程队列不会取消/);
   assert.match(main, /离线持久待同步/);
   assert.doesNotMatch(main, /restartPolicy|controller\.restart/);
-  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 25);
+  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 26);
   // Each handler is checked inside its own block: a cross-handler match would let a missing
   // sender check hide behind the next handler that has one.
   const blocks = main.split("ipcMain.handle(channels.").slice(1);
@@ -144,6 +144,16 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   // Detail has its own unit: the channel delegates, and that unit checks the same pinned sender
   // before it parses anything.
   assert.match(blockOf("taskDetail"), /=> detailIpc\.read\(event, args\)\)/);
+  // The list door has its own unit too, and it deliberately holds no presentation lease: the
+  // query source already classifies unavailable/no-hub, and a pure read must not be aborted by
+  // every unrelated runtime transition.
+  assert.match(blockOf("taskList"), /=> listIpc\.read\(event, args\)\)/);
+  assert.match(main, /const listIpc = createTaskListIpc\(\{/);
+  const listIpc = read("../src/task-list-ipc.ts");
+  assert.match(listIpc, /options\.assertSender\(event\);/);
+  assert.match(listIpc, /request\.operation !== 'list'/);
+  assert.doesNotMatch(listIpc, /acquireTaskLease|releaseTaskLease|checkTaskLease/);
+  assert.doesNotMatch(listIpc, /\/v1\//);
   assert.match(
     main,
     /assertSender: \(event\) => assertSender\(event as Parameters<typeof assertSender>\[0\], window\.webContents, page\)/,
@@ -228,6 +238,7 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
     "taskCreate",
     "taskDetail",
     "taskEntries",
+    "taskList",
     "tasksGet",
     "todayState",
     "window",
