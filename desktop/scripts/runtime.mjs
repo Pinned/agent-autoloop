@@ -25,12 +25,16 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 const exec = promisify(execFile);
 export const NODE_VERSION = "v24.22.2";
+// Everything the built app spawns or serves at runtime. web/ is the hub's own console; skills/ is
+// the manual the CLI points at. Anything else in the repository is development-only.
 export const SOURCE_ENTRIES = Object.freeze([
   "kernel",
   "host",
   "protocol",
   "worker",
   "plugins",
+  "web",
+  "skills",
   "bin",
   "cli",
   "package.json",

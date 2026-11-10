@@ -92,15 +92,16 @@ test("the hub port override is one validated knob: the setup entry refuses junk,
 
 test("native runtime is opt-in, isolated and not connected to the renderer", () => {
   const main = read("../src/main.ts");
-  assert.match(main, /enabled: !app\.isPackaged && !!home && !smoke/);
+  // Packaged builds must run the same runtime; only the isolated smoke shell stays disabled.
+  assert.match(main, /const enabled = \(!!home \|\| app\.isPackaged\) && !smoke/);
   assert.match(main, /join\(prefsHome, "runtime-home"\)/);
   assert.match(main, /HOME: runtimeHome, USERPROFILE: runtimeHome/);
   assert.match(main, /mkdtemp\(join\(prefsHome, "runtime resources "\)\)/);
-  assert.match(main, /copySources\(join\(base, "\.\.", "\.\."\), resources\)/);
+  assert.match(main, /copySources\(layout\.sourcesRoot, resources\)/);
   assert.match(main, /entryPath: join\(resources, "bin", "agent-autoloop\.ts"\)/);
   assert.doesNotMatch(main, /join\(resources, "bin", "cli\.ts"\)/);
-  assert.match(main, /cacheDir: join\(base, "\.\.", "\.cache", "runtime"\), ownCleanup/);
-  assert.match(main, /await import\(resourcesModule\)/);
+  assert.match(main, /cacheDir: layout\.cacheDir/);
+  assert.match(main, /await import\(\s*resourcesModule\s*\)/);
   assert.doesNotMatch(main, /from ["'].*host\/(?:runtime|config)["']/);
   assert.doesNotMatch(read("../dist/main.js"), /Usage: node runtime\.mjs|host\/config\.ts|function checkRuntime/);
   assert.match(main, /启动运行服务/);
@@ -183,7 +184,9 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(read("../src/runtime-presentation.ts"), /desktopRuntimeEventOf\(snapshot\(\)\)/);
   assert.match(main, /webContents\.send\(channels\.runtimeEvent, event\)/);
   assert.match(main, /webContents\.send\(channels\.navigate, \{ page \}\)/);
-  assert.match(main, /cachedOnly: true/);
+  // A development run has no staged archive, so first-run preparation stays offline; a packaged
+  // build does, and may bootstrap from it.
+  assert.match(main, /cachedOnly: !layout\.archiveDir/);
   assert.match(main, /entryPath: join\(resources, "host", "desktop-setup\.ts"\)/);
   assert.match(main, /setup\.runStart\(\s*\(\) => controller\.start\(\),\s*\(\) => controller\.getState\(\),?\s*\)/);
   assert.match(main, /setup\.prepareQuit\(\(\) => controller\.stop\(\)/);
@@ -489,14 +492,23 @@ test("system notifications are main-process only and click back to today", () =>
   assert.match(main, /createNotifier\(\)/);
 });
 
-test("the dmg packages exactly the built dist, unsigned, from the local Electron install", () => {
+test("the dmg packages the built dist plus the staged runtime sources, unsigned", () => {
   const pkg = JSON.parse(read("../package.json"));
   const config = read("../electron-builder.yml");
   assert.match(pkg.scripts.dist, /electron-builder/);
   assert.ok(pkg.devDependencies["electron-builder"]);
-  // The packaged app is the V1 shell: built output only, never sources, tests or scripts.
+  // asar holds only built output; the sources the app copies per request live outside it.
   assert.match(config, /- dist\/\*\*[\s\S]*- package\.json/);
-  assert.doesNotMatch(config, /src\/|tests\/|scripts\//);
+  // Scope the check to the packed file list: prose in comments may legitimately name a path.
+  const filesBlock = config.slice(config.indexOf("files:"), config.indexOf("extraResources:"));
+  assert.ok(filesBlock.includes("dist/**"));
+  assert.doesNotMatch(filesBlock, /- (src|tests|scripts)\//);
+  // The staged sources and the official Node archive ride in Contents/Resources, never in asar.
+  assert.match(pkg.scripts.dist, /node scripts\/stage\.mjs/);
+  assert.match(config, /extraResources:[\s\S]*- from: stage[\s\S]*to: autoloop/);
+  assert.match(read("../scripts/stage.mjs"), /copySources\(repository, stage\)/);
+  // Staging carries only an archive that already passed the official SHA256 check.
+  assert.match(read("../scripts/stage.mjs"), /verifyArchive\(archive, sums\.toString\("utf8"\), target\.archive\)/);
   // No second Electron download and no signing: both are release decisions, not silent defaults.
   assert.match(config, /electronDist: node_modules\/electron\/dist/);
   assert.match(config, /target: dmg/);
