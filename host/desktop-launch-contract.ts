@@ -4,7 +4,11 @@ export type DesktopLaunchMode = "embedded" | "worker";
 export type DesktopLaunchStatus = {
   completion: "first-run" | "legacy" | "recovery" | "prepared" | "complete" | "invalid";
   nextLaunch: DesktopLaunchMode | null;
-  /** Configured session kind, not proof that a runtime is running. External sessions are not yet supported. */
+  /**
+   * The configured session kind, not proof that a runtime is running. A machine may also talk to a
+   * hub a terminal started; that is decided per launch from the CLI's own config, so it never
+   * appears here — this field is only this App's own record.
+   */
   current: DesktopLaunchMode | null;
 };
 export type DesktopHubProbe = {
