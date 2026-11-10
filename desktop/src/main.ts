@@ -18,6 +18,7 @@ import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { assertSender, channels, isolatedHome, parseTheme, parseWindowAction, webPreferences } from "./policy.ts";
+import { bundledDownload, desktopLayout } from "./paths.ts";
 import { createLifecycle } from "./lifecycle.ts";
 import {
   parseLifecycleEnv,
@@ -126,17 +127,32 @@ if (ownsAppLock)
       const prefsHome = app.getPath("userData");
       mkdirSync(prefsHome, { recursive: true });
       const runtimeHome = join(prefsHome, "runtime-home");
+      // A packaged app has no DESKTOP_HOME; its data root is the user's own application data.
+      const enabled = (!!home || app.isPackaged) && !smoke;
+      const layout = desktopLayout({
+        packaged: app.isPackaged,
+        appDir: base,
+        resourcesPath: process.resourcesPath,
+        userData: prefsHome,
+      });
       const controller = createRuntimeControl({
         home: runtimeHome,
-        enabled: !app.isPackaged && !!home && !smoke,
+        enabled,
         prepare: async (ownCleanup) => {
-          // Fixed development paths; loading this module at startup would also run its CLI after bundling.
-          const resourcesModule = pathToFileURL(join(base, "..", "scripts", "runtime.mjs")).href;
-          const { ensureRuntime, copySources } = (await import(resourcesModule)) as typeof RuntimeResources;
-          const runtime = await ensureRuntime({ cacheDir: join(base, "..", ".cache", "runtime"), ownCleanup });
+          // Loaded only when a run starts: importing this module at startup would also run its CLI.
+          const resourcesModule = pathToFileURL(join(layout.toolRoot, "scripts", "runtime.mjs")).href;
+          const { ensureRuntime, copySources, runtimeTarget } = (await import(
+            resourcesModule
+          )) as typeof RuntimeResources;
+          const runtime = await ensureRuntime({
+            cacheDir: layout.cacheDir,
+            // A packaged app carries the verified archive, so it installs without touching the network.
+            ...(layout.archiveDir && { download: bundledDownload(layout.archiveDir, runtimeTarget()) }),
+            ownCleanup,
+          });
           const resources = await mkdtemp(join(prefsHome, "runtime resources "));
           ownCleanup(() => rm(resources, { recursive: true, force: true }));
-          await copySources(join(base, "..", ".."), resources);
+          await copySources(layout.sourcesRoot, resources);
           // Resolved against the user's real HOME, before the child's own HOME is isolated: their
           // terminal's PATH is the only place a Homebrew or ~/.local/bin agent will be found.
           const terminal = await resolveTerminalEnvironment();
@@ -160,13 +176,19 @@ if (ownsAppLock)
       });
       const setupRunner = createSetupRunner({
         ...(lifecycle && { installationDiscovery: "none" as const }),
-        enabled: !app.isPackaged && !!home && !smoke,
+        enabled,
         prepare: async (ownCleanup) => {
-          const resourcesModule = pathToFileURL(join(base, "..", "scripts", "runtime.mjs")).href;
-          const { ensureRuntime, copySources } = (await import(resourcesModule)) as typeof RuntimeResources;
+          const resourcesModule = pathToFileURL(join(layout.toolRoot, "scripts", "runtime.mjs")).href;
+          const { ensureRuntime, copySources, runtimeTarget } = (await import(
+            resourcesModule
+          )) as typeof RuntimeResources;
           const runtime = await ensureRuntime({
-            cacheDir: join(base, "..", ".cache", "runtime"),
-            cachedOnly: true,
+            cacheDir: layout.cacheDir,
+            // The same staged archive the runtime launch uses, so setup never reaches the network.
+            ...(layout.archiveDir && { download: bundledDownload(layout.archiveDir, runtimeTarget()) }),
+            // Development relies on an already-installed cache; a packaged app may install the
+            // archive it carries, which is still local and still checksum-verified.
+            cachedOnly: !layout.archiveDir,
             ownCleanup,
           });
           // Only directories created by this request can be removed, after all children are confirmed stopped.
@@ -190,7 +212,7 @@ if (ownsAppLock)
           }
           const resources = await ownDirectory("setup resources ");
           const environmentHome = await ownDirectory("setup environment ");
-          await copySources(join(base, "..", ".."), resources);
+          await copySources(layout.sourcesRoot, resources);
           const terminal = await resolveTerminalEnvironment();
           return {
             nodePath: runtime.node,
@@ -204,7 +226,7 @@ if (ownsAppLock)
         },
       });
       const setup = createSetupControl({
-        enabled: !app.isPackaged && !!home && !smoke,
+        enabled,
         canSetup: () => controller.isIdle() && ["stopped", "unconfigured"].includes(controller.getState().status),
         run: (request) => setupRunner.run(request),
       });
@@ -257,7 +279,7 @@ if (ownsAppLock)
       }
       const statusLabel = (state: RuntimeControlState) =>
         desktopRuntimeStatusText(state, {
-          unavailable: smoke ? "纯壳验证，运行服务未启动" : "打包运行资源尚未提供，无法启动运行服务",
+          unavailable: smoke ? "纯壳验证，运行服务未启动" : "运行资源尚未就绪，无法启动运行服务",
         });
       const presentation = createRuntimePresentation({
         page,

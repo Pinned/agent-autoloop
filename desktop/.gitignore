@@ -3,3 +3,5 @@ release/
 # Local machine artifacts: the auto-downloaded runtime cache and the regenerable build output.
 .cache/
 dist/
+# The dist staging tree: rebuilt by scripts/stage.mjs on every `npm run dist`.
+stage/

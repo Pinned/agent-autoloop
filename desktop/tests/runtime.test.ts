@@ -696,7 +696,7 @@ test("source copy preserves the original bin entry, all CLI TS and schema/hash s
       await mkdir(dirname(join(source, name)), { recursive: true });
       await writeFile(join(source, name), contents);
     }
-    const excluded = ["web", "mockups", "prompt", "node_modules", "cli/prompt", "cli/node_modules"];
+    const excluded = ["mockups", "prompt", "node_modules", "cli/prompt", "cli/node_modules"];
     for (const name of excluded) {
       await mkdir(join(source, name), { recursive: true });
       await writeFile(join(source, name, "private.ts"), "must not copy");

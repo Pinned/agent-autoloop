@@ -15,7 +15,7 @@
     "smoke": "npm run build && node scripts/smoke.mjs",
     "lifecycle": "npm run build && node scripts/lifecycle-smoke.mjs",
     "runtime:check": "node scripts/runtime-smoke.mjs",
-    "dist": "npm run build && electron-builder"
+    "dist": "npm run build && node scripts/stage.mjs && electron-builder"
   },
   "devDependencies": {
     "@types/node": "24.19.2",
