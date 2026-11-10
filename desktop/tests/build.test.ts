@@ -112,7 +112,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(main, /远程队列不会取消/);
   assert.match(main, /离线持久待同步/);
   assert.doesNotMatch(main, /restartPolicy|controller\.restart/);
-  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 27);
+  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 29);
   // Each handler is checked inside its own block: a cross-handler match would let a missing
   // sender check hide behind the next handler that has one.
   const blocks = main.split("ipcMain.handle(channels.").slice(1);
@@ -133,6 +133,8 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
     "runtimeGet",
     "runtimeStart",
     "runtimeStop",
+    "runtimeReconnect",
+    "runtimeUseEmbedded",
     "todayState",
     "workersGet",
     "workersLocal",
@@ -230,8 +232,10 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
     "rulesCasGet",
     "rulesCasPut",
     "runtimeGet",
+    "runtimeReconnect",
     "runtimeStart",
     "runtimeStop",
+    "runtimeUseEmbedded",
     "setTheme",
     "settingsGet",
     "settingsPut",
@@ -331,7 +335,7 @@ test("the today source only ever fetches a validated loopback endpoint with the 
   assert.match(source, /\/v1\/state/);
   assert.doesNotMatch(source, /\/v1\/(?:tell|ui|events|cards|runs|keys|in)\b/);
   assert.doesNotMatch(source, /from ["'].*host\/config\.ts/);
-  assert.match(main, /createTodaySource\(\{ home: runtimeHome, getState: \(\) => controller\.getState\(\) \}\)/);
+  assert.match(main, /createTodaySource\(\{ home: runtimeHome, getState: runtimeState, readConfig \}\)/);
   assert.match(main, /ipcMain\.handle\(channels\.todayState, async \(event, \.\.\.args: unknown\[\]\) => \{/);
 });
 
@@ -347,7 +351,7 @@ test("the task source only ever fetches the two fixed hub task routes with the o
   assert.match(source, /\/v1\/ui\/rules/);
   assert.doesNotMatch(source, /\/v1\/(?:state|tell|events|cards|runs|keys|in)\b/);
   assert.doesNotMatch(source, /from ["'].*host\/config\.ts/);
-  assert.match(main, /createTaskSource\(\{ home: runtimeHome, getState: \(\) => controller\.getState\(\) \}\)/);
+  assert.match(main, /createTaskSource\(\{ home: runtimeHome, getState: runtimeState, readConfig \}\)/);
   // A malformed input is rejected before any request leaves the process.
   const handler = read("../src/task-create-control.ts");
   const preload = read("../src/preload.ts");
@@ -386,7 +390,7 @@ test("the automation page edits the hub's own entries through the versioned rule
   // The save carries the version it started from; the hub refuses a stale one, and main hands the
   // parsed input to the same single-flight unit the page talks to.
   assert.match(view, /needsReview|丢弃草稿并重新读取/);
-  assert.match(main, /createRulesCasSource\(\{ home: runtimeHome, getState: \(\) => presentation\.snapshot\(\) \}\)/);
+  assert.match(main, /createRulesCasSource\(\{ home: runtimeHome, getState: \(\) => presentation\.snapshot\(\), readConfig \}\)/);
   assert.match(main, /desktop:rules:cas:get|channels\.rulesCasGet/);
 });
 
@@ -406,7 +410,7 @@ test("the workers page shows the hub's own heartbeat through the pure workers co
   assert.match(source, /createWorkersSource/);
   assert.doesNotMatch(source, /\/v1\/(?:tell|ui|events|cards|runs|keys|in)\b/);
   assert.match(main, /ipcMain\.handle\(channels\.workersGet, async \(event, \.\.\.args: unknown\[\]\) => \{/);
-  assert.match(main, /createWorkersSource\(\{ home: runtimeHome, getState: \(\) => controller\.getState\(\) \}\)/);
+  assert.match(main, /createWorkersSource\(\{ home: runtimeHome, getState: runtimeState, readConfig \}\)/);
   // The page states where its data comes from instead of inventing remote environment facts.
   assert.match(view, /不含远程环境信息/);
 });

@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { shellMode, attachedHubLost } from "../src/renderer/shell-mode.ts";
+import { projectShell, shellMode, attachedHubLost } from "../src/renderer/shell-mode.ts";
 
 test("no launch record yet: reading hides the menu, an unanswered read is not 'unconfigured'", () => {
   assert.equal(shellMode(null, "reading-launch"), "checking");
@@ -72,8 +72,58 @@ test("only an attached hub that had answered and then stopped covers the workspa
     assert.equal(attachedHubLost(mode, external("unknown")), false, mode);
 });
 
-test("a runtime change re-projects the shell but never re-decides it", () => {
-  // The launch record decides "does this machine have a workspace"; the runtime only decides
+test("the painted shell withholds the workspace until the first runtime reading lands", () => {
+  const external = (status: "starting" | "running" | "unknown" | "unavailable") =>
+    ({ ownership: "external", status }) as const;
+  // The launch record already proved a workspace, but main has not said whether the hub behind it
+  // answers. Drawing the menu here would paint a page the reconnect screen replaces a moment later.
+  for (const runtime of [null, external("starting"), external("running"), external("unknown")])
+    assert.equal(
+      projectShell({ base: "workspace", setupOpen: false, runtimeSettled: false, runtime }),
+      "checking",
+      String(runtime),
+    );
+  // Once the reading is in, the two outcomes separate: an answering hub keeps the workspace, and a
+  // hub we had and lost gets the reconnect page — the same rule `attachedHubLost` already owns.
+  assert.equal(
+    projectShell({ base: "workspace", setupOpen: false, runtimeSettled: true, runtime: external("running") }),
+    "workspace",
+  );
+  assert.equal(
+    projectShell({ base: "workspace", setupOpen: false, runtimeSettled: true, runtime: external("unknown") }),
+    "reconnect",
+  );
+  // A hub this app started is never the terminal's to lose, and `unavailable` is our own gate.
+  for (const runtime of [{ ownership: "owned", status: "running" } as const, external("unavailable"), null])
+    assert.equal(
+      projectShell({ base: "workspace", setupOpen: false, runtimeSettled: true, runtime }),
+      "workspace",
+      String(runtime),
+    );
+});
+
+test("the painted shell never overrides the launch decision or the setup page", () => {
+  const lost = { ownership: "external", status: "unknown" } as const;
+  // Only a proven workspace can be withheld: the first-run page is the answer, not a mask over one.
+  for (const base of ["checking", "setup", "reconnect"] as const)
+    for (const runtimeSettled of [false, true])
+      assert.equal(
+        projectShell({ base, setupOpen: false, runtimeSettled, runtime: lost }),
+        base,
+        `${base}/${runtimeSettled}`,
+      );
+  // The setup page owns #main while it is open; it is the only page with something to say, so
+  // neither the pending first reading nor a lost hub may replace it underneath the user.
+  for (const runtime of [null, lost])
+    for (const runtimeSettled of [false, true])
+      assert.equal(
+        projectShell({ base: "workspace", setupOpen: true, runtimeSettled, runtime }),
+        "workspace",
+        `${String(runtime)}/${runtimeSettled}`,
+      );
+});
+
+test("a runtime change re-projects the shell but never re-decides it", () => {  // The launch record decides "does this machine have a workspace"; the runtime only decides
   // "is the hub behind it answering". A runtime push that recomputed the first question would
   // paint the menu on a machine whose launch read has not answered yet.
   const app = readFileSync(new URL("../src/renderer/app.ts", import.meta.url), "utf8");

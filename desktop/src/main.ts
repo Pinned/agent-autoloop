@@ -32,7 +32,9 @@ import {
 import { loadTheme, saveTheme } from "./preferences.ts";
 import { createSupervisor } from "./supervisor.ts";
 import { createRuntimeControl, SAFE_STOP_ERROR, type RuntimeControlState } from "./runtime-control.ts";
-import { createTasksSource, createTodaySource, createWorkersSource } from "./state-source.ts";
+import { createTasksSource, createTodaySource, createWorkersSource, readRuntimeConfig } from "./state-source.ts";
+import { createBootControl } from "./boot-control.ts";
+import { detectDesktopCli, desktopCliHome, readDesktopCliEndpoint } from "../../host/desktop-cli-detect.ts";
 import { createTaskSource } from "./task-source.ts";
 import { createHubWatcher, type HubGlance } from "./hub-watcher.ts";
 import { createNotifier } from "./notify.ts";
@@ -180,6 +182,29 @@ if (ownsAppLock)
               }),
           }),
       });
+      // Where this run's hub comes from, decided once and before any page is painted. Detection
+      // is a real-launch fact only: a smoke or lifecycle run must never attach to a user's terminal
+      // hub, so both are excluded even when the app itself is enabled.
+      const boot = createBootControl({
+        detect: () => (enabled && !lifecycle ? detectDesktopCli(desktopCliHome(process.env)) : null),
+        endpoint: (port) => readDesktopCliEndpoint(desktopCliHome(process.env), port),
+        onChange: () => bootChanged(),
+      });
+      // One reading for every consumer: an attached hub when this run attached to a terminal's
+      // hub, otherwise this app's own control. Nothing else may answer "can I talk to the hub".
+      const runtimeState = () => boot.state() ?? controller.getState();
+      // An attached hub's owner key is re-read for every request and never kept; a failed read
+      // throws, which every consumer already treats as "cannot reach the hub".
+      const readConfig = (home: string): unknown => boot.attach()?.readConfig() ?? readRuntimeConfig(home);
+      function bootChanged() {
+        // Same two duties as an owned-runtime change: the stream follows reachability, and the
+        // renderer is pushed the new snapshot. Declared here so boot can exist before either unit.
+        try {
+          watcher.sync();
+        } finally {
+          presentation.changed();
+        }
+      }
       const setupRunner = createSetupRunner({
         ...(lifecycle && { installationDiscovery: "none" as const }),
         enabled,
@@ -243,17 +268,18 @@ if (ownsAppLock)
             : setupRunner.run(request),
       });
       // The today page reads the local hub over loopback while it runs; never while it does not.
-      const todaySource = createTodaySource({ home: runtimeHome, getState: () => controller.getState() });
+      const todaySource = createTodaySource({ home: runtimeHome, getState: runtimeState, readConfig });
       // The tasks page reads the same door with the hub's own paging into older runs.
-      const tasksSource = createTasksSource({ home: runtimeHome, getState: () => controller.getState() });
+      const tasksSource = createTasksSource({ home: runtimeHome, getState: runtimeState, readConfig });
       // The workers page shows the hub's own heartbeat and distribution, never a remote probe.
-      const workersSource = createWorkersSource({ home: runtimeHome, getState: () => controller.getState() });
+      const workersSource = createWorkersSource({ home: runtimeHome, getState: runtimeState, readConfig });
       // Task creation is the write side of the same owner data plane, through the hub's own door.
-      const taskSource = createTaskSource({ home: runtimeHome, getState: () => controller.getState() });
+      const taskSource = createTaskSource({ home: runtimeHome, getState: runtimeState, readConfig });
       // The tray's live view: the hub's own stream says when, the state doors say what.
       const watcher = createHubWatcher({
         home: runtimeHome,
-        getState: () => controller.getState(),
+        getState: runtimeState,
+        readConfig,
         readToday: () => todaySource.read(),
         readTasks: () => tasksSource.read(),
       });
@@ -289,13 +315,13 @@ if (ownsAppLock)
         }
         return items;
       }
-      const statusLabel = (state: RuntimeControlState) =>
+      const statusLabel = (state: Parameters<typeof desktopRuntimeStatusText>[0]) =>
         desktopRuntimeStatusText(state, {
           unavailable: smoke ? "纯壳验证，运行服务未启动" : "运行资源尚未就绪，无法启动运行服务",
         });
       const presentation = createRuntimePresentation({
         page,
-        read: () => controller.getState(),
+        read: runtimeState,
         gates: () => ({
           phase: quit?.phase ?? "idle",
           busy: setup.busy,
@@ -309,7 +335,7 @@ if (ownsAppLock)
         refresh: () => refreshMenus(),
         report: (message) => console.error(message),
       });
-      const detailSource = createTaskQuerySource({ home: runtimeHome, getState: () => presentation.snapshot() });
+      const detailSource = createTaskQuerySource({ home: runtimeHome, getState: () => presentation.snapshot(), readConfig });
       // The list door: server-side search/filtering over the hub's own query, no lease. The source
       // itself classifies unavailable/no-hub, so an unrelated runtime transition cannot abort a read.
       const listIpc = createTaskListIpc({
@@ -322,21 +348,21 @@ if (ownsAppLock)
         source: detailSource,
       });
       // The write side of the same page: one owner action at a time, gated by the same lease.
-      const taskActionSource = createTaskActionSource({ home: runtimeHome, getState: () => presentation.snapshot() });
+      const taskActionSource = createTaskActionSource({ home: runtimeHome, getState: () => presentation.snapshot(), readConfig });
       const taskAction = createTaskActionIpc({
         assertSender: (event) => assertSender(event as Parameters<typeof assertSender>[0], window.webContents, page),
         presentation,
         source: taskActionSource,
       });
       // The automation page's editor: one rules version per draft, checked again by the hub on save.
-      const rulesCasSource = createRulesCasSource({ home: runtimeHome, getState: () => presentation.snapshot() });
+      const rulesCasSource = createRulesCasSource({ home: runtimeHome, getState: () => presentation.snapshot(), readConfig });
       const rulesCas = createRulesCasIpc({
         source: rulesCasSource,
         assertSender: (event) => assertSender(event, window.webContents, page),
         gate: () => undefined,
       });
       // The settings page edits the same file through the hub; the door checks role and version itself.
-      const settingsSource = createSettingsSource({ home: runtimeHome, getState: () => presentation.snapshot() });
+      const settingsSource = createSettingsSource({ home: runtimeHome, getState: () => presentation.snapshot(), readConfig });
       const settings = createSettingsIpc({
         source: settingsSource,
         assertSender: (event) => assertSender(event, window.webContents, page),
@@ -353,7 +379,7 @@ if (ownsAppLock)
       // An attached hub is never started or stopped from here: no child of ours exists to act on, and
       // answering "stopped" for a process we never spawned would be a false claim. Both entries share
       // this refusal so the menu, the tray and the renderer cannot diverge.
-      const owned = () => controller.getState().ownership === "owned";
+      const owned = () => !boot.attach() && controller.getState().ownership === "owned";
       // The single gated entry both the tray/menu actions and the renderer IPC share.
       // Admission failures answer ok:false; the outcome of a performed run lives in the snapshot's error field.
       async function performStart(): Promise<DesktopRuntimeResponse> {
@@ -363,8 +389,15 @@ if (ownsAppLock)
           () => controller.getState(),
         ));
       }
+      // The launch record is answered only after this run's hub direction is decided and its first
+      // probe has landed. That is what keeps the shell from painting a workspace and then replacing
+      // it: the renderer receives "workspace" together with an attached hub that already answered.
       const readLaunchStatus = createLaunchStatusRead(() =>
-        presentation.observe(() => setup.runSetup({ version: 1, operation: "launch-status" })));
+        presentation.observe(async () => {
+          const response = await setup.runSetup({ version: 1, operation: "launch-status" });
+          if (response.ok && response.operation === "launch-status") await boot.prepare(response.data.nextLaunch);
+          return response;
+        }));
       const launch = createLaunchControl({
         read: async (): Promise<DesktopLaunchStatus> => {
           const response = await readLaunchStatus();
@@ -398,7 +431,7 @@ if (ownsAppLock)
           await showSafeError(action === "stop" ? SAFE_STOP_ERROR : "无法启动本机运行服务，请检查后手动重试。");
       }
       function refreshMenus() {
-        const state = controller.getState();
+        const state = runtimeState();
         // An attached hub is managed by a terminal. Offering start or stop in the menu would promise
         // a capability this app does not have, and the click would silently do nothing.
         const external = state.ownership === "external";
@@ -492,8 +525,11 @@ if (ownsAppLock)
         restore,
         exit: () => app.quit(),
         prepareQuit: async () => {
-          // The stream listener is main-side plumbing; it never outlives the app it serves.
+          // The stream listener and the attach control are main-side plumbing; neither outlives
+          // the app it serves. Closing the attach control only stops our probes — the terminal's
+          // hub keeps running, exactly as it would if this window had never opened.
           watcher.close();
+          boot.close();
           const safe = await setup.prepareQuit(() => controller.stop());
           if (!safe) await showSafeError(SAFE_STOP_ERROR);
           return safe;
@@ -507,9 +543,9 @@ if (ownsAppLock)
             type: "question",
             title: "退出 agent-autoloop？",
             message: "确认退出桌面应用？",
-            detail: ["starting", "running", "draining", "unknown", "failed"].includes(controller.getState().status)
+            detail: ["starting", "running", "draining", "unknown", "failed"].includes(runtimeState().status)
               ? "退出前将停止本机 Agent 并等待安全排空；远程队列不会取消。无法确认安全停止时不会退出，也不会强制终止。退出后托盘关闭；只想收起窗口请选择取消。"
-              : `${statusLabel(controller.getState())}。退出不会取消远程队列；离线持久待同步结果将保留。退出后托盘关闭；只想收起窗口请选择取消。`,
+              : `${statusLabel(runtimeState())}。退出不会取消远程队列；离线持久待同步结果将保留。退出后托盘关闭；只想收起窗口请选择取消。`,
             buttons: ["取消", "退出应用"],
             defaultId: 0,
             cancelId: 0,
@@ -701,6 +737,25 @@ if (ownsAppLock)
         if (args.length !== 0) throw new Error("invalid-request");
         return performStop();
       });
+      // Looking again is not starting anything: the attached hub is still the terminal's, and the
+      // answer to "is it back" arrives through the ordinary runtime push.
+      ipcMain.handle(channels.runtimeReconnect, async (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        if (args.length !== 0) throw new Error("invalid-request");
+        await boot.reconnect();
+        return { version: 1, ok: true, state: presentation.snapshot() } as const;
+      });
+      // Moving to this app's own hub is a user choice made on the reconnect page. It closes the
+      // attach control for this session, then takes the ordinary start path so the same admission,
+      // receipt and safe-stop semantics apply as any other start.
+      ipcMain.handle(channels.runtimeUseEmbedded, async (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        if (args.length !== 0) throw new Error("invalid-request");
+        if (!boot.useEmbedded()) return desktopRuntimeFailure("unavailable");
+        // Ownership changed without a probe result: publish before the start's own pushes.
+        presentation.changed();
+        return performStart();
+      });
       // Read-only today data; the response is already contract-validated and carries no keys or paths.
       ipcMain.handle(channels.todayState, async (event, ...args: unknown[]) => {
         assertSender(event, window.webContents, page);
@@ -866,7 +921,7 @@ if (ownsAppLock)
             result.runtimeEventSeen !== false ||
             result.navigateSeen !== false ||
             result.bridge.join(",") !==
-              "checkBuiltinAgents,completeSetup,copyLaunchCommand,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,probeHub,rulesCasGet,rulesCasPut,runtimeGet,runtimeStart,runtimeStop,setTheme,settingsGet,settingsPut,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,taskList,tasksGet,todayState,window,workersGet,workersLocal" ||
+              "checkBuiltinAgents,completeSetup,copyLaunchCommand,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,probeHub,rulesCasGet,rulesCasPut,runtimeGet,runtimeReconnect,runtimeStart,runtimeStop,runtimeUseEmbedded,setTheme,settingsGet,settingsPut,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,taskList,tasksGet,todayState,window,workersGet,workersLocal" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||

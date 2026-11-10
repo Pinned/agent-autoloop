@@ -59,3 +59,27 @@ export function attachedHubLost(
 ): boolean {
   return base === "workspace" && runtime !== null && runtime.ownership === "external" && runtime.status === "unknown";
 }
+
+/**
+ * The shell actually painted: the launch decision, minus the two moments it is not yet true.
+ *
+ * Two separate facts can withhold the workspace, and they must not be confused:
+ *
+ *   - the first runtime reading has not arrived (`runtimeSettled === false`). The launch record can
+ *     prove a workspace while main is still deciding whether the hub behind it answers. Painting
+ *     the menu then would show a page the reconnect screen replaces a moment later, so the
+ *     document's own "checking" frame stays — no new copy, no flash;
+ *   - an attached hub answered once and then stopped, which is a real disconnect.
+ *
+ * A setup page that owns #main masks both: it is the only page with something to say.
+ */
+export function projectShell(options: {
+  base: ShellMode;
+  setupOpen: boolean;
+  runtimeSettled: boolean;
+  runtime: Pick<DesktopRuntimeSnapshot, "ownership" | "status"> | null;
+}): ShellMode {
+  if (options.base !== "workspace" || options.setupOpen) return options.base;
+  if (!options.runtimeSettled) return "checking";
+  return attachedHubLost(options.base, options.runtime) ? "reconnect" : options.base;
+}

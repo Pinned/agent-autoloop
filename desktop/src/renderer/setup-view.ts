@@ -159,8 +159,12 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
         form.append(element("h2", roles[wizard.role]));
         if (wizard.role === "hub-worker") {
           form.append(
-            element("p", "先只读检查有限的本机回环地址；不会扫描旧安装配置或读取密钥，不停止或接管已有服务。", "muted"),
-            element("p", "内置中台使用应用独立数据目录与可用端口。原任务与记录保留在原中台，不会自动迁移。", "muted"),
+            element(
+              "p",
+              "应用启动时会读取本机 CLI 的连接配置（仅回环地址与本机认证所需的 owner），不读取密钥。若该中台已在运行，应用直接接入，不会另起一个。",
+              "muted",
+            ),
+            element("p", "未检测到本机 CLI 中台时，应用使用自己的内置中台；原任务与记录保留在原中台，不会自动迁移。", "muted"),
           );
         } else {
           field(
@@ -203,10 +207,10 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
               list,
               element(
                 "p",
-                "目前尚不支持本次接入已有中台。继续会准备应用独立内置中台，不读取已有凭证、不接管外部服务。",
+                "这次检查只告诉你本机回环地址上有没有响应，不代表已经接入。应用启动时会按本机 CLI 的连接配置接入已在运行的中台，不会读取密钥，也不会停止或接管它。",
                 "muted",
               ),
-              element("p", "下次启动使用应用独立中台；原任务与记录保留在原中台，不会自动迁移。", "muted"),
+              element("p", "若启动时没有检测到可接入的中台，应用使用自己的内置中台；两边任务与记录各自保留，不会自动迁移。", "muted"),
             );
           }
         }
@@ -327,7 +331,13 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
           );
         }
         if (state.mode === "embedded")
-          panel.append(element("p", "本次及下次使用应用独立中台。原任务与记录保留在原中台，不会自动迁移。", "muted"));
+          panel.append(
+            element(
+              "p",
+              "配置为使用应用内置中台；下次启动时若检测到本机 CLI 的中台已在运行，应用会直接接入它。原任务与记录保留在原中台，不会自动迁移。",
+              "muted",
+            ),
+          );
       } else if (state.kind === "configured") {
         status.textContent = state.created ? "本机配置已保存。" : "这台电脑已有配置，本轮不提供覆盖或切换角色。";
         panel.append(

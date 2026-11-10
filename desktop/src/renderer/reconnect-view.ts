@@ -11,9 +11,9 @@ export type ReconnectActions = {
   /** Copies the command through the main process; a sandboxed page has no clipboard of its own. */
   copy?: () => Promise<void>;
   /** Probe the attached hub again now, without starting or switching anything. */
-  reconnect?: () => void;
+  reconnect?: () => Promise<unknown> | void;
   /** Move this app to its own embedded hub. Only ever a user choice, never automatic. */
-  useEmbedded?: () => void;
+  useEmbedded?: () => Promise<unknown> | void;
   /** Leave the app; while this page is up there is no workspace behind it to return to. */
   exit?: () => void;
 };
@@ -29,6 +29,8 @@ export function mountReconnectView(root: HTMLElement, actions: ReconnectActions 
   // A copy that settles after the page is gone must not write into a detached document.
   let closed = false;
   let copying = false;
+  let reconnecting = false;
+  let switching = false;
 
   root.replaceChildren();
   root.setAttribute("aria-labelledby", "reconnect-title");
@@ -98,13 +100,50 @@ export function mountReconnectView(root: HTMLElement, actions: ReconnectActions 
     if (actions.reconnect) {
       const reconnect = element("button", "已启动，重连");
       reconnect.type = "button";
-      reconnect.addEventListener("click", () => actions.reconnect!());
+      reconnect.addEventListener("click", () => {
+        if (reconnecting) return;
+        reconnecting = true;
+        reconnect.disabled = true;
+        status.textContent = "正在重新检查本机中台，请稍等。";
+        void Promise.resolve()
+          .then(() => actions.reconnect!())
+          .then(
+            () => {
+              // The page removes itself when the hub answers; if it is still here, say only what
+              // was actually confirmed — one more check ran and the page did not move.
+              if (!closed) status.textContent = "已完成一次重连检查；如仍未连接，请确认启动命令已在终端执行。";
+            },
+            () => {
+              if (!closed) status.textContent = "重连检查未完成，请稍后重试。";
+            },
+          )
+          .finally(() => {
+            reconnecting = false;
+            if (!closed) reconnect.disabled = false;
+          });
+      });
       buttons.append(reconnect);
     }
     if (actions.useEmbedded) {
       const embedded = element("button", "使用 App 内置");
       embedded.type = "button";
-      embedded.addEventListener("click", () => actions.useEmbedded!());
+      embedded.addEventListener("click", () => {
+        if (switching) return;
+        switching = true;
+        embedded.disabled = true;
+        status.textContent = "正在启动 App 内置中台，请稍等。";
+        void Promise.resolve()
+          .then(() => actions.useEmbedded!())
+          .catch(() => {
+            // The action reports its own failures; this page only restores the button so the user
+            // is never left with a dead control and no statement about what happened.
+            if (!closed) status.textContent = "切换到 App 内置中台未完成，请稍后重试。";
+          })
+          .finally(() => {
+            switching = false;
+            if (!closed) embedded.disabled = false;
+          });
+      });
       buttons.append(embedded);
     }
     if (actions.exit) {
