@@ -56,7 +56,7 @@ const ready = (runs: unknown[], overrides: Record<string, unknown> = {}): Record
 
 test("a well-formed ready answer round-trips and every run state keeps the console's word", () => {
   const states = Object.keys(DESKTOP_TASKS_STATUS_MESSAGES) as DesktopTasksRunState[];
-  assert.deepEqual(states.sort(), ["claimed", "done", "failed", "nothing", "queued", "unknown"]);
+  assert.deepEqual(states.sort(), ["cancelled", "claimed", "done", "failed", "nothing", "queued", "unknown"]);
   const parsed = parseDesktopTasksResponse(
     ready(
       states.map((state, index) => viewRun({ id: index + 1, state })),
@@ -65,7 +65,7 @@ test("a well-formed ready answer round-trips and every run state keeps the conso
   );
   assert.equal(parsed.state.kind, "ready");
   if (parsed.state.kind !== "ready") throw new Error("expected ready");
-  assert.equal(parsed.state.snapshot.runs.length, 6);
+  assert.equal(parsed.state.snapshot.runs.length, 7);
   for (const [index, state] of states.entries()) {
     assert.equal(parsed.state.snapshot.runs[index].state, state);
     assert.equal(DESKTOP_TASKS_STATUS_MESSAGES[state].length > 0, true);

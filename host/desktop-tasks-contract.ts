@@ -10,7 +10,14 @@ export const DESKTOP_TASKS_RESPONSE_MAX_BYTES = 160 * 1024;
 export const DESKTOP_TASKS_RUNS_MAX = 100 as const;
 // The hub already caps a run's triggering events at 20; the projection keeps the same bound.
 export const DESKTOP_TASKS_EVENTS_MAX = 20 as const;
-export type DesktopTasksRunState = "queued" | "claimed" | "unknown" | "done" | "nothing" | "failed";
+export type DesktopTasksRunState =
+  | "queued"
+  | "claimed"
+  | "unknown"
+  | "done"
+  | "nothing"
+  | "failed"
+  | "cancelled";
 export type DesktopTasksEvent = { source: string; type: string; subject: string; summary: string };
 export type DesktopTasksUsage = { input: number | null; output: number | null; cost: number | null };
 export type DesktopTasksRun = {
@@ -61,9 +68,19 @@ export const DESKTOP_TASKS_STATUS_MESSAGES = Object.freeze({
   done: "完成",
   nothing: "没事可做",
   failed: "没跑成",
+  // The hub console words this one in the run detail view; the list must not print the raw enum.
+  cancelled: "已取消",
 } satisfies Record<DesktopTasksRunState, string>);
 
-const runStates: readonly DesktopTasksRunState[] = ["queued", "claimed", "unknown", "done", "nothing", "failed"];
+const runStates: readonly DesktopTasksRunState[] = [
+  "queued",
+  "claimed",
+  "unknown",
+  "done",
+  "nothing",
+  "failed",
+  "cancelled",
+];
 const eventFields: readonly string[] = ["source", "type", "subject", "summary"];
 const usageFields: readonly string[] = ["input", "output", "cost"];
 function invalid(): never {
