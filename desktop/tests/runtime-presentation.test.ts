@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createRuntimePresentation, RUNTIME_PRESENTATION_DIAGNOSTIC } from "../src/runtime-presentation.ts";
-import { desktopRuntimeSnapshotOf, DESKTOP_RUNTIME_ERROR_MESSAGES, type DesktopRuntimeEvent } from "../../host/desktop-run-contract.ts";
+import { desktopRuntimeSnapshotOf, desktopRuntimeStatusText, DESKTOP_RUNTIME_ERROR_MESSAGES, type DesktopRuntimeEvent } from "../../host/desktop-run-contract.ts";
 import { createRendererRun } from "../src/renderer/run-controller.ts";
 import { createSetupControl } from "../src/setup-control.ts";
 
@@ -76,6 +76,8 @@ test("all exit phases fence admission and final push; cancellation restores only
     d.resolve(f.state()); await run;
     assert.equal(f.events.at(-1)?.state.status, "unavailable");
     assert.equal(f.events.at(-1)?.state.pendingSync, 3);
+    // A closed control plane is not a missing runtime: the quit dialog must not blame resources.
+    assert.doesNotMatch(desktopRuntimeStatusText(f.control.snapshot()), /资源|无法启动/);
     f.gates.phase = "idle"; f.control.publish();
     assert.deepEqual(f.events.at(-1)?.state, f.state());
   }

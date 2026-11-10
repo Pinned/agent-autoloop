@@ -113,6 +113,15 @@ test("status text covers every status plus the offline pendingSync special case"
   );
 });
 
+test("the unavailable line never claims the runtime resources are missing", () => {
+  // This status is also the projection for presentation gates (quit dialog, setup, document swap):
+  // the resources are fine, the control plane is closed. Only the tray overrides it with the true
+  // missing-resource wording, because the tray reads the raw state instead of the projection.
+  const text = DESKTOP_RUNTIME_STATUS_MESSAGES.unavailable;
+  assert.equal(text, "本机运行服务控制暂不可用");
+  assert.doesNotMatch(text, /资源|无法启动/);
+});
+
 test("main-side construction validates instead of trusting the caller", () => {
   rejects(() => desktopRuntimeSnapshotOf({ status: "paused" as never, role: null, pendingSync: null, error: null }));
   rejects(() =>

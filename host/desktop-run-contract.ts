@@ -36,7 +36,9 @@ export const DESKTOP_RUNTIME_STATUS_MESSAGES = Object.freeze({
   failed: "本机运行服务失败",
   unknown: "本机运行服务状态未确认",
   unconfigured: "本机配置未完成，请前往设置（不会自动初始化）",
-  unavailable: "本机运行资源不可用，无法启动运行服务",
+  // This status also covers the presentation gates (quit dialog, setup, document swap), where the
+  // runtime is fine but cannot be observed or controlled. Never claim the resources are missing.
+  unavailable: "本机运行服务控制暂不可用",
 } satisfies Record<DesktopRuntimeStatus, string>);
 
 /** The one place tray, menus, dialogs and the renderer agree on a status line. */

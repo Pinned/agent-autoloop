@@ -36,7 +36,7 @@ const shortLabels: Record<string, string> = {
   failed: "失败",
   unknown: "未确认",
   unconfigured: "未配置",
-  unavailable: "不可用",
+  unavailable: "暂不可用",
   loading: "读取中",
 };
 
