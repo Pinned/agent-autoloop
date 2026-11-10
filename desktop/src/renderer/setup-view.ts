@@ -11,7 +11,15 @@ function element<K extends keyof HTMLElementTagNameMap>(tag: K, text = "", class
   return node;
 }
 
-export function mountSetupView(root: HTMLElement, control: Controller, close: () => void) {
+type Options = {
+  /** Whether a workspace exists behind this page for the user to return to. */
+  canDismiss?: () => boolean;
+  /** The way out when it does not: the app's own quit, with its confirmation. */
+  exit?: () => void;
+};
+
+export function mountSetupView(root: HTMLElement, control: Controller, close: () => void, options: Options = {}) {
+  const canDismiss = options.canDismiss ?? (() => true);
   let keyInput: HTMLInputElement | undefined;
   let draftScope = "";
   let renderedDraft: { url: string; worker: string } | undefined;
@@ -101,6 +109,13 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
     const cancel = () => {
       clearKey();
       close();
+    };
+    // Before a machine has a workspace there is nothing to dismiss the page back to, so the only
+    // honest way out is the app's own quit (which still asks for confirmation). Once the workspace
+    // exists - re-entered from settings, or a first run that just completed - leaving is normal.
+    const leave = () => {
+      if (canDismiss()) cancel();
+      else options.exit?.();
     };
 
     if (
@@ -269,7 +284,7 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
       submit.disabled =
         busy || (wizard.step === 3 && (!wizard.check || (wizard.role === "hub-worker" && !control.probeResult)));
       submit.className = "setup-primary";
-      actions.append(submit, button("暂不配置", cancel, control.submitting));
+      actions.append(submit, button(canDismiss() ? "暂不配置" : "退出应用…", leave, control.submitting));
       form.append(actions);
       form.addEventListener("submit", (event) => {
         event.preventDefault();
@@ -344,7 +359,7 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
       } else {
         status.textContent = "本机配置尚未检查。";
       }
-      actions.append(button("返回工作空间", cancel, control.submitting));
+      actions.append(button(canDismiss() ? "返回工作空间" : "退出应用…", leave, control.submitting));
       panel.append(actions);
     }
     if (focus) (root.querySelector<HTMLElement>(".setup-error") ?? title).focus();

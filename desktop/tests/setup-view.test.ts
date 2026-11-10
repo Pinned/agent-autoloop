@@ -247,10 +247,14 @@ test("real app setup callback presents failed launch reads with explicit retry a
       currentRole: () => null,
       syncNavigation: () => {},
       navigationDisabled: false,
+      // The shell projection decides whether a page may be drawn; the stub mirrors the rule the
+      // real callback applies so this test stays about the setup read.
+      shellMode: () => "setup",
+      applyShell: () => {},
       document: { querySelector: () => ({ textContent: "", hidden: true }) },
-      mountSetupView: (_root: HTMLElement, control: ReturnType<typeof createRendererSetup>) => {
+      mountSetupPage: () => {
         mounts++;
-        return mountSetupView(root as unknown as HTMLElement, control, () => {});
+        return mountSetupView(root as unknown as HTMLElement, context.setup as ReturnType<typeof createRendererSetup>, () => {});
       },
       render: () => {},
       currentPage: "today",
@@ -349,6 +353,46 @@ test("controller validation overrides unsent fields, step changes do not restore
     assert.equal(input(f.root, "setup-url").value, "");
   }));
 
+test("the setup page offers a way out only when there is a workspace to return to", () =>
+  withDocument(() => {
+    // No workspace yet: dismissing would strand the user on an empty window, so the only honest
+    // exit is the app's own quit, which keeps its confirmation and its runtime drain.
+    const first = fixture(1);
+    let exits = 0;
+    let closes = 0;
+    const locked = mountSetupView(
+      first.root as unknown as HTMLElement,
+      first.control as unknown as Parameters<typeof mountSetupView>[1],
+      () => closes++,
+      { canDismiss: () => false, exit: () => exits++ },
+    );
+    locked.render();
+    const quit = all(first.root).find((node) => node.tagName === "button" && node.textContent === "退出应用…");
+    assert.ok(quit);
+    assert.equal(all(first.root).some((node) => node.textContent === "暂不配置"), false);
+    quit.fire("click");
+    assert.equal(exits, 1);
+    assert.equal(closes, 0);
+
+    // A workspace exists (re-entered from settings, or a first run that just completed): leaving is
+    // normal and must not quit the app.
+    const second = fixture(1);
+    let closesAgain = 0;
+    let exitsAgain = 0;
+    const open = mountSetupView(
+      second.root as unknown as HTMLElement,
+      second.control as unknown as Parameters<typeof mountSetupView>[1],
+      () => closesAgain++,
+      { canDismiss: () => true, exit: () => exitsAgain++ },
+    );
+    open.render();
+    const back = all(second.root).find((node) => node.tagName === "button" && node.textContent === "暂不配置");
+    assert.ok(back);
+    back.fire("click");
+    assert.equal(closesAgain, 1);
+    assert.equal(exitsAgain, 0);
+  }));
+
 test("app wires one inert singleton bootstrap; launch status precedes automatic wizard and legacy has no start call", () => {
   const app = readFileSync(new URL("../src/renderer/app.ts", import.meta.url), "utf8");
   assert.equal((app.match(/createRendererSetup\(/g) ?? []).length, 1);
@@ -361,6 +405,9 @@ test("app wires one inert singleton bootstrap; launch status precedes automatic 
   assert.match(app, /setup\.state\.kind !== "reading-status" &&\s*setup\.state\.kind !== "reading-launch"/);
   assert.match(app, /initialSetupPresented = true;[\s\S]*?setupView\.render\(\)/);
   assert.match(app, /completion === "legacy"/);
+  // The shell decision and the setup page's one exit are wired in the same place.
+  assert.match(app, /const mode = shellMode\(setup\.launch, setup\.state\.kind\);/);
+  assert.match(app, /canDismiss: \(\) => shell === "workspace"/);
   assert.doesNotMatch(app, /runtimeStart\(|completeSetup\(|initHub\(|joinWorker\(/);
 });
 

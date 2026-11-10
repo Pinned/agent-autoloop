@@ -262,7 +262,10 @@ test("onboarding is explicit and renderer bundles only the pure setup contract",
   // The settings page owns the re-entry point now; it hands the action back to the app's openSetup.
   assert.match(app, /openSetup,/);
   assert.match(read("../src/renderer/settings-view.ts"), /addEventListener\("click", \(\) => options\.openSetup\(\)\)/);
-  assert.match(app, /render\("today", false\)/);
+  // Startup must not paint a page before the launch record says this machine has a workspace.
+  assert.doesNotMatch(app, /render\("today", false\);\nsetup\.bootstrap\(\)/);
+  assert.match(app, /shellMode\(setup\.launch, setup\.state\.kind\)/);
+  assert.match(app, /if \(shell !== "workspace"\) return;/);
   assert.doesNotMatch(app, /setupStatus\(|checkBuiltinAgents\(|initHub\(|joinWorker\(/);
   assert.doesNotMatch(controller, /node:|from ["'].*host\/(?:config|runtime|setup)\.ts/);
   assert.doesNotMatch(renderer, /function readConfig|function initSetup|node:|AGENT_AUTOLOOP_HOME/);

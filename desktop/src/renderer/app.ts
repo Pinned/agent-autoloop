@@ -28,6 +28,7 @@ import {
   type Page as NavigationPage,
   type Role,
 } from "./navigation.ts";
+import { shellMode, type ShellMode } from "./shell-mode.ts";
 declare global {
   interface Window {
     desktop: DesktopBridge;
@@ -51,15 +52,29 @@ const navigation = document.querySelector<HTMLElement>("#navigation")!;
 const navLabel = document.querySelector<HTMLElement>("#nav-label")!;
 const newTaskButton = document.querySelector<HTMLButtonElement>("#new-task")!;
 let currentPage = "today";
-// A page change is only a DOM rebuild; the role decides which pages exist at all.
+// A page is current only while a business page actually owns #main. The setup view replaces #main,
+// so the menu must not point at a page the user is not looking at; with no workspace there is no
+// page at all to point at. This is what keeps "菜单可见" and "有页面可指向" the same statement.
+function pageOwnsMain(): boolean {
+  return shell === "workspace" && setupView === undefined;
+}
+// The page change is only a DOM rebuild; the role decides which pages exist at all.
 function markCurrent() {
+  const active = pageOwnsMain() ? currentPage : "";
   for (const button of navigation.querySelectorAll<HTMLButtonElement>("button")) {
-    button.classList.toggle("active", button.dataset.page === currentPage);
-    if (button.dataset.page === currentPage) button.setAttribute("aria-current", "page");
+    button.classList.toggle("active", button.dataset.page === active);
+    if (button.dataset.page === active) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   }
 }
 let navigationDisabled = false;
+// Which shell the window may show. The launch record decides; the first frame is "checking", which
+// the document already carries, so no menu is ever painted on a machine that has no workspace.
+let shell: ShellMode = "checking";
+function applyShell(mode: ShellMode) {
+  shell = mode;
+  document.documentElement.dataset.shell = mode;
+}
 // The tasks and workers pages exist in both roles but do not mean the same thing in them: a page
 // drawn before the runtime reported its role must be rebuilt once that role is known.
 function pageFlavor(role: Role, id: string): string {
@@ -86,9 +101,11 @@ function syncNavigation(role: Role) {
     button.disabled = navigationDisabled;
   markCurrent();
   // A role change can strand the current page outside its own view. Leave the page only after this
-  // notification returns: a render here would re-enter the setup controller mid-change.
-  if (!pages.some((page) => page.id === currentPage))
+  // notification returns: a render here would re-enter the setup controller mid-change. With the
+  // first-run page on screen there is no current page to strand, so navigation changes nothing.
+  if (shell === "workspace" && !pages.some((page) => page.id === currentPage))
     queueMicrotask(() => {
+      if (shell !== "workspace") return;
       const current = pagesFor(currentRole());
       if (!current.some((page) => page.id === currentPage)) render(current[0].id);
     });
@@ -96,9 +113,10 @@ function syncNavigation(role: Role) {
   // history for an owner and a local summary for a pure worker, and the reading lives on a
   // different page in each role. Rebuild it once the notification returns, and only if the role
   // actually moved the page under the user.
-  if (renderedFlavor !== null && pages.some((page) => page.id === currentPage) &&
+  if (renderedFlavor !== null && shell === "workspace" && pages.some((page) => page.id === currentPage) &&
       pageFlavor(role, currentPage) !== renderedFlavor)
     queueMicrotask(() => {
+      if (shell !== "workspace") return;
       const now = currentRole();
       if (pagesFor(now).some((page) => page.id === currentPage) &&
           pageFlavor(now, currentPage) !== renderedFlavor) render(currentPage, false);
@@ -163,6 +181,8 @@ const setup = createRendererSetup(window.desktop, () => {
     setup.state.kind === "reading-launch" ||
     (setup.launch?.completion === "first-run" && setup.state.kind === "reading-status");
   navigationDisabled = setup.submitting || startupBusy;
+  const mode = shellMode(setup.launch, setup.state.kind);
+  applyShell(mode);
   syncNavigation(currentRole());
   if (
     !initialSetupPresented &&
@@ -173,15 +193,21 @@ const setup = createRendererSetup(window.desktop, () => {
   ) {
     initialSetupPresented = true;
     // Present the authoritative result without invoking open() and retrying a failed read.
-    if (!setupView) setupView = mountSetupView(main, setup, () => render(currentPage));
+    if (!setupView) setupView = mountSetupPage();
     setupView.render();
   }
   // Saving does not start a runtime. Completion only requests it; runtime is authoritative.
   if (setup.state.kind === "prepared" || setup.state.kind === "completed") run.refresh();
   if (setup.state.kind === "configured") run.refresh();
+  // The workspace begins when the launch record proves one. Draw it once, without claiming focus,
+  // so that dismissing the first-run page reveals a real page instead of an empty window.
+  if (mode === "workspace" && setupView === undefined && main.childElementCount === 0) render(currentPage, false);
   // The workers card's auto-start fact comes from the launch record, which can arrive later.
   if (currentPage === "workers") runCard?.update();
   setupView?.render(false);
+  // syncNavigation() above ran before the setup page existed; now that it owns #main, the menu must
+  // stop claiming a page is current.
+  markCurrent();
 });
 taskGate = () => run.state.kind === "ready" && run.state.snapshot.status === "running" &&
   run.state.snapshot.role === "hub-worker" && !setup.busy && setup.state.kind !== "unknown-locked";
@@ -244,8 +270,24 @@ function updateRuntimeStatus() {
   scope.textContent = state.snapshot.role === "worker" ? "仅本机 · 不可调度全局" : "";
 }
 function openSetup() {
-  if (!setupView) setupView = mountSetupView(main, setup, () => render(currentPage));
+  if (!setupView) setupView = mountSetupPage();
   setup.open();
+}
+// The setup page is mounted once and rendered by the controller's own notifications; quitting goes
+// through the app's quit door, which keeps its confirmation and its runtime drain.
+function mountSetupPage() {
+  return mountSetupView(main, setup, leaveSetup, {
+    canDismiss: () => shell === "workspace",
+    exit: () => {
+      window.desktop.window("quit").catch(report);
+    },
+  });
+}
+// The one way out of the setup page. With no workspace yet there is nothing behind it, so it may
+// only be dismissed once the launch record proves one exists; closing it earlier would leave an
+// empty window with no menu and no way back.
+function leaveSetup() {
+  if (shell === "workspace") render(currentPage);
 }
 let theme: ThemeState = {
   preference: "system",
@@ -292,6 +334,9 @@ function render(id: string, focus = true) {
     (setup.launch?.completion === "first-run" && setup.state.kind === "reading-status")
   )
     return;
+  // With no workspace there is no page to draw and no menu to point at it: #main belongs to the
+  // first-run page. Only a workspace shell may replace it with a business page.
+  if (shell !== "workspace") return;
   const role = currentRole();
   const pages = pagesFor(role);
   // A role change can strand the current page outside its own view; fall back to the first page
@@ -391,9 +436,10 @@ document.querySelector("#quit-app")!.addEventListener("click", () => {
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
   window.desktop.getTheme().then(applyTheme).catch(report);
 });
-// Build the role's own navigation first; the first page render follows the same projection.
+// Build the role's own navigation first; no page is drawn until the launch record says whether this
+// machine has a workspace at all. The first frame carries data-shell="checking", so nothing that
+// looks like a finished workspace is ever painted on a machine that has not been set up.
 syncNavigation(currentRole());
-render("today", false);
 setup.bootstrap();
 run.init();
 window.desktop.getTheme().then(applyTheme).catch(report);
