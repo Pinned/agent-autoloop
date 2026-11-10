@@ -432,6 +432,26 @@ test("the tasks page shows the hub's run history through the pure tasks contract
   assert.match(main, /Number\.isSafeInteger\(before\)/);
 });
 
+test("a pure worker's task page never asks for a history it has no credential for", () => {
+  const app = read("../src/renderer/app.ts");
+  const navigation = read("../src/renderer/navigation.ts");
+  const summary = read("../src/renderer/local-summary-view.ts");
+  // The one page both roles share keeps the controller, but the worker branch never reads it.
+  assert.match(app, /id === "tasks" && role === "worker"/);
+  assert.match(app, /mountLocalSummaryView\(/);
+  assert.match(app, /localSummaryView\?\.update\(\)/);
+  assert.match(navigation, /tasksPageMode/);
+  // The summary states the boundary in the contract's words and offers no list controls.
+  assert.match(summary, /DESKTOP_TASKS_MESSAGES\[\"no-hub\"\]/);
+  assert.match(summary, /不等于中台队列/);
+  assert.doesNotMatch(summary, /tasks-search|taskList|innerHTML|insertAdjacentHTML|console\./);
+  // A pure worker's reading is shown once, on its task page; the environment page keeps the rest.
+  assert.match(app, /if \(role !== "worker"\) \{/);
+  // A page drawn before the role was known is rebuilt when the role actually moves it.
+  assert.match(app, /pageFlavor\(/);
+  assert.match(app, /renderedFlavor/);
+});
+
 test("the global new-task dialog is a native dialog driven by the pure task contract", () => {
   const app = read("../src/renderer/app.ts");
   const html = read("../src/renderer/index.html");

@@ -8,6 +8,7 @@ import { createRendererWorkers } from "./workers-controller.ts";
 import { mountWorkersView } from "./workers-view.ts";
 import { createRendererLocalReading } from "./local-reading-controller.ts";
 import { mountLocalReadingView } from "./local-reading-view.ts";
+import { mountLocalSummaryView } from "./local-summary-view.ts";
 import { createRendererTask } from "./task-controller.ts";
 import { mountTaskDialog } from "./task-view.ts";
 import { createRendererRun } from "./run-controller.ts";
@@ -23,6 +24,7 @@ import {
   navLabelFor,
   navigationSignature,
   pagesFor,
+  tasksPageMode,
   type Page as NavigationPage,
   type Role,
 } from "./navigation.ts";
@@ -58,6 +60,14 @@ function markCurrent() {
   }
 }
 let navigationDisabled = false;
+// The tasks and workers pages exist in both roles but do not mean the same thing in them: a page
+// drawn before the runtime reported its role must be rebuilt once that role is known.
+function pageFlavor(role: Role, id: string): string {
+  if (id === "tasks") return tasksPageMode(role);
+  if (id === "workers") return role === "worker" ? "worker" : "owner";
+  return "shared";
+}
+let renderedFlavor: string | null = null;
 function syncNavigation(role: Role) {
   const pages = pagesFor(role);
   const signature = navigationSignature(role);
@@ -82,6 +92,17 @@ function syncNavigation(role: Role) {
       const current = pagesFor(currentRole());
       if (!current.some((page) => page.id === currentPage)) render(current[0].id);
     });
+  // The tasks page keeps its id across a role change but does not keep its meaning: it is a hub
+  // history for an owner and a local summary for a pure worker, and the reading lives on a
+  // different page in each role. Rebuild it once the notification returns, and only if the role
+  // actually moved the page under the user.
+  if (renderedFlavor !== null && pages.some((page) => page.id === currentPage) &&
+      pageFlavor(role, currentPage) !== renderedFlavor)
+    queueMicrotask(() => {
+      const now = currentRole();
+      if (pagesFor(now).some((page) => page.id === currentPage) &&
+          pageFlavor(now, currentPage) !== renderedFlavor) render(currentPage, false);
+    });
 }
 let setupView: ReturnType<typeof mountSetupView> | undefined;
 let initialSetupPresented = false;
@@ -89,6 +110,7 @@ let runCard: ReturnType<typeof mountRunCard> | undefined;
 let todayView: ReturnType<typeof mountTodayView> | undefined;
 let workersView: ReturnType<typeof mountWorkersView> | undefined;
 let localReadingView: ReturnType<typeof mountLocalReadingView> | undefined;
+let localSummaryView: ReturnType<typeof mountLocalSummaryView> | undefined;
 // App-level singletons: page switches never destroy the controllers or their subscriptions.
 const today = createRendererToday(window.desktop, () => {
   if (currentPage === "today") todayView?.update();
@@ -97,8 +119,10 @@ const workers = createRendererWorkers(window.desktop, () => {
   if (currentPage === "workers") workersView?.update();
 });
 // This machine's own runtime reading; pulled from the supervisor, never pushed on every heartbeat.
+// It is drawn in one place per role: on "workers" for an owner, on "tasks" for a pure worker.
 const localReading = createRendererLocalReading(window.desktop, () => {
   if (currentPage === "workers") localReadingView?.update();
+  if (currentPage === "tasks") localSummaryView?.update();
 });
 // The new-task dialog is app-level: one <dialog>, one entry list, one submission at a time.
 let taskGate = () => false;
@@ -122,8 +146,10 @@ const run = createRendererRun(
     // The same transition is when another machine's heartbeat can first be observed.
     if (currentPage === "workers" && run.state.kind === "ready" && run.state.snapshot.status === "running")
       workers.refresh();
-    // Only the runtime's own process owns a reading; every runtime transition re-reads it.
-    if (currentPage === "workers") localReading.refresh();
+    // Only the runtime's own process owns a reading; every runtime transition re-reads it. The
+    // reading is drawn once per role: on "workers" for an owner, on "tasks" for a pure worker.
+    if (currentPage === "workers" && localReadingView) localReading.refresh();
+    if (currentPage === "tasks" && localSummaryView) localReading.refresh();
   },
 );
 const setup = createRendererSetup(window.desktop, () => {
@@ -281,6 +307,8 @@ function render(id: string, focus = true) {
   todayView = undefined;
   workersView = undefined;
   localReadingView = undefined;
+  localSummaryView = undefined;
+  renderedFlavor = pageFlavor(role, id);
   currentPage = id;
   main.setAttribute("aria-labelledby", "page-title");
   const page = pages.find((item) => item.id === id)!;
@@ -315,6 +343,11 @@ function render(id: string, focus = true) {
     main.append(rulesPage.root);
     rulesPage.update();
     rules.refresh();
+  } else if (id === "tasks" && role === "worker") {
+    // A pure worker cannot read the hub's run history: its credential reaches only its own work and
+    // the runtime reports no run id. Show what this machine can actually observe, and say so.
+    localSummaryView = mountLocalSummaryView(main, localReading);
+    localReading.refresh();
   } else if (id === "tasks") {
     // The hub's real run history, read-only; the placeholder days are over.
     main.append(tasksPage.root);
@@ -330,16 +363,20 @@ function render(id: string, focus = true) {
       launch: () => setup.launch,
     });
     // What this machine's own runtime holds, pulled from the supervisor when the page renders.
-    const readingHost = document.createElement("div");
-    main.append(readingHost);
-    localReadingView = mountLocalReadingView(readingHost, localReading);
+    // A pure worker's reading lives on its "本机任务" page instead; this page is environment and
+    // connection only, so the same numbers are never shown twice under one role.
+    if (role !== "worker") {
+      const readingHost = document.createElement("div");
+      main.append(readingHost);
+      localReadingView = mountLocalReadingView(readingHost, localReading);
+    }
     // The hub's own heartbeat and distribution; there is nothing to probe from here.
     const presence = document.createElement("div");
     main.append(presence);
     workersView = mountWorkersView(presence, workers);
     run.init();
     workers.refresh();
-    localReading.refresh();
+    if (localReadingView) localReading.refresh();
   }
   if (focus) main.focus();
 }
