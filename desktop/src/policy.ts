@@ -43,6 +43,8 @@ export const channels = Object.freeze({
   runtimeGet: "desktop:runtime:get",
   runtimeStart: "desktop:runtime:start",
   runtimeStop: "desktop:runtime:stop",
+  /** Copies the one fixed launch command; the sandboxed page has no clipboard of its own. */
+  launchCommandCopy: "desktop:launch:copy-command",
   todayState: "desktop:state:today",
   /** Agent and channel presence the hub already knows; never a remote environment probe. */
   workersGet: "desktop:workers:get",
@@ -83,6 +85,12 @@ export interface DesktopBridge {
   runtimeGet(): Promise<DesktopRuntimeResponse>;
   runtimeStart(): Promise<DesktopRuntimeResponse>;
   runtimeStop(): Promise<DesktopRuntimeResponse>;
+  /**
+   * Copy the one fixed command that starts the CLI hub. The renderer cannot reach the clipboard:
+   * the page is sandboxed with `default-src 'none'` and both permission handlers answer false, so
+   * the text is fixed here and written by the main process.
+   */
+  copyLaunchCommand(): Promise<void>;
   /** Read-only today-page data from the local hub while it runs. */
   todayState(): Promise<DesktopTodayResponse>;
   /** Read-only worker and channel presence from the local hub while it runs. */

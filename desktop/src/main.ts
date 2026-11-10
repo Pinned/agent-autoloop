@@ -4,6 +4,7 @@ import { createTaskDetailIpc } from "./task-detail-ipc.ts";
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -43,6 +44,7 @@ import { createRulesCasIpc } from "./rules-cas-ipc.ts";
 import { createSettingsSource } from "./settings-source.ts";
 import { createSettingsIpc } from "./settings-ipc.ts";
 import { createLaunchControl, createLaunchStatusRead, safelyAbortLifecycle } from "./launch-control.ts";
+import { LAUNCH_COMMAND } from "./launch-command.ts";
 import { createRuntimePresentation } from "./runtime-presentation.ts";
 import type { DesktopLaunchStatus } from "../../host/desktop-launch-contract.ts";
 import { createSetupControl } from "./setup-control.ts";
@@ -626,6 +628,13 @@ if (ownsAppLock)
             break;
         }
       });
+      ipcMain.handle(channels.launchCommandCopy, (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        // The text is not a parameter: the renderer asks for the one command the app names, so a
+        // compromised page can never turn this door into a way to write arbitrary clipboard text.
+        if (args.length !== 0) throw new Error("invalid-request");
+        clipboard.writeText(LAUNCH_COMMAND);
+      });
       async function setupRequest(operation: DesktopSetupOperation, args: unknown[]) {
         let request;
         try {
@@ -857,7 +866,7 @@ if (ownsAppLock)
             result.runtimeEventSeen !== false ||
             result.navigateSeen !== false ||
             result.bridge.join(",") !==
-              "checkBuiltinAgents,completeSetup,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,probeHub,rulesCasGet,rulesCasPut,runtimeGet,runtimeStart,runtimeStop,setTheme,settingsGet,settingsPut,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,taskList,tasksGet,todayState,window,workersGet,workersLocal" ||
+              "checkBuiltinAgents,completeSetup,copyLaunchCommand,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,probeHub,rulesCasGet,rulesCasPut,runtimeGet,runtimeStart,runtimeStop,setTheme,settingsGet,settingsPut,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,taskList,tasksGet,todayState,window,workersGet,workersLocal" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||

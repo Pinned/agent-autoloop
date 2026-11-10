@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { shellMode } from "../src/renderer/shell-mode.ts";
+import { shellMode, attachedHubLost } from "../src/renderer/shell-mode.ts";
 
 test("no launch record yet: reading hides the menu, an unanswered read is not 'unconfigured'", () => {
   assert.equal(shellMode(null, "reading-launch"), "checking");
@@ -37,16 +37,65 @@ test("the document's first frame is 'checking', so no menu is painted before the
 test("the stylesheet hides the menu outside the workspace and gives the first-run page the window", () => {
   const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
   assert.match(css, /:root:not\(\[data-shell="workspace"\]\) \.sidebar\s*\{\s*display:\s*none;/);
-  assert.match(css, /:root\[data-shell="setup"\] main\s*\{/);
+  // The reconnect page is the same "no workspace right now" moment, so it shares the layout rule.
+  assert.match(css, /:root\[data-shell="setup"\] main,\s*\n:root\[data-shell="reconnect"\] main\s*\{/);
   // A disabled menu would still promise pages; hidden is the only honest state before a role exists.
   assert.doesNotMatch(css, /\.sidebar\[aria-disabled/);
   // Vertically centring a column taller than the window pushes its first line above the scroll
   // origin, where scrolling cannot reach it. The page must start at the top and flow down.
-  const setup = css.slice(css.indexOf(':root[data-shell="setup"] main {'));
+  const setup = css.slice(css.indexOf(':root[data-shell="setup"] main,\n:root[data-shell="reconnect"] main {'));
   const rule = setup.slice(0, setup.indexOf("}"));
   assert.doesNotMatch(rule, /justify-content:\s*center/);
   // Wide windows split the page into explanation + work instead of one narrow card in empty space.
   assert.match(rule, /grid-template-columns:/);
+});
+
+test("only an attached hub that had answered and then stopped covers the workspace", () => {
+  const external = (status: "starting" | "running" | "unknown" | "unavailable") =>
+    ({ ownership: "external", status }) as const;
+  // The one disconnect: an external hub we cannot talk to any more.
+  assert.equal(attachedHubLost("workspace", external("unknown")), true);
+  // A first probe still in flight is not a failure; covering the workspace would flash this page
+  // on every launch, and the hub is very likely about to answer.
+  assert.equal(attachedHubLost("workspace", external("starting")), false);
+  assert.equal(attachedHubLost("workspace", external("running")), false);
+  // `unavailable` is this app's own presentation gate (quit, setup busy, document swap), not a hub
+  // that went away. Hiding the workspace on it would blame the terminal for our own state.
+  assert.equal(attachedHubLost("workspace", external("unavailable")), false);
+  // A hub this app started is ours to start again: it never gets this page.
+  for (const status of ["stopped", "starting", "running", "unknown", "unavailable"] as const)
+    assert.equal(attachedHubLost("workspace", { ownership: "owned", status }), false, status);
+  // No answer yet is not a disconnect.
+  assert.equal(attachedHubLost("workspace", null), false);
+  // The first-run page has no workspace to lose, and no hub behind it to reconnect to.
+  for (const mode of ["checking", "setup", "reconnect"] as const)
+    assert.equal(attachedHubLost(mode, external("unknown")), false, mode);
+});
+
+test("a runtime change re-projects the shell but never re-decides it", () => {
+  // The launch record decides "does this machine have a workspace"; the runtime only decides
+  // "is the hub behind it answering". A runtime push that recomputed the first question would
+  // paint the menu on a machine whose launch read has not answered yet.
+  const app = readFileSync(new URL("../src/renderer/app.ts", import.meta.url), "utf8");
+  const run = app.slice(app.indexOf("const run = createRendererRun("));
+  const callback = run.slice(run.indexOf("() => {"), run.indexOf("const setup = createRendererSetup("));
+  assert.match(callback, /syncShell\(\);/);
+  assert.doesNotMatch(callback, /applyShell\(/);
+  assert.doesNotMatch(callback, /shellMode\(/);
+});
+
+test("leaving the setup page re-checks the hub, which may have gone while it was covered", () => {
+  // The setup page deliberately masks the reconnect page. A disconnect during that time pushes no
+  // further runtime event, so removing the mask is the last chance to notice it — and the check
+  // has to happen before the business page is drawn, or the workspace flashes over a hub that is
+  // not there and then gets replaced.
+  const app = readFileSync(new URL("../src/renderer/app.ts", import.meta.url), "utf8");
+  const render = app.slice(app.indexOf("function render(id: string, focus = true) {"));
+  const body = render.slice(0, render.indexOf("\nnewTaskButton"));
+  const leave = body.slice(body.indexOf("if (setupView) {"));
+  const block = leave.slice(0, leave.indexOf("// The cards' DOM dies with the page"));
+  assert.match(block, /setupView = undefined;[\s\S]*?syncShell\(\);/);
+  assert.match(block, /syncShell\(\);[\s\S]*?if \(shell !== "workspace"\) return;/);
 });
 
 test("the app never draws a page before the shell is a workspace", () => {

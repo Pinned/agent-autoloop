@@ -2,6 +2,7 @@
 // before a machine has a configured role there is no page that could show real data, so the menu
 // must not be drawn. Keeping the rule pure and separate from the wiring lets it be tested alone.
 import type { DesktopLaunchStatus } from "../../../host/desktop-launch-contract.ts";
+import type { DesktopRuntimeSnapshot } from "../../../host/desktop-run-contract.ts";
 import type { SetupState } from "./setup-controller.ts";
 
 export type ShellMode =
@@ -9,6 +10,12 @@ export type ShellMode =
   | "checking"
   /** Only the first-run page. The menu is not offered. */
   | "setup"
+  /**
+   * Only the reconnect page. This app is attached to a hub a terminal owns, and that hub stopped
+   * answering: every page behind the menu would be a read of a hub that is not there, so the menu
+   * is not offered either.
+   */
+  | "reconnect"
   /** The workspace shell: menu plus the current page. */
   | "workspace";
 
@@ -33,4 +40,22 @@ export function shellMode(
   if (state === "reading-launch") return "checking";
   if (state === "unknown-locked" || state === "mutation-unresolved") return "setup";
   return "workspace";
+}
+
+/**
+ * Whether the attached hub behind an existing workspace has stopped answering.
+ *
+ * The launch record answers "does this machine have a workspace"; this answers "can the app reach
+ * the hub that workspace lives on". They are different questions, so they stay different functions.
+ *
+ * Only `unknown` counts. An attached hub is `starting` while the first probe is still in flight —
+ * nothing is broken yet, and covering the workspace then would flash the reconnect page on every
+ * launch. `unavailable` is this app's own presentation gate (quit, a busy setup, a document swap),
+ * not a hub that went away. Both stay in the workspace; only a hub we had and lost covers it.
+ */
+export function attachedHubLost(
+  base: ShellMode,
+  runtime: Pick<DesktopRuntimeSnapshot, "ownership" | "status"> | null,
+): boolean {
+  return base === "workspace" && runtime !== null && runtime.ownership === "external" && runtime.status === "unknown";
 }
