@@ -110,7 +110,8 @@ export function parseDesktopConfigBytes(bytes: unknown): "hub-worker" | "worker"
 function exists(file: string, io: DesktopSetupReadIO): boolean {
   return io.lstat(file) !== null;
 }
-function homeIsSafe(home: string, io: DesktopSetupReadIO): boolean {
+/** Every existing ancestor must be a real directory: an aliased home is never the owner's home. */
+export function homeIsSafe(home: string, io: DesktopSetupReadIO): boolean {
   if (!path.isAbsolute(home) || path.resolve(home) !== home) return false;
   let current = home;
   for (;;) {
