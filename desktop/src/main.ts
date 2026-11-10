@@ -56,7 +56,9 @@ import {
   desktopSetupFailure,
   parseDesktopSetupRequest,
   type DesktopSetupOperation,
+  type DesktopSetupResponse,
 } from "../../host/desktop-setup-contract.ts";
+import { isSetupDiskRead, readSetupState } from "./setup-state-read.ts";
 import type * as RuntimeResources from "../scripts/runtime.mjs";
 
 let home: string | undefined;
@@ -229,7 +231,13 @@ if (ownsAppLock)
       const setup = createSetupControl({
         enabled,
         canSetup: () => controller.isIdle() && ["stopped", "unconfigured"].includes(controller.getState().status),
-        run: (request) => setupRunner.run(request),
+        // A status read describes files; it never needs the runtime it describes. Answering it in
+        // process keeps first run from waiting on an install (and keeps a `status` read available
+        // while the runtime resources are still being prepared).
+        run: (request): Promise<DesktopSetupResponse> =>
+          isSetupDiskRead(request.operation)
+            ? Promise.resolve(readSetupState(runtimeHome, request.operation))
+            : setupRunner.run(request),
       });
       // The today page reads the local hub over loopback while it runs; never while it does not.
       const todaySource = createTodaySource({ home: runtimeHome, getState: () => controller.getState() });
