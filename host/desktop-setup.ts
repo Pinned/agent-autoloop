@@ -1,15 +1,5 @@
 // Fixed, one-request private Node driver. This file is copied with the host source tree, not bundled into Electron.
-import {
-  accessSync,
-  closeSync,
-  constants,
-  fstatSync,
-  lstatSync,
-  openSync,
-  readSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { accessSync, constants, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { TextDecoder } from "node:util";
@@ -23,11 +13,12 @@ import {
   readDesktopLaunchStatus,
 } from "./desktop-launch-policy.ts";
 import type { InitOptions, SetupDiscovery } from "./setup.ts";
+import { desktopSetupReadIO, readDesktopSetupStatusFromDisk } from "./desktop-setup-fs.ts";
+import { homeIsSafe as inspectHome } from "./desktop-setup-state.ts";
 import {
   DESKTOP_SETUP_REQUEST_MAX_BYTES,
   DESKTOP_SETUP_RESPONSE_MAX_BYTES,
   desktopSetupFailure,
-  parseDesktopJoinInput,
   parseDesktopSetupRequest,
   parseDesktopSetupResponse,
   type DesktopJoinInput,
@@ -38,7 +29,7 @@ import {
   type DesktopSetupStatus,
 } from "./desktop-setup-contract.ts";
 
-export const DESKTOP_CONFIG_MAX_BYTES = 64 * 1024;
+export { DESKTOP_CONFIG_MAX_BYTES } from "./desktop-setup-state.ts";
 export const DESKTOP_SYSTEM_DIRECTORIES = Object.freeze(
   process.platform === "darwin"
     ? ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
@@ -77,114 +68,23 @@ export function createDesktopDiscovery(directories: readonly string[] = DESKTOP_
   };
 }
 
-function exists(file: string): boolean {
+/** The driver's safety predicate and the reader share one implementation; two copies would drift. */
+const homeIsSafe = (home: string): boolean => {
   try {
-    lstatSync(file);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw error;
-  }
-}
-function homeIsSafe(home: string): boolean {
-  if (!path.isAbsolute(home) || path.resolve(home) !== home) return false;
-  let current = home;
-  for (;;) {
-    try {
-      const stat = lstatSync(current);
-      if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") return false;
-    }
-    const parent = path.dirname(current);
-    if (parent === current) return true;
-    current = parent;
-  }
-}
-
-function object(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-function credential(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= 4096 && !/[\x00-\x1f\x7f-\x9f]/.test(value);
-}
-function identity(value: unknown): boolean {
-  if (!object(value) || typeof value.name !== "string" || !credential(value.key)) return false;
-  return value.name.length <= 128 && /^[a-z][a-z0-9-]*$/.test(value.name);
-}
-function roleOf(value: unknown): "hub-worker" | "worker" {
-  if (!object(value) || !identity(value.worker)) throw new Error("invalid-config");
-  const worker = value.worker as Record<string, unknown>;
-  parseDesktopJoinInput({ url: value.url, worker: worker.name, key: worker.key });
-  if (worker.capacity !== undefined && (!Number.isSafeInteger(worker.capacity) || (worker.capacity as number) < 1))
-    throw new Error("invalid-config");
-  if (
-    worker.unreachable !== undefined &&
-    (!Array.isArray(worker.unreachable) || worker.unreachable.some((id) => typeof id !== "string"))
-  )
-    throw new Error("invalid-config");
-  if (value.source !== undefined && !identity(value.source)) throw new Error("invalid-config");
-  if (value.owner !== undefined && !credential(value.owner)) throw new Error("invalid-config");
-  if (value.channels !== undefined) {
-    if (
-      !object(value.channels) ||
-      Object.values(value.channels).some(
-        (channel) =>
-          !object(channel) ||
-          !credential(channel.key) ||
-          (channel.use !== undefined && typeof channel.use !== "string"),
-      )
-    )
-      throw new Error("invalid-config");
-  }
-  if (value.hub === undefined) {
-    if (value.owner !== undefined) throw new Error("invalid-config");
-    return "worker";
-  }
-  if (
-    !object(value.hub) ||
-    typeof value.hub.listen !== "string" ||
-    !value.hub.listen ||
-    /[\x00-\x1f\x7f-\x9f]/.test(value.hub.listen) ||
-    !identity(value.source) ||
-    !credential(value.owner)
-  )
-    throw new Error("invalid-config");
-  if (value.hub.publicUrl !== undefined)
-    parseDesktopJoinInput({ url: value.hub.publicUrl, worker: worker.name, key: worker.key });
-  return "hub-worker";
-}
-
-/** No mkdir, runtime import, lock acquisition or pending-file contents. The read is bounded even under concurrent growth. */
-export function readDesktopSetupStatus(home: string): DesktopSetupStatus {
-  try {
-    if (!homeIsSafe(home)) return { configuration: "invalid", role: null };
-    if (exists(path.join(home, "setup.lock")) || exists(path.join(home, "setup.pending.json"))) {
-      return { configuration: "incomplete", role: null };
-    }
-    const file = path.join(home, "config.json");
-    if (!exists(file)) return { configuration: "unconfigured", role: null };
-    if (!lstatSync(file).isFile()) return { configuration: "invalid", role: null };
-    const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    try {
-      const stat = fstatSync(fd);
-      if (!stat.isFile() || stat.size > DESKTOP_CONFIG_MAX_BYTES) throw new Error("invalid-config");
-      const buffer = Buffer.alloc(DESKTOP_CONFIG_MAX_BYTES + 1);
-      let length = 0;
-      while (length < buffer.length) {
-        const count = readSync(fd, buffer, length, buffer.length - length, null);
-        if (!count) break;
-        length += count;
-      }
-      if (length > DESKTOP_CONFIG_MAX_BYTES) throw new Error("invalid-config");
-      const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, length)));
-      return { configuration: "configured", role: roleOf(value) };
-    } finally {
-      closeSync(fd);
-    }
+    return inspectHome(home, desktopSetupReadIO);
   } catch {
-    return { configuration: "invalid", role: null };
+    // An unreadable ancestor cannot be proven safe; refusal is the only safe answer.
+    return false;
   }
+};
+
+/**
+ * No mkdir, runtime import, lock acquisition or pending-file contents. The read is bounded even
+ * under concurrent growth. This is the driver's spelling of the same shared filesystem reader the
+ * desktop main process uses, so both doors answer a status read identically.
+ */
+export function readDesktopSetupStatus(home: string): DesktopSetupStatus {
+  return readDesktopSetupStatusFromDisk(home);
 }
 
 /**

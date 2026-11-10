@@ -12,7 +12,7 @@ import {
   linkSync,
 } from "node:fs";
 import path from "node:path";
-import { readDesktopSetupStatus } from "./desktop-setup.ts";
+import { readDesktopSetupStatusFromDisk } from "./desktop-setup-fs.ts";
 import type { DesktopLaunchMode, DesktopLaunchStatus } from "./desktop-launch-contract.ts";
 
 const pendingName = "desktop-launch.pending.json";
@@ -61,7 +61,7 @@ export function readDesktopLaunchStatus(home: string): DesktopLaunchStatus {
     current: null,
   });
   try {
-    const setup = readDesktopSetupStatus(home);
+    const setup = readDesktopSetupStatusFromDisk(home);
     if (setup.configuration === "invalid") return empty("invalid");
     if (setup.configuration === "incomplete") return empty("recovery");
     const pending = path.join(home, pendingName),
@@ -99,7 +99,7 @@ export function prepareDesktopLaunch(home: string, nextLaunch: DesktopLaunchMode
 export function markDesktopLaunchPrepared(home: string, nextLaunch: DesktopLaunchMode): void {
   const pending = path.join(home, pendingName);
   const intent = read(pending);
-  const setup = readDesktopSetupStatus(home);
+  const setup = readDesktopSetupStatusFromDisk(home);
   if (
     intent.phase !== "preparing" ||
     intent.nextLaunch !== nextLaunch ||
