@@ -5,6 +5,7 @@ import type { DesktopWorkerSnapshot } from "../../host/desktop-worker-contract.t
 import {
   DESKTOP_RUNTIME_ERROR_MESSAGES,
   type DesktopRuntimeErrorCode,
+  type DesktopRuntimeOwnership,
   type DesktopRuntimeRole,
 } from "../../host/desktop-run-contract.ts";
 
@@ -12,6 +13,8 @@ export type RuntimeControlState = {
   status: SupervisorStatus | "unconfigured" | "unavailable";
   /** The role of the last supervised run; kept after a safe stop so views can show what was running. */
   role: DesktopRuntimeRole | null;
+  /** What this control owns. Only the embedded runtime is ever stopped from here. */
+  ownership: DesktopRuntimeOwnership;
   pendingSync: number | null;
   error: { code: DesktopRuntimeErrorCode; message: string } | null;
 };
@@ -50,6 +53,7 @@ export function createRuntimeControl(options: {
   let state: RuntimeControlState = {
     status: options.enabled ? "stopped" : "unavailable",
     role: null,
+    ownership: "owned",
     pendingSync: null,
     error: null,
   };
@@ -77,6 +81,7 @@ export function createRuntimeControl(options: {
     update({
       status: next.status,
       role: next.role,
+      ownership: "owned",
       pendingSync: next.pendingSync,
       error: next.error ? serviceError() : null,
     });

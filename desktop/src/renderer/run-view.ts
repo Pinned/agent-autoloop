@@ -163,10 +163,17 @@ export function mountRunCard(
     if (state.admission) admission.textContent = state.admission;
     error.hidden = snapshot.error === null;
     if (snapshot.error) error.textContent = snapshot.error.message;
-    // Reconfiguration is not offered in the app: overwriting a configured machine is refused, so
-    // explain why the button is disabled instead of promising a wizard that will not open.
-    hint.hidden = snapshot.status === "unconfigured";
-    if (!hint.hidden) hint.textContent = "这台电脑已有配置，应用里不提供覆盖或切换角色。";
+    // An attached hub belongs to a terminal this app does not control. Hiding the buttons is the
+    // only honest presentation: a disabled button still promises a capability that does not exist.
+    const external = snapshot.ownership === "external";
+    start.hidden = external;
+    stop.hidden = external;
+    note.hidden = external;
+    hint.hidden = !external && snapshot.status === "unconfigured";
+    hint.textContent = external
+      ? "本机中台由终端中的 agent-autoloop 运行并管理，应用只连接读取，不提供启动或停止。"
+      : "这台电脑已有配置，应用里不提供覆盖或切换角色。";
+    // Reconfiguration is not offered in the app: overwriting a configured machine is refused.
     configure.disabled = busy || snapshot.status !== "unconfigured";
     start.disabled =
       busy ||

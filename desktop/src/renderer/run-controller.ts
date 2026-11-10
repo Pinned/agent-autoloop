@@ -21,6 +21,7 @@ function frozen(snapshot: DesktopRuntimeSnapshot): DesktopRuntimeSnapshot {
     version: 1,
     status: snapshot.status,
     role: snapshot.role,
+    ownership: snapshot.ownership,
     pendingSync: snapshot.pendingSync,
     error: snapshot.error ? Object.freeze({ ...snapshot.error }) : null,
   });
@@ -29,6 +30,7 @@ function sameSnapshot(a: DesktopRuntimeSnapshot, b: DesktopRuntimeSnapshot): boo
   return (
     a.status === b.status &&
     a.role === b.role &&
+    a.ownership === b.ownership &&
     a.pendingSync === b.pendingSync &&
     (a.error === null || b.error === null
       ? a.error === b.error
@@ -177,6 +179,8 @@ export function createRendererRun(bridge: RunBridge, gate: RunGate, onChange: ()
     start(): void {
       if (flight !== null || lock || state.kind !== "ready") return;
       const snapshot = state.snapshot;
+      // An attached hub belongs to a terminal; starting a second one here would create a rival hub.
+      if (snapshot.ownership === "external") return;
       const mirrored = gate();
       if (flight !== null || lock || state.kind !== "ready" || state.snapshot !== snapshot) return;
       if (mirrored.setupLocked || mirrored.setupBusy) return;
@@ -185,6 +189,9 @@ export function createRendererRun(bridge: RunBridge, gate: RunGate, onChange: ()
     },
     stop(): void {
       if (flight !== null || lock || state.kind !== "ready") return;
+      // Stop means "stop what this app started". An external hub is not ours to stop, and the
+      // main process would answer a stop for a child it never spawned with a false "stopped".
+      if (state.snapshot.ownership === "external") return;
       if (state.snapshot.status === "unavailable") return;
       begin("stop");
     },

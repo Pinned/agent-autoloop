@@ -93,6 +93,8 @@ export function createRuntimePresentation(options: {
     const result = desktopRuntimeSnapshotOf({
       status: blocked ? "unavailable" : transition ?? state.status,
       role: blocked || transition ? null : state.role,
+      // Ownership survives every gate: a presentation block does not transfer the process to us.
+      ownership: state.ownership,
       pendingSync: state.pendingSync,
       error: state.error,
     });

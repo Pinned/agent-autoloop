@@ -14,7 +14,13 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 function fixture() {
-  let state = desktopRuntimeSnapshotOf({ status: "stopped", role: "worker", pendingSync: 3, error: null });
+  let state = desktopRuntimeSnapshotOf({
+    status: "stopped",
+    role: "worker",
+    ownership: "owned",
+    pendingSync: 3,
+    error: null,
+  });
   const gates = { phase: "idle" as "idle" | "confirming" | "preparing" | "quitting", busy: false, blocked: false, quitting: false };
   const events: DesktopRuntimeEvent[] = [];
   const diagnostics: string[] = [];

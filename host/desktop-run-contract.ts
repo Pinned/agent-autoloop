@@ -5,10 +5,20 @@ export const DESKTOP_RUNTIME_RESPONSE_MAX_BYTES = 16 * 1024;
 export type DesktopRuntimeStatus =
   "stopped" | "starting" | "running" | "draining" | "failed" | "unknown" | "unconfigured" | "unavailable";
 export type DesktopRuntimeRole = "hub-worker" | "worker";
+/**
+ * Who owns the process behind the status. It is a second fact, not a second status: `status`
+ * answers "can this app talk to the hub", while `ownership` answers "can this app stop it".
+ *
+ * An attached hub is fully usable — every read and write goes through it — but it belongs to a
+ * terminal this app does not control. Offering a stop button there would promise a capability that
+ * does not exist, so the two must stay distinguishable.
+ */
+export type DesktopRuntimeOwnership = "owned" | "external";
 export type DesktopRuntimeSnapshot = {
   version: 1;
   status: DesktopRuntimeStatus;
   role: DesktopRuntimeRole | null;
+  ownership: DesktopRuntimeOwnership;
   pendingSync: number | null;
   error: { code: DesktopRuntimeErrorCode; message: string } | null;
 };
@@ -43,9 +53,18 @@ export const DESKTOP_RUNTIME_STATUS_MESSAGES = Object.freeze({
 
 /** The one place tray, menus, dialogs and the renderer agree on a status line. */
 export function desktopRuntimeStatusText(
-  state: Pick<DesktopRuntimeSnapshot, "status" | "pendingSync">,
+  state: Pick<DesktopRuntimeSnapshot, "status" | "pendingSync" | "ownership">,
   options?: { unavailable?: string },
 ): string {
+  if (state.ownership === "external") {
+    // Every line says the truth for its own status. "正在重连" is claimed only for the retrying
+    // state; a presentation gate means the connection may well be fine but cannot be acted on, and
+    // the caller's `unavailable` wording ("资源尚未就绪") would be a lie about a hub we do not own.
+    if (state.status === "running") return "已接入本机中台（由终端管理）";
+    if (state.status === "starting") return "正在连接本机中台";
+    if (state.status === "unavailable") return "已接入本机中台，当前操作暂不可用";
+    return "外部中台连接中断，正在重连";
+  }
   if (state.status === "stopped" && (state.pendingSync ?? 0) > 0)
     return `本机已停止；${state.pendingSync} 条结果离线持久待同步`;
   if (state.status === "unavailable" && options?.unavailable) return options.unavailable;
@@ -63,6 +82,7 @@ const statuses: readonly string[] = [
   "unavailable",
 ];
 const roles: readonly string[] = ["hub-worker", "worker"];
+const ownerships: readonly string[] = ["owned", "external"];
 const errorCodes: readonly string[] = ["safe-stop", "prepare", "service"];
 const admissionCodes: readonly string[] = ["busy", "unavailable", "unknown"];
 function invalid(): never {
@@ -101,10 +121,20 @@ function parseAdmission(value: unknown): { code: DesktopRuntimeAdmissionCode; me
   return { code, message: item.message };
 }
 function parseSnapshot(value: unknown): DesktopRuntimeSnapshot {
-  const item = record(value, ["version", "status", "role", "pendingSync", "error"]);
+  const item = record(value, ["version", "status", "role", "ownership", "pendingSync", "error"]);
   if (item.version !== DESKTOP_RUNTIME_VERSION) invalid();
   const status = oneOf(item.status, statuses) as DesktopRuntimeStatus;
   const role = item.role === null ? null : (oneOf(item.role, roles) as DesktopRuntimeRole);
+  const ownership = oneOf(item.ownership, ownerships) as DesktopRuntimeOwnership;
+  // An attached hub is only ever a hub: this app never attaches to someone else's plain worker.
+  // Before the first probe answers it has no role yet; a presentation gate blanks the role too,
+  // because the gate means "cannot act right now", not "the hub changed shape".
+  if (ownership === "external") {
+    if (!["starting", "running", "unknown", "unavailable"].includes(status)) invalid();
+    if (role === "worker") invalid();
+    if (status === "starting" && role !== null) invalid();
+    if (status === "running" && role !== "hub-worker") invalid();
+  }
   const pendingSync = item.pendingSync === null ? null : (item.pendingSync as number);
   if (pendingSync !== null && (!Number.isSafeInteger(pendingSync) || pendingSync < 0 || pendingSync > 1_000_000_000))
     invalid();
@@ -112,6 +142,7 @@ function parseSnapshot(value: unknown): DesktopRuntimeSnapshot {
     version: 1,
     status,
     role,
+    ownership,
     pendingSync,
     error: item.error === null ? null : parseError(item.error),
   };
@@ -146,6 +177,7 @@ export function parseDesktopRuntimeEvent(value: unknown): DesktopRuntimeEvent {
 export function desktopRuntimeSnapshotOf(state: {
   status: DesktopRuntimeStatus;
   role: DesktopRuntimeRole | null;
+  ownership: DesktopRuntimeOwnership;
   pendingSync: number | null;
   error: { code: DesktopRuntimeErrorCode; message: string } | null;
 }): DesktopRuntimeSnapshot {

@@ -49,6 +49,7 @@ import { createSetupControl } from "./setup-control.ts";
 import { resolveTerminalEnvironment } from "./login-environment.ts";
 import { createSetupRunner } from "./setup-runner.ts";
 import {
+  desktopRuntimeFailure,
   desktopRuntimeStatusText,
   type DesktopRuntimeResponse,
 } from "../../host/desktop-run-contract.ts";
@@ -347,9 +348,14 @@ if (ownsAppLock)
           buttons: ["知道了"],
           noLink: true,
         });
+      // An attached hub is never started or stopped from here: no child of ours exists to act on, and
+      // answering "stopped" for a process we never spawned would be a false claim. Both entries share
+      // this refusal so the menu, the tray and the renderer cannot diverge.
+      const owned = () => controller.getState().ownership === "owned";
       // The single gated entry both the tray/menu actions and the renderer IPC share.
       // Admission failures answer ok:false; the outcome of a performed run lives in the snapshot's error field.
       async function performStart(): Promise<DesktopRuntimeResponse> {
+        if (!owned()) return desktopRuntimeFailure("unavailable");
         return presentation.run("start", () => setup.runStart(
           () => controller.start(),
           () => controller.getState(),
@@ -366,6 +372,7 @@ if (ownsAppLock)
         start: () => performStart(),
       });
       async function performStop(): Promise<DesktopRuntimeResponse> {
+        if (!owned()) return desktopRuntimeFailure("unavailable");
         return presentation.run("stop", async () => {
           await setup.runStop(() => controller.stop());
           // An unsafe stop remains a historical outcome in the receipt, not a presentation gate.
@@ -390,20 +397,26 @@ if (ownsAppLock)
       }
       function refreshMenus() {
         const state = controller.getState();
-        const operations = (): Electron.MenuItemConstructorOptions[] => [
-          { label: statusLabel(state), enabled: false },
-          ...(state.error ? [{ label: state.error.message, enabled: false }] : []),
-          {
-            label: "启动运行服务",
-            enabled: presentation.canRun("start") && ["stopped", "unconfigured", "failed"].includes(state.status),
-            click: () => void runtimeAction("start"),
-          },
-          {
-            label: "停止本机运行服务",
-            enabled: presentation.canRun("stop") && state.status !== "unavailable",
-            click: () => void runtimeAction("stop"),
-          },
-        ];
+        // An attached hub is managed by a terminal. Offering start or stop in the menu would promise
+        // a capability this app does not have, and the click would silently do nothing.
+        const external = state.ownership === "external";
+        const operations = (): Electron.MenuItemConstructorOptions[] =>
+          external
+            ? [{ label: statusLabel(state), enabled: false }]
+            : [
+                { label: statusLabel(state), enabled: false },
+                ...(state.error ? [{ label: state.error.message, enabled: false }] : []),
+                {
+                  label: "启动运行服务",
+                  enabled: presentation.canRun("start") && ["stopped", "unconfigured", "failed"].includes(state.status),
+                  click: () => void runtimeAction("start"),
+                },
+                {
+                  label: "停止本机运行服务",
+                  enabled: presentation.canRun("stop") && state.status !== "unavailable",
+                  click: () => void runtimeAction("stop"),
+                },
+              ];
         Menu.setApplicationMenu(
           Menu.buildFromTemplate([
             {

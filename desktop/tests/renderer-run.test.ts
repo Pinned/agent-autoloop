@@ -25,7 +25,14 @@ const flush = async () => {
   await Promise.resolve();
 };
 const snap = (overrides: Partial<DesktopRuntimeSnapshot> = {}): DesktopRuntimeSnapshot =>
-  desktopRuntimeSnapshotOf({ status: "stopped", role: null, pendingSync: null, error: null, ...overrides });
+  desktopRuntimeSnapshotOf({
+    status: "stopped",
+    role: null,
+    ownership: "owned",
+    pendingSync: null,
+    error: null,
+    ...overrides,
+  });
 const ok = (state: DesktopRuntimeSnapshot): DesktopRuntimeResponse => ({ version: 1, ok: true, state });
 const fail = (code: DesktopRuntimeAdmissionCode) => ({
   version: 1,
@@ -396,6 +403,75 @@ test("receipt warnings remain visible in loading and locked views and never enab
     assert.equal(nodes(root2).find(node => node.className.includes("run-receipt-stop"))?.hidden, false);
     view.update(); assert.equal(warning.hidden, false);
   } finally { if (previous) Object.defineProperty(globalThis, "document", previous); else Reflect.deleteProperty(globalThis, "document"); }
+});
+
+test("an attached hub hides start and stop instead of disabling them", async () => {
+  const { mountRunCard } = await import("../src/renderer/run-view.ts");
+  class Node {
+    textContent = ""; className = ""; hidden = false; disabled = false; id = ""; type = "";
+    dataset: Record<string, string> = {}; children: Node[] = [];
+    append(...nodes: Node[]) { this.children.push(...nodes); }
+    setAttribute() {} addEventListener() {}
+  }
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", { configurable: true, value: { createElement: () => new Node() } });
+  try {
+    const f = fixture();
+    f.push(pushed(snap({ status: "running", role: "hub-worker", ownership: "external" })));
+    const root = new Node();
+    mountRunCard(root as unknown as HTMLElement, f.controller, () => {}, {
+      setupBusy: () => false,
+      setupLocked: () => false,
+    });
+    const nodes = (node: Node): Node[] => [node, ...node.children.flatMap(nodes)];
+    const all = nodes(root);
+    // A disabled button still promises a capability. There is none here: the terminal owns it.
+    assert.equal(all.find((node) => node.textContent === "启动运行服务")?.hidden, true);
+    assert.equal(all.find((node) => node.textContent === "停止本机运行服务")?.hidden, true);
+    assert.match(
+      all.find((node) => node.className.includes("run-hint"))?.textContent ?? "",
+      /由终端中的 agent-autoloop 运行并管理/,
+    );
+    assert.equal(all.find((node) => node.id === "run-status")?.textContent, "已接入本机中台（由终端管理）");
+  } finally { if (previous) Object.defineProperty(globalThis, "document", previous); else Reflect.deleteProperty(globalThis, "document"); }
+});
+
+test("an owned runtime never hides its own controls", async () => {
+  const { mountRunCard } = await import("../src/renderer/run-view.ts");
+  class Node {
+    textContent = ""; className = ""; hidden = false; disabled = false; id = ""; type = "";
+    dataset: Record<string, string> = {}; children: Node[] = [];
+    append(...nodes: Node[]) { this.children.push(...nodes); }
+    setAttribute() {} addEventListener() {}
+  }
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", { configurable: true, value: { createElement: () => new Node() } });
+  try {
+    const f = fixture();
+    f.push(pushed(snap({ status: "stopped", ownership: "owned" })));
+    const root = new Node();
+    mountRunCard(root as unknown as HTMLElement, f.controller, () => {}, {
+      setupBusy: () => false,
+      setupLocked: () => false,
+    });
+    const nodes = (node: Node): Node[] => [node, ...node.children.flatMap(nodes)];
+    const all = nodes(root);
+    for (const label of ["启动运行服务", "停止本机运行服务"]) {
+      const button = all.find((node) => node.textContent === label);
+      assert.equal(button?.hidden, false, label);
+    }
+  } finally { if (previous) Object.defineProperty(globalThis, "document", previous); else Reflect.deleteProperty(globalThis, "document"); }
+});
+
+test("the renderer refuses to start or stop a hub it does not own", async () => {
+  const f = fixture();
+  f.push(pushed(snap({ status: "running", role: "hub-worker", ownership: "external" })));
+  f.controller.stop();
+  assert.deepEqual(f.calls, []);
+  // Neither can it start a second hub behind the terminal's back, even from a disconnected state.
+  f.push(pushed(snap({ status: "unknown", role: "hub-worker", ownership: "external" })));
+  f.controller.start();
+  assert.deepEqual(f.calls, []);
 });
 
 test("a gated runtime reads as unavailable control, never as missing resources", async () => {
