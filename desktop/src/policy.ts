@@ -43,6 +43,10 @@ export const channels = Object.freeze({
   runtimeGet: "desktop:runtime:get",
   runtimeStart: "desktop:runtime:start",
   runtimeStop: "desktop:runtime:stop",
+  /** Probe the hub this app attached to, now. It never starts anything and never switches mode. */
+  runtimeReconnect: "desktop:runtime:reconnect",
+  /** Move to this app's own hub. Only ever a user choice on the reconnect page. */
+  runtimeUseEmbedded: "desktop:runtime:use-embedded",
   /** Copies the one fixed launch command; the sandboxed page has no clipboard of its own. */
   launchCommandCopy: "desktop:launch:copy-command",
   todayState: "desktop:state:today",
@@ -85,6 +89,10 @@ export interface DesktopBridge {
   runtimeGet(): Promise<DesktopRuntimeResponse>;
   runtimeStart(): Promise<DesktopRuntimeResponse>;
   runtimeStop(): Promise<DesktopRuntimeResponse>;
+  /** Probe the attached hub again. It never starts the terminal's hub and never changes ownership. */
+  runtimeReconnect(): Promise<DesktopRuntimeResponse>;
+  /** Give up on the terminal's hub for this session and start this app's own. One-way. */
+  runtimeUseEmbedded(): Promise<DesktopRuntimeResponse>;
   /**
    * Copy the one fixed command that starts the CLI hub. The renderer cannot reach the clipboard:
    * the page is sandboxed with `default-src 'none'` and both permission handlers answer false, so

@@ -29,7 +29,7 @@ import {
   type Page as NavigationPage,
   type Role,
 } from "./navigation.ts";
-import { attachedHubLost, shellMode, type ShellMode } from "./shell-mode.ts";
+import { projectShell, shellMode, type ShellMode } from "./shell-mode.ts";
 declare global {
   interface Window {
     desktop: DesktopBridge;
@@ -90,15 +90,29 @@ let shellBase: ShellMode = "checking";
  * before the launch read has answered — the menu would appear on a machine that has no workspace.
  */
 function syncShell() {
-  const next: ShellMode =
-    shellBase === "workspace" && setupView === undefined && attachedHubLost(shellBase, runtimeForShell())
-      ? "reconnect"
-      : shellBase;
+  const next = projectShell({
+    base: shellBase,
+    setupOpen: setupView !== undefined,
+    // The first runtime reading is the only pull that can say whether the hub behind an existing
+    // workspace answers. Until it lands the document keeps its own "checking" frame.
+    runtimeSettled: run.state.kind !== "loading",
+    runtime: runtimeForShell(),
+  });
   const wasReconnect = shell === "reconnect";
   shell = next;
   document.documentElement.dataset.shell = next;
   if (next === "reconnect" && reconnectView === undefined) {
-    reconnectView = mountReconnectView(main, { copy: () => window.desktop.copyLaunchCommand(), exit: quitApp });
+    reconnectView = mountReconnectView(main, {
+      copy: () => window.desktop.copyLaunchCommand(),
+      // Looking again is a probe of the endpoint this run already attached to. The hub stays the
+      // terminal's; whether it is back arrives through the ordinary runtime push, which is also
+      // what removes this page.
+      reconnect: () => window.desktop.runtimeReconnect().catch(report),
+      // The only door to this app's own hub: an explicit choice, one-way for this session. Main
+      // closes the attach control and then takes the ordinary start path.
+      useEmbedded: () => window.desktop.runtimeUseEmbedded().catch(report),
+      exit: quitApp,
+    });
   }
   if (next !== "reconnect" && reconnectView !== undefined) {
     reconnectView.dispose();
@@ -199,6 +213,11 @@ const run = createRendererRun(
     // away — not a setup change. Only the decision already taken is re-projected: recomputing it
     // here would let a runtime push promote the shell before the launch record has answered.
     syncShell();
+    // The launch record may already have proven a workspace while the first runtime reading was
+    // still in flight; that reading is what reveals whether the hub behind it is reachable. Draw
+    // the page only now, in the shape the shell just settled on.
+    if (shell === "workspace" && setupView === undefined && main.childElementCount === 0)
+      render(currentPage, false);
     // The runtime's role is the authoritative one; the launch record covers a stopped machine.
     syncNavigation(currentRole());
     if (currentPage === "workers") runCard?.update();
