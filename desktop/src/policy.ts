@@ -34,7 +34,6 @@ export const channels = Object.freeze({
   themeSet: "desktop:theme:set",
   window: "desktop:window",
   launchStatus: "desktop:setup:launch-status",
-  probeHub: "desktop:setup:probe",
   completeSetup: "desktop:setup:complete",
   setupStatus: "desktop:setup:status",
   setupCheck: "desktop:setup:check",
@@ -80,7 +79,6 @@ export interface DesktopBridge {
   setTheme(theme: Theme): Promise<ThemeState>;
   window(action: WindowAction): Promise<void>;
   launchStatus(): Promise<DesktopSetupResponse>;
-  probeHub(): Promise<DesktopSetupResponse>;
   completeSetup(): Promise<DesktopSetupResponse>;
   setupStatus(): Promise<DesktopSetupResponse>;
   checkBuiltinAgents(): Promise<DesktopSetupResponse>;

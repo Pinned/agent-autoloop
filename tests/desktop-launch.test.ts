@@ -10,7 +10,6 @@ import {
   markDesktopLaunchPrepared,
   completeDesktopLaunch,
 } from "../host/desktop-launch-policy.ts";
-import { probeDesktopHubs } from "../host/desktop-hub-probe.ts";
 
 function fixture(t: import("node:test").TestContext) {
   const home = realpathSync(mkdtempSync(path.join(tmpdir(), "desktop-launch-")));
@@ -120,55 +119,17 @@ test("prepared install never overwrites an unknown policy target", (t) => {
   assert.equal(readDesktopLaunchStatus(home).completion, "recovery");
 });
 
-test("probe uses bounded injected loopback requests and cannot treat fake health as trusted external", async () => {
-  const calls: string[] = [];
-  const result = await probeDesktopHubs({
-    candidates: ["http://127.0.0.1:45678"],
-    fetch: async (url, options) => {
-      calls.push(String(url));
-      assert.equal(options?.redirect, "error");
-      assert.equal(options?.headers, undefined);
-      return Response.json({ ok: true, commit: "synthetic" });
-    },
-  });
-  assert.deepEqual(calls, ["http://127.0.0.1:45678/healthz"]);
-  assert.deepEqual(result, {
-    scope: "loopback-only",
-    candidates: [{ url: "http://127.0.0.1:45678", outcome: "credentials-required" }],
-    externalSupported: false,
-  });
-  for (const url of [
-    "http://example.com:45678",
-    "http://localhost:45678",
-    "https://127.0.0.1:45678",
-    "http://127.0.0.1:45678/path",
-  ])
-    await assert.rejects(
-      probeDesktopHubs({
-        candidates: [url],
-        fetch: async () => {
-          throw Error("must not run");
-        },
-      }),
-    );
-});
-test("probe classifies 401, fake health, incompatible, timeout and refuses response extras", async () => {
-  for (const [response, outcome] of [
-    [new Response(null, { status: 401 }), "credentials-required"],
-    [Response.json({ ok: true }), "unrecognized"],
-    [Response.json({ ok: false, commit: "test" }), "incompatible"],
-    [Response.json({ ok: true, commit: "x".repeat(300) }), "unrecognized"],
-  ] as const) {
-    const result = await probeDesktopHubs({ candidates: ["http://127.0.0.1:45678"], fetch: async () => response });
-    assert.equal(result.candidates[0].outcome, outcome);
-  }
-  const result = await probeDesktopHubs({
-    candidates: ["http://127.0.0.1:45678"],
-    timeoutMs: 5,
-    fetch: async () => new Promise(() => {}),
-  });
-  assert.equal(result.candidates[0].outcome, "unavailable");
-  const dto = { version: 1, operation: "probe", ok: true, data: result };
-  assert.deepEqual(parseDesktopLaunchResponse(dto, "probe"), dto);
-  assert.throws(() => parseDesktopLaunchResponse({ ...dto, data: { ...result, key: "leak" } }, "probe"));
+test("launch responses are parsed strictly and never carry extra fields", () => {
+  const status = { version: 1, operation: "launch-status", ok: true, data: { completion: "complete", nextLaunch: "embedded", current: "embedded" } };
+  assert.deepEqual(parseDesktopLaunchResponse(status, "launch-status"), status);
+  assert.throws(() =>
+    parseDesktopLaunchResponse({ ...status, data: { ...status.data, key: "leak" } }, "launch-status"),
+  );
+  // A role must match its launch mode, so a hand-edited policy cannot pass as a valid one.
+  assert.throws(() =>
+    parseDesktopLaunchResponse({ ...status, data: { completion: "complete", nextLaunch: "embedded", current: null } }, "launch-status"),
+  );
+  const complete = { version: 1, operation: "complete", ok: true, data: { nextLaunch: "worker" } };
+  assert.deepEqual(parseDesktopLaunchResponse(complete, "complete"), complete);
+  assert.throws(() => parseDesktopLaunchResponse({ ...complete, data: { nextLaunch: "hub" } }, "complete"));
 });

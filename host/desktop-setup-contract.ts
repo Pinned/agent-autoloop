@@ -1,21 +1,19 @@
 import {
   parseDesktopLaunchData,
   type DesktopLaunchStatus,
-  type DesktopHubProbe,
   type DesktopLaunchMode,
 } from "./desktop-launch-contract.ts";
 // Shared by Electron main and the private driver. No Node or business-runtime imports.
 export const DESKTOP_SETUP_VERSION = 1 as const;
 export const DESKTOP_SETUP_REQUEST_MAX_BYTES = 16 * 1024;
 export const DESKTOP_SETUP_RESPONSE_MAX_BYTES = 64 * 1024;
-export type DesktopSetupOperation = "status" | "check" | "init" | "join" | "launch-status" | "probe" | "complete";
+export type DesktopSetupOperation = "status" | "check" | "init" | "join" | "launch-status" | "complete";
 export type DesktopJoinInput = { url: string; worker: string; key: string };
 export type DesktopSetupRequest =
   | { version: 1; operation: "status" }
   | { version: 1; operation: "check" }
   | { version: 1; operation: "init" }
   | { version: 1; operation: "launch-status" }
-  | { version: 1; operation: "probe" }
   | { version: 1; operation: "complete" }
   | { version: 1; operation: "join"; input: DesktopJoinInput };
 export type DesktopSetupStatus = {
@@ -33,7 +31,6 @@ export type DesktopSetupCheck = {
 };
 export type DesktopSetupData = {
   "launch-status": DesktopLaunchStatus;
-  probe: DesktopHubProbe;
   complete: { nextLaunch: DesktopLaunchMode };
   status: DesktopSetupStatus;
   check: DesktopSetupCheck;
@@ -58,7 +55,7 @@ export type DesktopSetupResponse = {
 }[DesktopSetupOperation];
 
 const CONTROL = /[\x00-\x1f\x7f-\x9f]/;
-const operations: readonly string[] = ["status", "check", "init", "join", "launch-status", "probe", "complete"];
+const operations: readonly string[] = ["status", "check", "init", "join", "launch-status", "complete"];
 function invalid(): never {
   throw new Error("invalid-request");
 }
@@ -158,11 +155,7 @@ export function parseDesktopSetupResponse(
       const code = oneOf(error.code, Object.keys(DESKTOP_SETUP_ERROR_MESSAGES)) as DesktopSetupErrorCode;
       if (error.message !== DESKTOP_SETUP_ERROR_MESSAGES[code]) invalid();
       result = desktopSetupFailure(expectedOperation, code);
-    } else if (
-      expectedOperation === "launch-status" ||
-      expectedOperation === "probe" ||
-      expectedOperation === "complete"
-    ) {
+    } else if (expectedOperation === "launch-status" || expectedOperation === "complete") {
       result = {
         version: 1,
         operation: expectedOperation,

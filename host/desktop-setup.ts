@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { TextDecoder } from "node:util";
 import claude from "../plugins/claude/agent.ts";
 import codex from "../plugins/codex/agent.ts";
-import { allocateDesktopHubPort, probeDesktopHubs } from "./desktop-hub-probe.ts";
+import { allocateDesktopHubPort } from "./desktop-hub-port.ts";
 import {
   completeDesktopLaunch,
   markDesktopLaunchPrepared,
@@ -124,7 +124,6 @@ export type DesktopSetupDependencies = {
   discovery: SetupDiscovery;
   acquireLock(): { release(): void } | Promise<{ release(): void }>;
   init(options: InitOptions, discovery: SetupDiscovery): Promise<unknown>;
-  probe?: typeof probeDesktopHubs;
   allocatePort?(): Promise<string>;
   join(input: DesktopJoinInput): unknown | Promise<unknown>;
 };
@@ -137,7 +136,7 @@ export function createDesktopSetupDriver(dependencies: DesktopSetupDependencies)
     try {
       const candidate =
         value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, "operation")?.value : undefined;
-      if (["status", "check", "init", "join", "launch-status", "probe", "complete"].includes(candidate))
+      if (["status", "check", "init", "join", "launch-status", "complete"].includes(candidate))
         operation = candidate;
       request = parseDesktopSetupRequest(value);
     } catch {
@@ -145,18 +144,6 @@ export function createDesktopSetupDriver(dependencies: DesktopSetupDependencies)
     }
     if (request.operation === "launch-status")
       return { version: 1, operation: "launch-status", ok: true, data: readDesktopLaunchStatus(dependencies.home) };
-    if (request.operation === "probe") {
-      if (readDesktopLaunchStatus(dependencies.home).completion !== "first-run")
-        return desktopSetupFailure("probe", "already-configured");
-      try {
-        return parseDesktopSetupResponse(
-          { version: 1, operation: "probe", ok: true, data: await (dependencies.probe ?? probeDesktopHubs)() },
-          "probe",
-        );
-      } catch {
-        return desktopSetupFailure("probe", "operation-failed");
-      }
-    }
     if (request.operation === "status") {
       return { version: 1, operation: "status", ok: true, data: readDesktopSetupStatus(dependencies.home) };
     }
@@ -286,7 +273,7 @@ async function main() {
     const value = await readDesktopSetupRequest(process.stdin);
     const candidate =
       value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, "operation")?.value : undefined;
-    if (["status", "check", "init", "join", "launch-status", "probe", "complete"].includes(candidate))
+    if (["status", "check", "init", "join", "launch-status", "complete"].includes(candidate))
       response = desktopSetupFailure(candidate, "invalid-request");
     const request = parseDesktopSetupRequest(value);
     response = desktopSetupFailure(request.operation, "operation-failed");
@@ -300,11 +287,6 @@ async function main() {
           process.env.DESKTOP_SETUP_DISCOVERY === "none"
             ? createDesktopDiscovery([])
             : createDesktopDiscovery(desktopSearchDirectories(process.env.PATH)),
-        probe: () => {
-          const port = desktopSetupPort();
-          if (port === null) throw new Error("invalid-port");
-          return probeDesktopHubs(port === "auto" ? {} : { candidates: [`http://127.0.0.1:${port}`] });
-        },
         acquireLock: async () => (await import("./runlock.ts")).acquireRunLock(),
         init: async (options, discovery) => (await import("./setup.ts")).initSetup(options, discovery),
         join: async (input) => (await import("./setup.ts")).joinSetup(input),

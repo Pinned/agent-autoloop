@@ -102,7 +102,6 @@ function fixture(step: 1 | 2 | 3 = 2) {
     } as SetupState,
     busy: false,
     submitting: false,
-    probeResult: null,
     chooseRole() {},
     next() {},
     back() {},
@@ -110,7 +109,6 @@ function fixture(step: 1 | 2 | 3 = 2) {
     skipCheck() {},
     open() {},
     recheck() {},
-    probe() {},
     complete() {
       return true;
     },
@@ -143,7 +141,6 @@ async function realFixture() {
     },
     initHub: async () => desktopSetupFailure("init", "operation-failed"),
     launchStatus: async () => desktopSetupFailure("launch-status", "operation-failed"),
-    probeHub: async () => desktopSetupFailure("probe", "operation-failed"),
     completeSetup: async () => desktopSetupFailure("complete", "operation-failed"),
   };
   let view: ReturnType<typeof mountSetupView>;
@@ -223,9 +220,6 @@ test("real app setup callback presents failed launch reads with explicit retry a
       },
       checkBuiltinAgents: async () => {
         throw new Error("unexpected installation check");
-      },
-      probeHub: async () => {
-        throw new Error("unexpected probe");
       },
       initHub: async () => {
         throw new Error("unexpected init");

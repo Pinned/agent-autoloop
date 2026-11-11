@@ -6,7 +6,6 @@ const bridge = Object.freeze<DesktopBridge>({
   setTheme: (theme) => ipcRenderer.invoke("desktop:theme:set", theme),
   window: (action) => ipcRenderer.invoke("desktop:window", action),
   launchStatus: () => ipcRenderer.invoke("desktop:setup:launch-status"),
-  probeHub: () => ipcRenderer.invoke("desktop:setup:probe"),
   completeSetup: () => ipcRenderer.invoke("desktop:setup:complete"),
   setupStatus: () => ipcRenderer.invoke("desktop:setup:status"),
   checkBuiltinAgents: () => ipcRenderer.invoke("desktop:setup:check"),
