@@ -63,10 +63,11 @@ const all = (node: Element): Element[] => [node, ...node.children.flatMap(all)];
 const byClass = (root: Element, name: string) => all(root).filter((x) => x.className === name);
 
 function fixture() {
-  const calls: RunListInput[] = [];
+  const calls: { operation: "list"; input: RunListInput }[] = [];
   const bridge = {
-    taskList: async (input: RunListInput = {}) => {
-      calls.push(input);
+    taskList: async (request: { operation: "list"; input: RunListInput }) => {
+      // The envelope, not the bare input, is what main parses; record it whole.
+      calls.push(request);
       return pageOf([run(2), run(1)]) as never;
     },
   };
@@ -82,7 +83,7 @@ test("search and status are sent to the hub, and the bar says what the query act
     const view = mountTasksView(controller);
     view.init();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    assert.deepEqual(f.calls, [{}]);
+    assert.deepEqual(f.calls, [{ operation: "list", input: {} }]);
     const root = view.root as unknown as Element;
     const search = byClass(root, "tasks-search")[0];
     const stateFilter = byClass(root, "tasks-state-filter")[0];
@@ -98,11 +99,11 @@ test("search and status are sent to the hub, and the bar says what the query act
     search.value = "  发布 失败 ";
     search.fire("input");
     await new Promise((resolve) => setTimeout(resolve, 400));
-    assert.deepEqual(f.calls.at(-1), { q: "发布 失败" });
+    assert.deepEqual(f.calls.at(-1), { operation: "list", input: { q: "发布 失败" } });
     // A status pick is immediate and travels beside the keyword.
     stateFilter.value = "failed";
     stateFilter.fire("change");
-    assert.deepEqual(f.calls.at(-1), { q: "发布 失败", state: "failed" });
+    assert.deepEqual(f.calls.at(-1), { operation: "list", input: { q: "发布 失败", state: "failed" } });
     await new Promise((resolve) => setTimeout(resolve, 0));
     // The count line is honest about what the narrowed query returned.
     assert.match(root.textContent, /已按当前条件显示 2 条/);
@@ -110,7 +111,7 @@ test("search and status are sent to the hub, and the bar says what the query act
     search.value = "";
     stateFilter.value = "";
     stateFilter.fire("change");
-    assert.deepEqual(f.calls.at(-1), {});
+    assert.deepEqual(f.calls.at(-1), { operation: "list", input: {} });
   } finally {
     if (previous) Object.defineProperty(globalThis, "document", previous);
     else Reflect.deleteProperty(globalThis, "document");
@@ -121,11 +122,11 @@ test("an empty narrowed answer is not reported as an empty machine", async () =>
   const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
   Object.defineProperty(globalThis, "document", { configurable: true, value: { createElement: () => new Element() } });
   try {
-    const calls: RunListInput[] = [];
+    const calls: { operation: "list"; input: RunListInput }[] = [];
     const bridge = {
-      taskList: async (input: RunListInput = {}) => {
-        calls.push(input);
-        return pageOf(input.q || input.state ? [] : [run(1)]) as never;
+      taskList: async (request: { operation: "list"; input: RunListInput }) => {
+        calls.push(request);
+        return pageOf(request.input.q || request.input.state ? [] : [run(1)]) as never;
       },
     };
     const controller = createRendererTasks(bridge, () => view.update());
@@ -139,7 +140,7 @@ test("an empty narrowed answer is not reported as an empty machine", async () =>
     search.value = "不存在的";
     search.fire("input");
     await new Promise((resolve) => setTimeout(resolve, 400));
-    assert.deepEqual(calls.at(-1), { q: "不存在的" });
+    assert.deepEqual(calls.at(-1), { operation: "list", input: { q: "不存在的" } });
     assert.equal(status.hidden, false);
     assert.match(status.textContent, /没有符合条件的执行记录/);
     assert.doesNotMatch(status.textContent, /还没有执行记录/);
