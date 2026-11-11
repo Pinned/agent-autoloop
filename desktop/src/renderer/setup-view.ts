@@ -1,5 +1,6 @@
 import type { createRendererSetup } from "./setup-controller.ts";
-import { parseDesktopJoinInput } from "../../../host/desktop-setup-contract.ts";
+import type { SetupLink } from "./setup-controller.ts";
+import { DESKTOP_SETUP_ERROR_MESSAGES, parseDesktopJoinInput } from "../../../host/desktop-setup-contract.ts";
 
 type Controller = ReturnType<typeof createRendererSetup>;
 const roles = { "hub-worker": "中台＋执行机", worker: "纯执行机" };
@@ -9,6 +10,58 @@ function element<K extends keyof HTMLElementTagNameMap>(tag: K, text = "", class
   node.textContent = text;
   node.className = className;
   return node;
+}
+
+/** The role is written down once the machine is no longer merely being shown a form. */
+function settled(link: SetupLink | null): boolean {
+  return link !== null && (link.kind === "embedding" || link.kind === "embedded" || link.kind === "joined");
+}
+
+/** What the door's own refusal means for the user's next action. */
+function doorCopy(reason: string): string {
+  switch (reason) {
+    case "credential-rejected":
+      return "中台不接受这份 owner 凭证。请在中台重新生成后重试。";
+    case "redirect":
+      return "中台地址发生了跳转。请确认地址指向本机中台后重试。";
+    case "timeout":
+      return "连接中台超时。";
+    case "config-changed":
+      return "本机连接配置在读取时发生了变化。请重新读取。";
+    case "invalid-response":
+      return "中台返回了无法识别的响应，可能不是本应用支持的中台版本。";
+    default:
+      return "中台没有响应。请先在终端启动中台服务，然后重试。";
+  }
+}
+
+/** The one line that tells the user where step 2 stands. */
+function linkCopy(link: SetupLink | null, role: "hub-worker" | "worker"): string {
+  if (link === null) return role === "worker" ? "填写中台地址、本机名称与加入密钥，然后连接。" : "";
+  switch (link.kind) {
+    case "probing":
+      return "正在读取本机配置并连接中台，请等待。";
+    case "attached":
+      return `已连接到本机中台 127.0.0.1:${link.port}。点击完成进入主页面。`;
+    case "failed": {
+      const problem = link.problem;
+      if (problem.kind === "door")
+        return `未连接到中台 127.0.0.1:${problem.port}。${doorCopy(problem.reason)}`;
+      return DESKTOP_SETUP_ERROR_MESSAGES[problem.code];
+    }
+    case "embedding":
+      // Why the CLI config did not point at a hub decides what this sentence may claim: absent
+      // means there is none to find, worker and invalid mean one exists but is not a hub address.
+      return link.reason === "absent"
+        ? "未找到终端中台，正在配置并启动本机中台，请等待。"
+        : "终端配置没有指向可用中台（纯执行机或配置无法读取），本应用将使用自己的中台；正在配置并启动，请等待。";
+    case "embedded":
+      return link.reason === "absent"
+        ? "本机中台已配置完成。点击完成进入主页面。"
+        : "已为本机配置专属中台。点击完成进入主页面。";
+    case "joined":
+      return "已连接到中台，配置已保存。点击完成进入主页面。";
+  }
 }
 
 type Options = {
@@ -91,7 +144,7 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
     copy.append(
       element("div", "桌面应用 / 本机配置", "eyebrow"),
       title,
-      element("p", "先选择此电脑的角色并连接中台，再明确完成首次配置并请求启动。保存不会启动运行服务。"),
+      element("p", "选择此电脑的角色并建立连接，完成后进入主页面。"),
     );
     header.append(copy);
     root.append(header);
@@ -118,6 +171,9 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
     if (state.kind === "wizard" || state.kind === "submitting") {
       const wizard = state.kind === "wizard" ? state : state.wizard;
       const busy = control.busy;
+      const link = wizard.link;
+      const locked = settled(link);
+      const joined = wizard.role === "worker" && link?.kind === "joined";
       panel.setAttribute("aria-busy", String(busy));
       const steps = element("ol", "", "setup-steps");
       ["选择角色", "连接"].forEach((text, index) => {
@@ -150,13 +206,32 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
       } else {
         form.append(element("h2", roles[wizard.role]));
         if (wizard.role === "hub-worker") {
+          // Step 2 is not a form: entering it already asked whether this machine's hub answers.
+          const entry = element("p", linkCopy(link, wizard.role), "setup-link");
+          entry.setAttribute("role", "status");
+          entry.setAttribute("aria-live", "polite");
+          form.append(entry);
+          if (link?.kind === "failed") {
+            form.append(
+              element(
+                "p",
+                "也可以改用本机中台：清空本机 CLI 的中台配置后点「重试」，应用会自行配置并启动内置中台。",
+                "muted",
+              ),
+            );
+          }
+          if (link?.kind === "embedded" || link?.kind === "embedding")
+            form.append(
+              element(
+                "p",
+                "原任务与记录保留在原中台，不会自动迁移。内置中台只在启动后可用，完成时会一并请求启动。",
+                "muted",
+              ),
+            );
+        } else if (joined) {
+          form.append(element("p", linkCopy(link, wizard.role), "setup-link"));
           form.append(
-            element(
-              "p",
-              "应用启动时会读取本机 CLI 的连接配置（回环地址与本机认证所需的 owner）；owner 只在每次请求时从该配置读取，不存入应用状态、页面或日志。该配置指向中台时，应用直接接入，不会另起一个；连不上则显示重连页。",
-              "muted",
-            ),
-            element("p", "本机 CLI 未配置中台、配置为纯执行机或未安装时，应用使用自己的内置中台；原任务与记录保留在原中台，不会自动迁移。", "muted"),
+            element("p", "角色已锁定为本机配置，不能再返回上一步。完成会请求启动运行服务。", "muted"),
           );
         } else {
           field(
@@ -178,10 +253,9 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
             "setup-key",
             "执行机加入密钥",
             "",
-            "使用独立执行机凭证，不要填写中台管理凭证。提交后先验证能否操作中台，再保存配置。",
+            "使用独立执行机凭证，不要填写中台管理凭证。连接成功才会保存配置。",
             true,
           );
-          form.append(element("p", "连接成功才会保存。连接失败时本机不留任何配置，可修改后重试。", "muted"));
         }
       }
       if (wizard.error) {
@@ -191,8 +265,12 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
         form.append(error);
       }
       status.textContent =
-        state.kind === "submitting" ? "正在连接并保存本机配置，请等待。隐藏窗口不会取消操作。" : "";
-      if (wizard.step > 1)
+        state.kind === "submitting"
+          ? wizard.role === "worker"
+            ? "正在验证连接并保存本机配置，请等待。隐藏窗口不会取消操作。"
+            : "正在配置本机中台，请等待。隐藏窗口不会取消操作。"
+          : "";
+      if (wizard.step > 1 && !joined)
         actions.append(
           button(
             "上一步",
@@ -200,15 +278,30 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
               clearKey();
               control.back();
             },
-            busy,
+            busy || locked,
           ),
         );
-      const label = wizard.step === 1 ? "下一步" : wizard.role === "worker" ? "连接并保存" : "保存本机配置";
-      const submit = element("button", label);
-      submit.type = "submit";
-      submit.disabled = busy;
-      submit.className = "setup-primary";
-      actions.append(submit, button(canDismiss() ? "暂不配置" : "退出应用…", leave, control.submitting));
+      if (wizard.step === 1) {
+        const next = element("button", "下一步");
+        next.type = "submit";
+        next.disabled = busy;
+        next.className = "setup-primary";
+        actions.append(next, button(canDismiss() ? "暂不配置" : "退出应用…", leave, control.submitting));
+      } else if (wizard.role === "hub-worker") {
+        const connected = link?.kind === "attached" || link?.kind === "embedded";
+        const done = element("button", "完成");
+        done.type = "submit";
+        done.disabled = busy || !connected;
+        done.className = "setup-primary";
+        if (link?.kind === "failed") actions.append(button("重试", () => control.retry(), busy));
+        actions.append(done, button(canDismiss() ? "暂不配置" : "退出应用…", leave, control.submitting));
+      } else {
+        const done = element("button", joined ? "完成" : "连接");
+        done.type = "submit";
+        done.disabled = busy;
+        done.className = "setup-primary";
+        actions.append(done, button(canDismiss() ? "暂不配置" : "退出应用…", leave, control.submitting));
+      }
       form.append(actions);
       form.addEventListener("submit", (event) => {
         event.preventDefault();
@@ -217,7 +310,7 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
           control.next();
           return;
         }
-        if (wizard.role === "hub-worker") {
+        if (wizard.role === "hub-worker" || joined) {
           control.submit();
           return;
         }
@@ -240,32 +333,22 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
       if (state.kind === "prepared" || state.kind === "completing" || state.kind === "completed") {
         panel.append(element("h2", state.mode === "embedded" ? roles["hub-worker"] : roles.worker));
         if (state.kind === "prepared") {
-          status.textContent = "本机配置已保存，运行服务尚未因保存而启动。";
+          // Only reached when an earlier first run wrote the configuration but not the policy.
+          status.textContent = "上次首次配置未完成：本机配置已保存，启动策略尚未写入。";
           panel.append(
             element(
               "p",
-              "明确完成首次配置后，将请求启动；以后打开应用会按已保存策略启动。安装与登录情况不因完成配置而改变。",
+              "点击完成后会写入自动启动策略并请求启动，随后进入主页面。安装与登录情况不因完成配置而改变。",
               "muted",
             ),
           );
-          actions.append(button("完成首次配置并请求启动", () => control.complete(), control.busy));
+          actions.append(button("完成并进入主页面", () => control.complete(), control.busy));
         } else if (state.kind === "completing") {
           status.textContent = "正在完成首次配置并请求启动，请等待。不要重复初始化或强制退出。";
           panel.setAttribute("aria-busy", "true");
         } else {
-          status.textContent = "首次配置已完成，已请求启动。实际是否运行请查看执行机页。";
-          panel.append(
-            element("p", "如果启动失败，可在执行机页重试启动；不要重新初始化。执行程序登录仍未验证。", "muted"),
-          );
+          status.textContent = "首次配置已完成，已请求启动，正在进入主页面。";
         }
-        if (state.mode === "embedded")
-          panel.append(
-            element(
-              "p",
-              "中台从哪来每次启动都重新判断：本机 CLI 配置了中台时，应用只接入它，连不上就显示重连页；CLI 未配置中台、配置为纯执行机或未安装时，才启动这里的这个内置中台。原任务与记录保留在原中台，不会自动迁移。",
-              "muted",
-            ),
-          );
       } else if (state.kind === "configured") {
         status.textContent = "这台电脑已有配置，本轮不提供覆盖或切换角色。";
         panel.append(

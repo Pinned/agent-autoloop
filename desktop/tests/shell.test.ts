@@ -19,7 +19,10 @@ test("product shell has no development banners and keeps real runtime navigation
   assert.doesNotMatch(setup, /开发版|尚未交付|任务页面仍待接入/);
   assert.doesNotMatch(runtime, /尚未提供|隔离运行目录/);
   assert.match(setup, /page-head-copy/);
-  assert.match(setup, /保存不会启动运行服务/);
+  // First run is two steps that both end in a live connection; the page says so rather than
+  // describing the old save-then-separately-complete flow, and it no longer checks installations.
+  assert.match(setup, /选择此电脑的角色并建立连接，完成后进入主页面/);
+  assert.doesNotMatch(setup, /安装检查|保存不会启动运行服务/);
   assert.match(html, /id="runtime-status"/);
   assert.match(html, /id="view-connection"/);
   assert.match(html, /id="quit-app"/);

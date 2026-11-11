@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mountSetupView } from "../src/renderer/setup-view.ts";
-import { createRendererSetup, type SetupBridge, type SetupState } from "../src/renderer/setup-controller.ts";
+import { createRendererSetup, type SetupBridge, type SetupLink, type SetupState } from "../src/renderer/setup-controller.ts";
 import { desktopSetupFailure, type DesktopJoinInput } from "../../host/desktop-setup-contract.ts";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
@@ -96,13 +96,18 @@ function fixture(step: 1 | 2 = 2) {
       step,
       role: "worker",
       draft: { url: "", worker: "" },
+      link: null,
       error: null,
     } as SetupState,
     busy: false,
     submitting: false,
+    launch: null,
     chooseRole() {},
     next() {},
     back() {},
+    retry() {
+      return true;
+    },
     draft() {
       return true;
     },
@@ -280,18 +285,118 @@ test("real app setup callback presents failed launch reads with explicit retry a
   }
 });
 
-test("setup uses Chinese execution-machine role terminology and states that saving requires a connection", () =>
+test("step 1 offers the two roles; a worker's step 2 is three fields that save only after connecting", () =>
   withDocument(() => {
     const f = fixture(1);
     f.view.render();
     assert.match(f.root.textContent, /中台＋执行机/);
-    assert.match(f.root.textContent, /执行机/);
+    assert.match(f.root.textContent, /在本机管理工作，也由本机执行/);
+    assert.match(f.root.textContent, /保存已有中台的连接配置，由这台电脑执行/);
     assert.doesNotMatch(f.root.textContent, /worker|AUTOLOOP/);
-    f.control.state = { ...f.control.state, step: 2 } as SetupState;
+    f.control.state = {
+      kind: "wizard",
+      step: 2,
+      role: "worker",
+      draft: { url: "", worker: "" },
+      link: null,
+      error: null,
+    } as SetupState;
     f.view.render();
-    assert.match(f.root.textContent, /连接成功才会保存/);
-    assert.match(f.root.textContent, /保存不会启动/);
+    assert.ok(input(f.root, "setup-url"));
+    assert.ok(input(f.root, "setup-worker"));
+    assert.ok(input(f.root, "setup-key"));
+    assert.match(f.root.textContent, /连接成功才会保存配置/);
     assert.doesNotMatch(f.root.textContent, /安装检查/);
+    const primary = all(f.root).find((node) => node.tagName === "button" && node.textContent === "连接");
+    assert.ok(primary);
+    assert.equal(
+      all(f.root).some((node) => node.tagName === "button" && node.textContent === "完成"),
+      false,
+      "a worker cannot complete before the join is accepted",
+    );
+  }));
+
+test("a hub-worker's step 2 is a loading entry that gates 完成 on the probe", () =>
+  withDocument(() => {
+    for (const [link, copy, doneEnabled] of [
+      [{ kind: "probing" }, /正在读取本机配置并连接中台/, false],
+      [{ kind: "attached", port: 47800 }, /已连接到本机中台 127\.0\.0\.1:47800/, true],
+      [
+        { kind: "failed", problem: { kind: "door", port: 47800, reason: "unreachable" } },
+        /中台没有响应.*启动中台服务/,
+        false,
+      ],
+      [{ kind: "embedding", reason: "absent" }, /正在配置并启动本机中台/, false],
+      [{ kind: "embedded", reason: "absent" }, /本机中台已配置完成/, true],
+    ] as const) {
+      const f = fixture(1);
+      f.control.state = {
+        kind: "wizard",
+        step: 2,
+        role: "hub-worker",
+        draft: { url: "", worker: "" },
+        link,
+        error: null,
+      } as SetupState;
+      f.view.render();
+      assert.match(f.root.textContent, copy);
+      // The loading entry replaces the form: nothing to type, nothing to connect by hand.
+      assert.equal(all(f.root).some((node) => node.id === "setup-url"), false);
+      const done = all(f.root).find((node) => node.tagName === "button" && node.textContent === "完成");
+      assert.ok(done);
+      assert.equal(done.disabled, !doneEnabled);
+      const retry = all(f.root).some((node) => node.tagName === "button" && node.textContent === "重试");
+      assert.equal(retry, link.kind === "failed");
+      // A failed probe keeps 上一步 available; a write in progress or landed locks it.
+      const back = all(f.root).find((node) => node.tagName === "button" && node.textContent === "上一步");
+      assert.ok(back);
+      assert.equal(back.disabled, link.kind === "embedding" || link.kind === "embedded");
+    }
+  }));
+
+test("a joined worker offers 完成 instead of the form and states the role is locked", () =>
+  withDocument(() => {
+    const f = fixture(1);
+    f.control.state = {
+      kind: "wizard",
+      step: 2,
+      role: "worker",
+      draft: { url: "", worker: "" },
+      link: { kind: "joined" },
+      error: null,
+    } as SetupState;
+    f.view.render();
+    assert.equal(all(f.root).some((node) => node.id === "setup-key"), false);
+    assert.match(f.root.textContent, /已连接到中台，配置已保存/);
+    assert.match(f.root.textContent, /角色已锁定/);
+    assert.equal(all(f.root).some((node) => node.tagName === "button" && node.textContent === "上一步"), false);
+    assert.ok(all(f.root).find((node) => node.tagName === "button" && node.textContent === "完成"));
+  }));
+
+test("the embedded-hub entry names the actual reason the CLI config did not point at a hub", () =>
+  withDocument(() => {
+    const f = fixture(1);
+    const render = (link: SetupLink) => {
+      f.control.state = {
+        kind: "wizard",
+        step: 2,
+        role: "hub-worker",
+        draft: { url: "", worker: "" },
+        link,
+        error: null,
+      } as SetupState;
+      f.view.render();
+    };
+    // "absent" is the only reason that may be reported as "there is no hub to find".
+    render({ kind: "embedding", reason: "absent" });
+    assert.match(f.root.textContent, /未找到终端中台/);
+    for (const reason of ["worker", "invalid"] as const) {
+      render({ kind: "embedding", reason });
+      assert.doesNotMatch(f.root.textContent, /未找到终端中台/, reason);
+      assert.match(f.root.textContent, /终端配置没有指向可用中台/);
+    }
+    render({ kind: "embedded", reason: "worker" });
+    assert.match(f.root.textContent, /已为本机配置专属中台/);
   }));
 
 test("ordinary setup redraw preserves unsent non-secret fields without retaining them in controller state", () =>
@@ -306,7 +411,7 @@ test("ordinary setup redraw preserves unsent non-secret fields without retaining
     assert.equal(JSON.stringify(f.control.state).includes("example.test"), false);
   }));
 
-test("saved configuration and explicit first completion have separate truthful view actions", () =>
+test("an interrupted first run only asks for the missing policy; a completed one reports the request truthfully", () =>
   withDocument(() => {
     const f = fixture();
     f.control.state = { kind: "prepared", mode: "embedded" };
@@ -316,18 +421,19 @@ test("saved configuration and explicit first completion have separate truthful v
       return true;
     };
     f.view.render();
-    assert.match(f.root.textContent, /配置已保存.*尚未.*启动/);
-    assert.match(f.root.textContent, /原任务与记录.*不会自动迁移/);
+    // This page is crash recovery, not a normal step: the config already exists, only the policy
+    // and the start request are missing.
+    assert.match(f.root.textContent, /上次首次配置未完成.*启动策略尚未写入/);
     assert.equal(completions, 0);
     const complete = all(f.root).find(
-      (node) => node.tagName === "button" && node.textContent === "完成首次配置并请求启动",
+      (node) => node.tagName === "button" && node.textContent === "完成并进入主页面",
     );
     assert.ok(complete);
     complete.fire("click");
     assert.equal(completions, 1);
     f.control.state = { kind: "completed", mode: "worker" };
     f.view.render();
-    assert.match(f.root.textContent, /已请求启动.*实际是否运行/);
+    assert.match(f.root.textContent, /首次配置已完成，已请求启动，正在进入主页面/);
     assert.doesNotMatch(f.root.textContent, /启动成功|已登录|已连接中台/);
   }));
 
