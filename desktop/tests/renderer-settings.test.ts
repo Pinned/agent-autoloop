@@ -153,6 +153,19 @@ test("a failed recovery keeps the barrier and never presents the draft as cleare
   assert.equal(c.getState().loadError?.code, "error");
 });
 
+test("a version-mismatched hub is reported as such, with the way out, not a generic failure", async () => {
+  const f = fixture();
+  f.controller.refresh();
+  f.gets[0].resolve(failure("incompatible"));
+  await flush();
+  const state = f.controller.getState();
+  assert.equal(state.loadError?.code, "incompatible");
+  assert.equal(state.loadError?.message, messages.incompatible);
+  assert.match(messages.incompatible, /升级|内置/);
+  assert.equal(state.snapshot, null);
+  assert.equal(state.draft, null);
+});
+
 test("keys typed while a save is in flight survive it and rebase onto the receipt", async () => {
   const f = await loaded();
   const c = f.controller;

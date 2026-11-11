@@ -65,7 +65,9 @@ export function createSettingsSource(options: SettingsSourceOptions): SettingsSo
     try {
       return parseDesktopSettingsGetResponse({ version: 1, ok: true, data: projectDesktopSettingsData(reply.payload) });
     } catch {
-      return desktopSettingsGetFailure("error");
+      // A 200 whose body the contract cannot read is the version-mismatch signature: the app is
+      // attached to an older terminal-side hub. Say so and name the way out, not a dead-end "retry".
+      return desktopSettingsGetFailure("incompatible");
     }
   }
 

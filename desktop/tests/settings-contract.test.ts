@@ -177,6 +177,8 @@ test("replies are strict: fixed messages, paired codes/outcomes, no extra fields
     ["invalid", "rejected"],
     ["uncertain", "not-sent"],
     ["error", "uncertain"],
+    // A save is never a version mismatch: an unsendable write is unavailable/invalid, never incompatible.
+    ["incompatible", "not-sent"],
   ])
     assert.throws(() =>
       parseDesktopSettingsPutResponse({
@@ -186,6 +188,11 @@ test("replies are strict: fixed messages, paired codes/outcomes, no extra fields
       }),
     );
   assert.equal(desktopSettingsGetFailure("no-hub").ok, false);
+  assert.equal(desktopSettingsGetFailure("incompatible").ok, false);
+  assert.deepEqual(
+    parseDesktopSettingsGetResponse(desktopSettingsGetFailure("incompatible")),
+    desktopSettingsGetFailure("incompatible"),
+  );
   assert.equal(desktopSettingsPutFailure("conflict", "rejected").ok, false);
   assert.equal(parseDesktopSettingsData(data()).rulesSeq, 4);
 });
