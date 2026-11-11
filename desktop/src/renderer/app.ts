@@ -341,14 +341,12 @@ function openSetup() {
   if (!setupView) setupView = mountSetupPage();
   setup.open();
 }
-// The setup page is mounted once and rendered by the controller's own notifications; quitting goes
-// through the app's quit door, which keeps its confirmation and its runtime drain.
+// The setup page is mounted once and rendered by the controller's own notifications. It draws no
+// quit control of its own; quitting goes through the status bar's door, which keeps its
+// confirmation and its runtime drain.
 function mountSetupPage() {
   return mountSetupView(main, setup, leaveSetup, {
     canDismiss: () => shell === "workspace",
-    exit: () => {
-      window.desktop.window("quit").catch(report);
-    },
   });
 }
 // The one way out of the setup page. With no workspace yet there is nothing behind it, so it may

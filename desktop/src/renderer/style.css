@@ -124,9 +124,10 @@ h2 {
    two columns - what this page is for on the left, the work itself on the right - instead of one
    narrow card floating in empty space. Below 900px the columns stack.
 
-   Content starts at the top and flows down; it is deliberately not vertically centred. When a step
-   grows taller than the window, centring pushes its first line above the scroll origin, where no
-   amount of scrolling gets it back. Top alignment keeps "cannot see it" a scrolling problem.
+   Content is vertically centred while it fits, so a short step does not hug the top of a tall
+   window. The centring is safe: once a step grows taller than the window the value degrades to
+   top alignment, because plain centring would push its first line above the scroll origin, where
+   no amount of scrolling gets it back. "Cannot see it" stays a scrolling problem.
 
    The reconnect page is the same moment seen from the other side - a machine that is not a
    workspace right now - so it shares the layout rather than inventing a second one. */
@@ -135,6 +136,7 @@ h2 {
   display: grid;
   grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
   align-items: start;
+  align-content: safe center;
   gap: 40px;
   width: 100%;
   max-width: 1040px;
@@ -162,9 +164,12 @@ h2 {
   max-width: 56ch;
 }
 @media (max-width: 900px) {
+  /* Stacked columns keep the same safe centring as the two-column grid above. */
   :root[data-shell="setup"] main,
   :root[data-shell="reconnect"] main {
-    display: block;
+    display: flex;
+    flex-direction: column;
+    justify-content: safe center;
     padding: 26px 22px 34px;
   }
   :root[data-shell="setup"] .page-head,
