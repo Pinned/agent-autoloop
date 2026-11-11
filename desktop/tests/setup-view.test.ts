@@ -453,44 +453,59 @@ test("controller validation overrides unsent fields, step changes do not restore
     assert.equal(input(f.root, "setup-url").value, "");
   }));
 
-test("the setup page offers a way out only when there is a workspace to return to", () =>
+test("the first-run page offers no way out; a workspace behind it offers 暂不配置", () =>
   withDocument(() => {
-    // No workspace yet: dismissing would strand the user on an empty window, so the only honest
-    // exit is the app's own quit, which keeps its confirmation and its runtime drain.
+    // No workspace yet: there is nothing to dismiss the page back to, and the app's own quit door
+    // lives in the status bar, so no step of the wizard and no recovery state may draw a leave
+    // button. A quit control inside the wizard would sit beside the primary path with equal weight
+    // and appear twice in one window.
     const first = fixture(1);
-    let exits = 0;
     let closes = 0;
     const locked = mountSetupView(
       first.root as unknown as HTMLElement,
       first.control as unknown as Parameters<typeof mountSetupView>[1],
       () => closes++,
-      { canDismiss: () => false, exit: () => exits++ },
+      { canDismiss: () => false },
     );
     locked.render();
-    const quit = all(first.root).find((node) => node.tagName === "button" && node.textContent === "退出应用…");
-    assert.ok(quit);
-    assert.equal(all(first.root).some((node) => node.textContent === "暂不配置"), false);
-    quit.fire("click");
-    assert.equal(exits, 1);
+    let texts = all(first.root).map((node) => node.textContent);
+    assert.equal(
+      texts.some((text) => text === "退出应用…"),
+      false,
+    );
+    assert.equal(
+      texts.some((text) => text === "暂不配置"),
+      false,
+    );
+    // The non-wizard branch (crash recovery and its siblings) draws no leave button either.
+    first.control.state = { kind: "prepared", mode: "worker" } as SetupState;
+    locked.render();
+    texts = all(first.root).map((node) => node.textContent);
+    assert.equal(
+      texts.some((text) => text === "返回工作空间"),
+      false,
+    );
+    assert.equal(
+      texts.some((text) => text === "退出应用…"),
+      false,
+    );
     assert.equal(closes, 0);
 
     // A workspace exists (re-entered from settings, or a first run that just completed): leaving is
-    // normal and must not quit the app.
+    // normal and must close the page, not quit the app.
     const second = fixture(1);
     let closesAgain = 0;
-    let exitsAgain = 0;
     const open = mountSetupView(
       second.root as unknown as HTMLElement,
       second.control as unknown as Parameters<typeof mountSetupView>[1],
       () => closesAgain++,
-      { canDismiss: () => true, exit: () => exitsAgain++ },
+      { canDismiss: () => true },
     );
     open.render();
     const back = all(second.root).find((node) => node.tagName === "button" && node.textContent === "暂不配置");
     assert.ok(back);
     back.fire("click");
     assert.equal(closesAgain, 1);
-    assert.equal(exitsAgain, 0);
   }));
 
 test("app wires one inert singleton bootstrap; launch status precedes automatic wizard and legacy has no start call", () => {
@@ -505,7 +520,7 @@ test("app wires one inert singleton bootstrap; launch status precedes automatic 
   assert.match(app, /setup\.state\.kind !== "reading-status" &&\s*setup\.state\.kind !== "reading-launch"/);
   assert.match(app, /initialSetupPresented = true;[\s\S]*?setupView\.render\(\)/);
   assert.match(app, /completion === "legacy"/);
-  // The shell decision and the setup page's one exit are wired in the same place.
+  // The shell decision and the setup page's dismissal rule are wired in the same place.
   assert.match(app, /const mode = shellMode\(setup\.launch, setup\.state\.kind\);/);
   assert.match(app, /canDismiss: \(\) => shell === "workspace"/);
   assert.doesNotMatch(app, /runtimeStart\(|completeSetup\(|initHub\(|joinWorker\(/);

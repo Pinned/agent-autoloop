@@ -67,8 +67,6 @@ function linkCopy(link: SetupLink | null, role: "hub-worker" | "worker"): string
 type Options = {
   /** Whether a workspace exists behind this page for the user to return to. */
   canDismiss?: () => boolean;
-  /** The way out when it does not: the app's own quit, with its confirmation. */
-  exit?: () => void;
 };
 
 export function mountSetupView(root: HTMLElement, control: Controller, close: () => void, options: Options = {}) {
@@ -160,13 +158,10 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
       clearKey();
       close();
     };
-    // Before a machine has a workspace there is nothing to dismiss the page back to, so the only
-    // honest way out is the app's own quit (which still asks for confirmation). Once the workspace
+    // Before a machine has a workspace there is nothing to dismiss this page back to, and the app's
+    // own quit door lives in the status bar, so no leave button is drawn at all — one beside the
+    // primary path would carry its weight and duplicate the status bar's door. Once the workspace
     // exists - re-entered from settings, or a first run that just completed - leaving is normal.
-    const leave = () => {
-      if (canDismiss()) cancel();
-      else options.exit?.();
-    };
 
     if (state.kind === "wizard" || state.kind === "submitting") {
       const wizard = state.kind === "wizard" ? state : state.wizard;
@@ -286,7 +281,8 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
         next.type = "submit";
         next.disabled = busy;
         next.className = "setup-primary";
-        actions.append(next, button(canDismiss() ? "暂不配置" : "退出应用…", leave, control.submitting));
+        actions.append(next);
+        if (canDismiss()) actions.append(button("暂不配置", cancel, control.submitting));
       } else if (wizard.role === "hub-worker") {
         const connected = link?.kind === "attached" || link?.kind === "embedded";
         const done = element("button", "完成");
@@ -294,13 +290,15 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
         done.disabled = busy || !connected;
         done.className = "setup-primary";
         if (link?.kind === "failed") actions.append(button("重试", () => control.retry(), busy));
-        actions.append(done, button(canDismiss() ? "暂不配置" : "退出应用…", leave, control.submitting));
+        actions.append(done);
+        if (canDismiss()) actions.append(button("暂不配置", cancel, control.submitting));
       } else {
         const done = element("button", joined ? "完成" : "连接");
         done.type = "submit";
         done.disabled = busy;
         done.className = "setup-primary";
-        actions.append(done, button(canDismiss() ? "暂不配置" : "退出应用…", leave, control.submitting));
+        actions.append(done);
+        if (canDismiss()) actions.append(button("暂不配置", cancel, control.submitting));
       }
       form.append(actions);
       form.addEventListener("submit", (event) => {
@@ -380,8 +378,10 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
       } else {
         status.textContent = "本机配置尚未检查。";
       }
-      actions.append(button(canDismiss() ? "返回工作空间" : "退出应用…", leave, control.submitting));
-      panel.append(actions);
+      if (canDismiss()) actions.append(button("返回工作空间", cancel, control.submitting));
+      // An empty action row is still a row: it would leave a gap under the note for buttons that
+      // were never drawn. The container goes in only when something is in it.
+      if (actions.children.length > 0) panel.append(actions);
     }
     if (focus) (root.querySelector<HTMLElement>(".setup-error") ?? title).focus();
   }
