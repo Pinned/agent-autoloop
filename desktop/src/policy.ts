@@ -1,5 +1,4 @@
 import type { TaskHistoryRequest, TaskHistoryResponse } from "../../host/desktop-task-history-contract.ts";
-import type { RunListInput } from "../../host/desktop-task-query-contract.ts";
 import { realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, relative, sep } from "node:path";
@@ -110,8 +109,12 @@ export interface DesktopBridge {
   workersLocal(): Promise<DesktopWorkerSnapshot | null>;
   /** The runs page for the tasks list; `before` pages further into history. */
   tasksGet(before?: number): Promise<DesktopTasksResponse>;
-  /** One page of the hub's run query; `q/state/rule/agent/source/type` filter on the server. */
-  taskList(input?: RunListInput): Promise<TaskHistoryResponse<"list">>;
+  /**
+   * One page of the hub's run query; `q/state/rule/agent/source/type` filter on the server. The
+   * request is the full `{operation: "list", input}` envelope: main parses exactly that shape, so
+   * sending the bare input would come back as the generic "查询内容不正确" failure.
+   */
+  taskList(request: Extract<TaskHistoryRequest, { operation: "list" }>): Promise<TaskHistoryResponse<"list">>;
   taskDetail<R extends Exclude<TaskHistoryRequest, { operation: "list" }>>(
     request: R,
   ): Promise<TaskHistoryResponse<R["operation"]>>;

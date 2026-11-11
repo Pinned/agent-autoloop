@@ -55,11 +55,13 @@ const failureOf = (code: keyof typeof TASK_HISTORY_MESSAGES): Record<string, unk
 });
 
 function fixture() {
-  const calls: RunListInput[] = [];
+  const calls: { operation: "list"; input: RunListInput }[] = [];
   const gates: ReturnType<typeof deferred<unknown>>[] = [];
   const bridge: TasksBridge = {
-    taskList: (input = {}) => {
-      calls.push(input);
+    taskList: (request) => {
+      // The mock records the whole envelope, matching what main parses: a regression to the bare
+      // input shape must fail these assertions, not pass silently like it did in production.
+      calls.push(request);
       const gate = deferred<unknown>();
       gates.push(gate);
       return gate.promise as never;
@@ -75,6 +77,8 @@ function fixture() {
   };
 }
 type Fixture = ReturnType<typeof fixture>;
+/** The wire shape every list call must carry: the full `{operation, input}` envelope. */
+const asked = (input: RunListInput) => ({ operation: "list" as const, input });
 const runsOf = (f: Fixture): readonly RunItem[] => {
   const state = f.controller.loadState;
   if (state.kind !== "ready") throw new Error("expected ready");
@@ -85,12 +89,12 @@ test("refresh is single-flight and a ready list is frozen state", async () => {
   const f = fixture();
   f.controller.refresh();
   f.controller.refresh();
-  assert.deepEqual(f.calls, [{}]);
+  assert.deepEqual(f.calls, [asked({})]);
   assert.equal(f.controller.busy, true);
   assert.equal(f.controller.loadState.kind, "loading");
   f.answer(pageOf([run(3), run(2), run(1)], { hasMore: true, nextBefore: 1 }));
   await flush();
-  assert.deepEqual(f.calls, [{}]);
+  assert.deepEqual(f.calls, [asked({})]);
   assert.equal(f.controller.busy, false);
   assert.equal(runsOf(f).length, 3);
   assert.equal(f.controller.moreState.kind, "idle");
@@ -153,14 +157,14 @@ test("loadMore only walks when the hub says more exists, and passes its own curs
   fixed.answer(failureOf("unavailable"));
   await flush();
   fixed.controller.loadMore();
-  assert.deepEqual(fixed.calls, [{}]);
+  assert.deepEqual(fixed.calls, [asked({})]);
   // A ready page that says "no more" is the end of the walk.
   const ended = fixture();
   ended.controller.refresh();
   ended.answer(pageOf([run(1)]));
   await flush();
   ended.controller.loadMore();
-  assert.deepEqual(ended.calls, [{}]);
+  assert.deepEqual(ended.calls, [asked({})]);
   // The real case: one page with a cursor, asked once even on a double click.
   const f2 = fixture();
   f2.controller.refresh();
@@ -168,7 +172,7 @@ test("loadMore only walks when the hub says more exists, and passes its own curs
   await flush();
   f2.controller.loadMore();
   f2.controller.loadMore();
-  assert.deepEqual(f2.calls, [{}, { before: 1 }]);
+  assert.deepEqual(f2.calls, [asked({}), asked({ before: 1 })]);
   assert.equal(f2.controller.moreState.kind, "busy");
 });
 
@@ -190,7 +194,7 @@ test("appended pages are deduplicated by run id, keeping the walks honest", asyn
   assert.equal(runs[0].state, "queued");
   assert.equal(f.controller.moreState.kind, "idle");
   f.controller.loadMore();
-  assert.deepEqual(f.calls, [{}, { before: 2 }]);
+  assert.deepEqual(f.calls, [asked({}), asked({ before: 2 })]);
 });
 
 test("a failed or malformed page keeps the list and costs one fixed message", async () => {
@@ -215,7 +219,7 @@ test("a failed or malformed page keeps the list and costs one fixed message", as
       );
     // One retry click walks the same cursor again.
     f.controller.loadMore();
-    assert.deepEqual(f.calls, [{}, { before: 2 }, { before: 2 }]);
+    assert.deepEqual(f.calls, [asked({}), asked({ before: 2 }), asked({ before: 2 })]);
   }
 });
 
@@ -227,7 +231,7 @@ test("a refresh during paging is refused, and a load during paging never restart
   f.controller.loadMore();
   assert.equal(f.controller.busy, true);
   f.controller.refresh();
-  assert.deepEqual(f.calls, [{}, { before: 2 }]);
+  assert.deepEqual(f.calls, [asked({}), asked({ before: 2 })]);
   assert.equal(f.controller.loadState.kind, "ready");
   f.answer(pageOf([run(1)]));
   await flush();
@@ -238,7 +242,7 @@ test("a refresh during paging is refused, and a load during paging never restart
   );
   // After the walk ends, a refresh starts over from page one.
   f.controller.refresh();
-  assert.deepEqual(f.calls, [{}, { before: 2 }, {}]);
+  assert.deepEqual(f.calls, [asked({}), asked({ before: 2 }), asked({})]);
   assert.equal(f.controller.loadState.kind, "loading");
   f.answer(pageOf([run(5)]));
   await flush();
@@ -256,7 +260,7 @@ test("the search and the status picker are the hub's own query, never a local fi
   await flush();
   f.controller.setFilter({ q: "  发布 失败  ", state: "failed" });
   // Exactly one new read from page one, with the trimmed keyword and the status.
-  assert.deepEqual(f.calls, [{}, { q: "发布 失败", state: "failed" }]);
+  assert.deepEqual(f.calls, [asked({}), asked({ q: "发布 失败", state: "failed" })]);
   assert.equal(f.controller.loadState.kind, "loading");
   f.answer(pageOf([run(9)]));
   await flush();
@@ -266,16 +270,16 @@ test("the search and the status picker are the hub's own query, never a local fi
   );
   // Blank fields are omitted entirely: the contract refuses an empty filter value.
   f.controller.setFilter({ q: "  ", state: "failed" });
-  assert.deepEqual(f.calls.at(-1), { state: "failed" });
+  assert.deepEqual(f.calls.at(-1), asked({ state: "failed" }));
   f.answer(pageOf([]));
   await flush();
   f.controller.setFilter({});
-  assert.deepEqual(f.calls.at(-1), {});
+  assert.deepEqual(f.calls.at(-1), asked({}));
   f.answer(pageOf([run(1)]));
   await flush();
   // A filter equal to the live one is not re-sent.
   f.controller.setFilter({ q: "" });
-  assert.deepEqual(f.calls.at(-1), {});
+  assert.deepEqual(f.calls.at(-1), asked({}));
   assert.equal(f.calls.length, 4);
 });
 
@@ -288,7 +292,7 @@ test("later pages carry the same filter, and a changed filter fences the late pa
   f.answer(pageOf([run(5), run(3)], { hasMore: true, nextBefore: 3 }));
   await flush();
   f.controller.loadMore();
-  assert.deepEqual(f.calls.at(-1), { q: "发布", before: 3 });
+  assert.deepEqual(f.calls.at(-1), asked({ q: "发布", before: 3 }));
   f.answer(pageOf([run(2)], { hasMore: true, nextBefore: 2 }));
   await flush();
   assert.deepEqual(
@@ -298,7 +302,7 @@ test("later pages carry the same filter, and a changed filter fences the late pa
   // A page still in the air when the owner changes the query never answers the new question.
   f.controller.loadMore();
   f.controller.setFilter({ q: "失败", state: "failed" });
-  assert.deepEqual(f.calls.at(-1), { q: "失败", state: "failed" });
+  assert.deepEqual(f.calls.at(-1), asked({ q: "失败", state: "failed" }));
   f.answerAt(f.calls.length - 2, pageOf([run(1)]));
   await flush();
   assert.equal(f.controller.loadState.kind, "loading");
@@ -314,8 +318,10 @@ test("later pages carry the same filter, and a changed filter fences the late pa
 test("a throwing listener never corrupts the state transition", async () => {
   let throwing = true;
   const bridge: TasksBridge = {
-    taskList: (input: RunListInput = {}) =>
-      Promise.resolve(pageOf([run(1)], input.before === undefined ? { hasMore: true, nextBefore: 1 } : {})) as never,
+    taskList: (request) =>
+      Promise.resolve(
+        pageOf([run(1)], request.input.before === undefined ? { hasMore: true, nextBefore: 1 } : {}),
+      ) as never,
   };
   const controller = createRendererTasks(bridge, () => {
     if (throwing) throw new Error("listener failure");

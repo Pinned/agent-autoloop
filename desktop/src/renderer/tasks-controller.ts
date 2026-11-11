@@ -527,7 +527,7 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
       notify();
     };
     try {
-      void Promise.resolve(bridge.taskList(request.input)).then(
+      void Promise.resolve(bridge.taskList(request)).then(
         (value) => finishQuiet(value, false),
         () => finishQuiet(undefined, true),
       );
@@ -641,7 +641,7 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
     if (kind === "load") load = Object.freeze({ kind: "loading" });
     else more = Object.freeze({ kind: "busy" });
     notify();
-    void Promise.resolve(bridge.taskList(request.input)).then(
+    void Promise.resolve(bridge.taskList(request)).then(
       (value) => finish(token, request, value, false),
       () => finish(token, request, undefined, true),
     );

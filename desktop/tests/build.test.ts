@@ -436,7 +436,10 @@ test("the tasks page shows the hub's run history through the pure tasks contract
   assert.doesNotMatch(controller, /node:|from ["'].*host\/(?:config|runtime|setup)\.ts/);
   assert.match(controller, /from ["'].*host\/desktop-tasks-contract\.ts/);
   // The list is the hub's own query, not a local filter over the newest page already on screen.
-  assert.match(controller, /bridge\.taskList\(/);
+  // The call carries the whole `{operation: "list", input}` envelope main parses — a bare input
+  // there is the production "查询内容不正确" failure this page once shipped with.
+  assert.match(controller, /bridge\.taskList\(request\)/);
+  assert.doesNotMatch(controller, /bridge\.taskList\(request\.input\)/);
   assert.doesNotMatch(controller, /bridge\.tasksGet/);
   assert.match(controller, /host\/desktop-task-query-contract\.ts/);
   assert.match(view, /tasks-search/);
