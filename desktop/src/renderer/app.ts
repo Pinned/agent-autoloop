@@ -259,6 +259,11 @@ const setup = createRendererSetup(window.desktop, () => {
     if (!setupView) setupView = mountSetupPage();
     setupView.render();
   }
+  // Completion is the one moment the setup page has nothing left to say: the launch record now
+  // proves a workspace, so the page is taken down and the page behind it drawn. Without this the
+  // empty-window check below never fires, because the setup page still owns #main.
+  if (setup.state.kind === "completed" && mode === "workspace" && setupView !== undefined)
+    render(currentPage, false);
   // Saving does not start a runtime. Completion only requests it; runtime is authoritative.
   if (setup.state.kind === "prepared" || setup.state.kind === "completed") run.refresh();
   if (setup.state.kind === "configured") run.refresh();
@@ -409,6 +414,10 @@ function render(id: string, focus = true) {
     if (!setup.leave()) return;
     setupView.dispose();
     setupView = undefined;
+    // The disposed page must not linger in #main. The "has a page been drawn yet" checks below
+    // read the DOM, so a leftover setup screen would look like a drawn page and the page behind it
+    // would never be built once the runtime reading settles.
+    main.replaceChildren();
     // The setup page masks the reconnect page by design. Removing it is the moment that mask comes
     // off, and a hub that went away meanwhile pushed no further event — so the shell is asked again
     // here. If the hub is gone, the reconnect page takes #main and no business page is drawn.
