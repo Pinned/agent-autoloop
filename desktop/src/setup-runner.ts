@@ -110,7 +110,7 @@ export function createSetupRunner(options: {
         cwd: dirname(dirname(resources.entryPath)),
         env,
         input,
-        mode: ["status", "check", "launch-status"].includes(parsed.operation) ? "read-only" : "mutation",
+        mode: ["status", "launch-status"].includes(parsed.operation) ? "read-only" : "mutation",
         timeoutMs,
         stopTimeoutMs,
         maxOutputBytes: DESKTOP_SETUP_RESPONSE_MAX_BYTES,

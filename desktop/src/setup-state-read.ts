@@ -12,7 +12,7 @@ import { readDesktopSetupStatusFromDisk } from "../../host/desktop-setup-fs.ts";
 
 export type SetupDiskRead = "status" | "launch-status";
 
-/** Every other operation mutates or checks, so it stays behind the locked private driver. */
+/** Every other operation mutates, so it stays behind the locked private driver. */
 export function isSetupDiskRead(operation: DesktopSetupOperation): operation is SetupDiskRead {
   return operation === "status" || operation === "launch-status";
 }

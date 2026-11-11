@@ -22,7 +22,7 @@ const resources: SetupResources = {
   home: "/isolated/business-home",
   environmentHome: "/owned/environment-home",
 };
-const request = (operation: "status" | "check" | "init" = "status"): DesktopSetupRequest => ({ version: 1, operation });
+const request = (operation: "status" | "init" = "status"): DesktopSetupRequest => ({ version: 1, operation });
 const success = (): DesktopSetupResponse => ({
   version: 1,
   operation: "status",
@@ -91,13 +91,13 @@ test("lifecycle discovery is an explicit main-only injection, never inherited en
 test("construction is inert; all operations use fixed Node/driver and read-only or mutation mode", async () => {
   const inputs: DesktopSetupRequest[] = [
     request(),
-    request("check"),
     request("init"),
     {
       version: 1,
       operation: "join",
       input: { url: "https://example.test", worker: "worker-1", key: " synthetic-key " },
     },
+    { version: 1, operation: "launch-status" },
   ];
   for (const input of inputs) {
     const f = fixture(completed(desktopSetupFailure(input.operation, "already-configured")));
@@ -108,7 +108,10 @@ test("construction is inert; all operations use fixed Node/driver and read-only 
     assert.equal(observed.file, resources.nodePath);
     assert.deepEqual(observed.args, [resources.entryPath]);
     assert.equal(observed.cwd, "/owned/sources");
-    assert.equal(observed.mode, input.operation === "status" || input.operation === "check" ? "read-only" : "mutation");
+    assert.equal(
+      observed.mode,
+      input.operation === "status" || input.operation === "launch-status" ? "read-only" : "mutation",
+    );
     assert.deepEqual(JSON.parse(String(observed.input)), input);
     assert.equal(observed.maxOutputBytes, DESKTOP_SETUP_RESPONSE_MAX_BYTES);
     assert.equal(f.cleanups(), 1);
@@ -421,7 +424,7 @@ test("concurrent requests are busy through preparation and cleanup, never queued
     runProcess: async () => completed(),
   });
   const first = runner.run(request());
-  assert.equal(code(await runner.run(request("check"))), "busy");
+  assert.equal(code(await runner.run(request("init"))), "busy");
   prepareReady.resolve();
   await cleanupEntered.promise;
   assert.equal(code(await runner.run(request("init"))), "busy");

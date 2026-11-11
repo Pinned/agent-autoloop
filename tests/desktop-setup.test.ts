@@ -48,12 +48,13 @@ function fixture(t: TestContext) {
 }
 
 // All tests use synthetic private directories. No installed Agent, shell lookup or real HOME dependency.
-test("contract accepts only four exact v1 requests and preserves the join key", () => {
-  for (const operation of ["status", "check", "init"] as const) {
+test("contract accepts only the five exact v1 requests and preserves the join key", () => {
+  for (const operation of ["status", "init", "launch-status"] as const) {
     assert.deepEqual(parseDesktopSetupRequest({ version: 1, operation }), { version: 1, operation });
     assert.throws(() => parseDesktopSetupRequest({ version: 1, operation, input: {} }));
     assert.throws(() => parseDesktopSetupRequest({ version: 1, operation, path: "/private" }));
   }
+  assert.throws(() => parseDesktopSetupRequest({ version: 1, operation: "check" }));
   assert.deepEqual(parseDesktopSetupRequest({ version: 1, operation: "join", input: joinInput }), {
     version: 1,
     operation: "join",
@@ -136,31 +137,6 @@ test("response parser reconstructs exact safe DTOs and refuses raw error or cred
       ),
     );
   }
-  const check = {
-    version: 1,
-    operation: "check",
-    ok: true,
-    data: {
-      scope: "installation-only",
-      agents: [
-        { id: "claude", installation: "found", login: "unknown" },
-        { id: "codex", installation: "not-found", login: "unknown" },
-      ],
-    },
-  };
-  assert.deepEqual(parseDesktopSetupResponse(check, "check"), check);
-  assert.throws(() =>
-    parseDesktopSetupResponse({ ...check, data: { ...check.data, agents: check.data.agents.toReversed() } }, "check"),
-  );
-  assert.throws(() =>
-    parseDesktopSetupResponse(
-      {
-        ...check,
-        data: { ...check.data, agents: [{ ...check.data.agents[0], login: "logged-in" }, check.data.agents[1]] },
-      },
-      "check",
-    ),
-  );
   assert.throws(() =>
     parseDesktopSetupResponse(
       { version: 1, operation: "init", ok: true, data: { configuration: "configured", role: "worker" } },
@@ -486,23 +462,10 @@ test("driver completes only prepared policy under instance lock and leaves old c
   assert.equal((await driverFixture(legacy).driver({ version: 1, operation: "complete" })).ok, false);
 });
 
-test("driver status/check/invalid requests never acquire locks or invoke setup", async (t) => {
+test("driver status and invalid requests never acquire locks or invoke setup", async (t) => {
   const home = fixture(t);
   const { driver, calls } = driverFixture(home);
   assert.equal((await driver({ version: 1, operation: "status" })).ok, true);
-  const result = await driver({ version: 1, operation: "check" });
-  assert.deepEqual(result, {
-    version: 1,
-    operation: "check",
-    ok: true,
-    data: {
-      scope: "installation-only",
-      agents: [
-        { id: "claude", installation: "not-found", login: "unknown" },
-        { id: "codex", installation: "not-found", login: "unknown" },
-      ],
-    },
-  });
   assert.deepEqual(
     await driver({ version: 1, operation: "join", input: { ...joinInput, use: "evil" } }),
     desktopSetupFailure("join", "invalid-request"),
@@ -652,8 +615,6 @@ test("isolated init uses bundled adapters and private absolute launchers without
     const found = await setup.agentsToUse({},'worker',discovery);
     assert.deepEqual(Object.keys(found),['claude','codex']);
     for(const id of ['claude','codex']) assert.deepEqual(found[id].command,[path.join(tools,id)]);
-    const check = await driver({version:1,operation:'check'});
-    assert.ok(check.data.agents.every(x=>x.installation==='found' && x.login==='unknown'));
     const result = await driver({version:1,operation:'init'});
     assert.deepEqual(result,{version:1,operation:'init',ok:true,data:{configuration:'configured',role:'hub-worker'}});
     const config = JSON.parse(fs.readFileSync(path.join(home,'config.json')));

@@ -115,7 +115,7 @@ test("P1 shared launch-status releases success, failure and rejection without au
   }
 });
 
-test("P1 shared launch-status does not share or admit checks and mutations", async () => {
+test("P1 shared launch-status does not share or admit mutations", async () => {
   const result = deferred<DesktopSetupResponse>();
   const operations: string[] = [];
   const setup = createSetupControl({
@@ -128,7 +128,7 @@ test("P1 shared launch-status does not share or admit checks and mutations", asy
   const read = createLaunchStatusRead(() => setup.runSetup({ version: 1, operation: "launch-status" }));
   const status = read();
   const peer = read();
-  for (const operation of ["check", "complete", "init", "join"] as const) {
+  for (const operation of ["complete", "init", "join"] as const) {
     const request =
       operation === "join"
         ? { version: 1 as const, operation, input: { url: "http://127.0.0.1:4567", worker: "fake", key: "fake" } }
