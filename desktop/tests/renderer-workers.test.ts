@@ -212,5 +212,8 @@ test("a new refresh after a settled one starts a second call", async () => {
   if (state.kind !== "ready") throw new Error("expected ready");
   // A hub that names no agents is a real empty answer, not a fallback to the last read.
   assert.deepEqual(state.snapshot.agents, []);
-  assert.deepEqual(state.snapshot.channels.map((channel) => channel.id), ["chat"]);
+  assert.deepEqual(
+    state.snapshot.channels.map((channel) => channel.id),
+    ["chat"],
+  );
 });

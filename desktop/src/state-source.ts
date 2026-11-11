@@ -153,7 +153,8 @@ export function createWorkersSource(options: TodaySourceOptions): { read(): Prom
       } catch {
         return failure;
       }
-      if (endpoint === "no-hub") return desktopWorkersOf({ kind: "no-hub", message: DESKTOP_WORKERS_MESSAGES["no-hub"] });
+      if (endpoint === "no-hub")
+        return desktopWorkersOf({ kind: "no-hub", message: DESKTOP_WORKERS_MESSAGES["no-hub"] });
       if (endpoint === "invalid") return failure;
       try {
         const response = await fetchImpl(`${endpoint.origin}/v1/state`, {

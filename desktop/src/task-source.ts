@@ -74,8 +74,10 @@ export function createTaskSource(options: TaskSourceOptions): {
       }
     },
     async create(input: DesktopTaskInput, canSend: () => boolean = () => true) {
-      const notSent = () => taskOutcomeOf({ version: 3, outcome: "not-sent", message: DESKTOP_TASK_MESSAGES["not-sent"] });
-      const uncertain = () => taskOutcomeOf({ version: 3, outcome: "uncertain", message: DESKTOP_TASK_MESSAGES.uncertain });
+      const notSent = () =>
+        taskOutcomeOf({ version: 3, outcome: "not-sent", message: DESKTOP_TASK_MESSAGES["not-sent"] });
+      const uncertain = () =>
+        taskOutcomeOf({ version: 3, outcome: "uncertain", message: DESKTOP_TASK_MESSAGES.uncertain });
       let url: string;
       let init: RequestInit;
       let dispatch: typeof fetchImpl;
@@ -97,15 +99,23 @@ export function createTaskSource(options: TaskSourceOptions): {
         await Promise.resolve();
         const latest = options.getState();
         if (latest.status !== "running" || latest.role !== "hub-worker" || !canSend()) return notSent();
-      } catch { return notSent(); }
+      } catch {
+        return notSent();
+      }
       // No observer, accessor, or await between the last qualification and entering fetch.
       // Entering fetch is not proof of non-ingestion, even when the callable throws synchronously.
       try {
         const response = await dispatch(url, init);
         if (!response.ok) return uncertain();
         const payload: unknown = await response.json();
-        return taskOutcomeOf({ version: 3, outcome: "accepted", receipt: { version: 2, ok: true, result: payload as never } });
-      } catch { return uncertain(); }
+        return taskOutcomeOf({
+          version: 3,
+          outcome: "accepted",
+          receipt: { version: 2, ok: true, result: payload as never },
+        });
+      } catch {
+        return uncertain();
+      }
     },
   };
 }

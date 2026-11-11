@@ -29,15 +29,16 @@ export function createRendererWorkers(bridge: WorkersBridge, onChange: () => voi
       // A later render rebuilds the panel from the authoritative state.
     }
   }
-  function frozenState(
-    state: Exclude<WorkersState, { kind: "loading" }>,
-  ): Exclude<WorkersState, { kind: "loading" }> {
+  function frozenState(state: Exclude<WorkersState, { kind: "loading" }>): Exclude<WorkersState, { kind: "loading" }> {
     if (state.kind === "ready") {
       const snapshot: DesktopWorkersSnapshot = {
         ...state.snapshot,
         agents: Object.freeze(
           state.snapshot.agents.map((agent) =>
-            Object.freeze({ ...agent, totals: Object.freeze({ ...agent.totals, usage: Object.freeze({ ...agent.totals.usage }) }) }),
+            Object.freeze({
+              ...agent,
+              totals: Object.freeze({ ...agent.totals, usage: Object.freeze({ ...agent.totals.usage }) }),
+            }),
           ),
         ) as unknown as DesktopWorkersSnapshot["agents"],
         channels: Object.freeze(

@@ -106,8 +106,15 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
         if (admitted !== cancelGeneration) return false;
         if (canRead && !canRead()) return false;
         const state = options.getState();
-        return state.status === "running" && state.role === "hub-worker" && (!canRead || canRead()) && admitted === cancelGeneration;
-      } catch { return false; }
+        return (
+          state.status === "running" &&
+          state.role === "hub-worker" &&
+          (!canRead || canRead()) &&
+          admitted === cancelGeneration
+        );
+      } catch {
+        return false;
+      }
     };
     const denied = (error: TaskQueryError) => {
       slots[slot]?.stop();
@@ -170,7 +177,11 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
     function finish(result: TaskQueryResult<T>, abort = false) {
       if (settled) return;
       settled = true;
-      try { schedule.clear(timer); } catch { /* Independent cleanup cannot prevent settlement. */ }
+      try {
+        schedule.clear(timer);
+      } catch {
+        /* Independent cleanup cannot prevent settlement. */
+      }
       if (slots[slot] === flight) slots[slot] = undefined;
       if (abort) {
         controller.abort();
@@ -180,8 +191,11 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
     }
     slots[slot] = flight;
     // Settlement is independent of fetch/reader cooperation; the deadline includes stalled body reads.
-    try { timer = schedule.set(() => finish(failure("timeout"), true), timeoutMs); }
-    catch { finish(failure("error"), true); }
+    try {
+      timer = schedule.set(() => finish(failure("timeout"), true), timeoutMs);
+    } catch {
+      finish(failure("error"), true);
+    }
 
     async function readBytes(response: Response, max: number): Promise<Uint8Array> {
       reader = response.body?.getReader();
@@ -216,7 +230,13 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
     }
     async function execute() {
       try {
-        const init: RequestInit = { method: "GET", headers: { authorization: `Bearer ${owner}` }, redirect: "error", cache: "no-store", signal: controller.signal };
+        const init: RequestInit = {
+          method: "GET",
+          headers: { authorization: `Bearer ${owner}` },
+          redirect: "error",
+          cache: "no-store",
+          signal: controller.signal,
+        };
         if (inactive()) return;
         const response = await fetchImpl(url, init);
         if (inactive()) {
@@ -278,29 +298,43 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
     return promise;
   }
 
-  function section<T>(name: PageSection, id: number, input: RunSectionInput, parse: (bytes: Uint8Array, run: number) => T, canRead?: () => boolean) {
-    return request(name, () => {
-      const run = runId(id);
-      const checked = parseRunSectionInput(input);
-      if (checked.cursor !== undefined) decodeRunCursor(checked.cursor, run, name);
-      return { path: `${ROOT}/${run}${queryString(checked, name)}`, parse: (bytes: Uint8Array) => parse(bytes, run) };
-    }, canRead);
+  function section<T>(
+    name: PageSection,
+    id: number,
+    input: RunSectionInput,
+    parse: (bytes: Uint8Array, run: number) => T,
+    canRead?: () => boolean,
+  ) {
+    return request(
+      name,
+      () => {
+        const run = runId(id);
+        const checked = parseRunSectionInput(input);
+        if (checked.cursor !== undefined) decodeRunCursor(checked.cursor, run, name);
+        return { path: `${ROOT}/${run}${queryString(checked, name)}`, parse: (bytes: Uint8Array) => parse(bytes, run) };
+      },
+      canRead,
+    );
   }
   return {
     list: (input = {}) =>
       request("list", () => ({ path: ROOT + queryString(parseRunListInput(input)), parse: parseRunListBytes })),
     detail: (id, canRead) =>
-      request("detail", () => {
-        const run = runId(id);
-        return {
-          path: `${ROOT}/${run}`,
-          parse(bytes) {
-            const data = parseRunDetailBytes(bytes);
-            if (data.run.id !== run) throw new Error("wrong-run");
-            return data;
-          },
-        };
-      }, canRead),
+      request(
+        "detail",
+        () => {
+          const run = runId(id);
+          return {
+            path: `${ROOT}/${run}`,
+            parse(bytes) {
+              const data = parseRunDetailBytes(bytes);
+              if (data.run.id !== run) throw new Error("wrong-run");
+              return data;
+            },
+          };
+        },
+        canRead,
+      ),
     events: (run, input = {}, canRead) => section("events", run, input, parseRunEventsBytes, canRead),
     cards: (run, input = {}, canRead) => section("cards", run, input, parseRunCardsBytes, canRead),
     related: (run, input = {}, canRead) => section("related", run, input, parseRelatedRunsBytes, canRead),

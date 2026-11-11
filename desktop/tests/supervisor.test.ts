@@ -162,7 +162,11 @@ test("messages are versioned, validated and sanitized, snapshots cannot mutate s
     { version: 1, type: "status", pending: 2 },
     { version: 1, type: "observed" },
     { version: 1, type: "observed", snapshot: null },
-    { version: 1, type: "observed", snapshot: reading({ counts: { held: 1, preparing: 0, executing: 0, stopping: 0, pendingSync: 0, uncertain: 0 } }) },
+    {
+      version: 1,
+      type: "observed",
+      snapshot: reading({ counts: { held: 1, preparing: 0, executing: 0, stopping: 0, pendingSync: 0, uncertain: 0 } }),
+    },
     { version: 1, type: "observed", snapshot: reading({ cpu: "M4 Pro" }) },
     { version: 1, type: "failed", reason: "secret" },
   ])

@@ -250,11 +250,18 @@ export async function runLifecycleHubDrive(port: LifecycleDrivePort, ruleCwd: st
   if (run.running?.state?.status !== "running" || run.running?.state?.role !== "hub-worker")
     return port.abort(`运行服务未在期限内达到 hub-worker 运行态：${JSON.stringify(run.last ?? null)}`);
   console.log(LIFECYCLE_MARKERS.hubRunning);
-  const creation = (await port.evaluate(lifecycleHubBusinessScript(ruleCwd))) as { stage?: string; created?: unknown; deadline?: number };
+  const creation = (await port.evaluate(lifecycleHubBusinessScript(ruleCwd))) as {
+    stage?: string;
+    created?: unknown;
+    deadline?: number;
+  };
   if (creation.stage !== "create") return port.abort(`业务闭环未完成：${JSON.stringify(creation)}`);
   let receipt: DesktopTaskResult;
-  try { receipt = parseLifecycleTaskReceipt(creation.created); }
-  catch { return port.abort("任务入队未确认"); }
+  try {
+    receipt = parseLifecycleTaskReceipt(creation.created);
+  } catch {
+    return port.abort("任务入队未确认");
+  }
   if (!receipt.routed.includes(LIFECYCLE_RULE_NAME)) return port.abort("任务未被入口路由");
   if (!Number.isSafeInteger(creation.deadline) || creation.deadline! < 0) return port.abort("业务期限无效");
   const business = (await port.evaluate(lifecycleHubBusinessFinishScript(creation.deadline!))) as {

@@ -70,7 +70,11 @@ export function createHubWatcher(options: HubWatcherOptions): {
   function notify(next: HubGlance, published: number, session?: Session) {
     for (const listener of listeners) {
       if (closed || version !== published || (session && !active(session))) return;
-      try { listener(next); } catch { /* Observers cannot retain ownership of a read. */ }
+      try {
+        listener(next);
+      } catch {
+        /* Observers cannot retain ownership of a read. */
+      }
       if (closed || version !== published || (session && !active(session))) return;
     }
   }
@@ -109,7 +113,9 @@ export function createHubWatcher(options: HubWatcherOptions): {
       const state = options.getState();
       if (!owns(session)) return false;
       if (state.status === "running" && state.role === "hub-worker") return true;
-    } catch { /* An unreadable gate is closed. */ }
+    } catch {
+      /* An unreadable gate is closed. */
+    }
     invalidate(session);
     return false;
   }
@@ -122,7 +128,9 @@ export function createHubWatcher(options: HubWatcherOptions): {
       const parsed = parseHubEndpoint(config);
       if (!active(session)) return "no";
       if (parsed !== "invalid" && parsed !== "no-hub") return parsed;
-    } catch { /* Invalid config cannot open a stream or a cancel request. */ }
+    } catch {
+      /* Invalid config cannot open a stream or a cancel request. */
+    }
     invalidate(session);
     return "no";
   }
@@ -179,11 +187,14 @@ export function createHubWatcher(options: HubWatcherOptions): {
     // The token belongs to this session; a late old timer cannot clear a newer retry.
     const token = { timer: undefined as unknown as NodeJS.Timeout };
     session.retry = token;
-    token.timer = setTimeout(() => {
-      if (!active(session) || session.retry !== token) return;
-      session.retry = undefined;
-      sync();
-    }, Math.max(1, retryMs));
+    token.timer = setTimeout(
+      () => {
+        if (!active(session) || session.retry !== token) return;
+        session.retry = undefined;
+        sync();
+      },
+      Math.max(1, retryMs),
+    );
     token.timer.unref?.();
   }
 

@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mountSetupView } from "../src/renderer/setup-view.ts";
-import { createRendererSetup, type SetupBridge, type SetupLink, type SetupState } from "../src/renderer/setup-controller.ts";
+import {
+  createRendererSetup,
+  type SetupBridge,
+  type SetupLink,
+  type SetupState,
+} from "../src/renderer/setup-controller.ts";
 import { desktopSetupFailure, type DesktopJoinInput } from "../../host/desktop-setup-contract.ts";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
@@ -251,7 +256,11 @@ test("real app setup callback presents failed launch reads with explicit retry a
       document: { querySelector: () => ({ textContent: "", hidden: true }) },
       mountSetupPage: () => {
         mounts++;
-        return mountSetupView(root as unknown as HTMLElement, context.setup as ReturnType<typeof createRendererSetup>, () => {});
+        return mountSetupView(
+          root as unknown as HTMLElement,
+          context.setup as ReturnType<typeof createRendererSetup>,
+          () => {},
+        );
       },
       render: () => {},
       currentPage: "today",
@@ -341,7 +350,10 @@ test("a hub-worker's step 2 is a loading entry that gates 完成 on the probe", 
       f.view.render();
       assert.match(f.root.textContent, copy);
       // The loading entry replaces the form: nothing to type, nothing to connect by hand.
-      assert.equal(all(f.root).some((node) => node.id === "setup-url"), false);
+      assert.equal(
+        all(f.root).some((node) => node.id === "setup-url"),
+        false,
+      );
       const done = all(f.root).find((node) => node.tagName === "button" && node.textContent === "完成");
       assert.ok(done);
       assert.equal(done.disabled, !doneEnabled);
@@ -366,10 +378,16 @@ test("a joined worker offers 完成 instead of the form and states the role is l
       error: null,
     } as SetupState;
     f.view.render();
-    assert.equal(all(f.root).some((node) => node.id === "setup-key"), false);
+    assert.equal(
+      all(f.root).some((node) => node.id === "setup-key"),
+      false,
+    );
     assert.match(f.root.textContent, /已连接到中台，配置已保存/);
     assert.match(f.root.textContent, /角色已锁定/);
-    assert.equal(all(f.root).some((node) => node.tagName === "button" && node.textContent === "上一步"), false);
+    assert.equal(
+      all(f.root).some((node) => node.tagName === "button" && node.textContent === "上一步"),
+      false,
+    );
     assert.ok(all(f.root).find((node) => node.tagName === "button" && node.textContent === "完成"));
   }));
 
@@ -425,9 +443,7 @@ test("an interrupted first run only asks for the missing policy; a completed one
     // and the start request are missing.
     assert.match(f.root.textContent, /上次首次配置未完成.*启动策略尚未写入/);
     assert.equal(completions, 0);
-    const complete = all(f.root).find(
-      (node) => node.tagName === "button" && node.textContent === "完成并进入主页面",
-    );
+    const complete = all(f.root).find((node) => node.tagName === "button" && node.textContent === "完成并进入主页面");
     assert.ok(complete);
     complete.fire("click");
     assert.equal(completions, 1);

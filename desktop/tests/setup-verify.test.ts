@@ -59,7 +59,8 @@ test("a hub that refuses the identity returns the two codes the page may retry",
     let calls = 0;
     assert.equal(
       await verifySetupConnection(join, {
-        fetch: async () => json(calls++ === 0 ? protocol : { error: "synthetic-private-error" }, calls === 1 ? 200 : status),
+        fetch: async () =>
+          json(calls++ === 0 ? protocol : { error: "synthetic-private-error" }, calls === 1 ? 200 : status),
       }),
       "credential-rejected",
     );
@@ -91,14 +92,8 @@ test("a hub too old to verify the credential is refused instead of saved on hope
 
 test("no usable answer is a connection failure, whatever shape the silence takes", async () => {
   const failing: Array<[string, ProbeIO["fetch"]]> = [
-    [
-      "protocol-status",
-      async () => json({ error: "synthetic-private-error" }, 404),
-    ],
-    [
-      "protocol-malformed",
-      async () => json({ version: 2, capabilities: [] }),
-    ],
+    ["protocol-status", async () => json({ error: "synthetic-private-error" }, 404)],
+    ["protocol-malformed", async () => json({ version: 2, capabilities: [] })],
     [
       "transport",
       async () => {
@@ -119,12 +114,10 @@ test("no usable answer is a connection failure, whatever shape the silence takes
     ],
     [
       "credential-malformed",
-      async (_url, init) => (new Headers(init.headers).has("authorization") ? json({ ...identity, kind: "owner" }) : json(protocol)),
+      async (_url, init) =>
+        new Headers(init.headers).has("authorization") ? json({ ...identity, kind: "owner" }) : json(protocol),
     ],
-    [
-      "hanging",
-      async () => new Promise<Response>(() => {}),
-    ],
+    ["hanging", async () => new Promise<Response>(() => {})],
   ];
   for (const [name, fetch] of failing) {
     assert.equal(await verifySetupConnection(join, { fetch }, { timeoutMs: 20 }), "connection-failed", name);

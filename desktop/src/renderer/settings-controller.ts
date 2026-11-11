@@ -198,7 +198,12 @@ export function createRendererSettings(bridge: SettingsBridge, onChange?: () => 
           parseDesktopSettingsInput({ section: captured.section, value: captured.value, rulesSeq: captured.rulesSeq }),
         );
       } catch {
-        save = freeze({ kind: "failed", code: "invalid", outcome: "not-sent", message: DESKTOP_SETTINGS_MESSAGES.invalid });
+        save = freeze({
+          kind: "failed",
+          code: "invalid",
+          outcome: "not-sent",
+          message: DESKTOP_SETTINGS_MESSAGES.invalid,
+        });
         notify();
         return;
       }

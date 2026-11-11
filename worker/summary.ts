@@ -43,11 +43,7 @@ export type WorkerConnection = Readonly<{
 export type WorkerObservation = Readonly<{ summary: WorkerSummary; connection: WorkerConnection }>;
 const unknownSummary: WorkerSummary = Object.freeze({ quality: "unknown", counts: null });
 /** Records the worker could not read at all are not held records; the scan itself is reported as incomplete. */
-export function summarizeHeld(
-  records: readonly HeldRecord[],
-  probe: HeldProbe,
-  complete: boolean,
-): WorkerSummary {
+export function summarizeHeld(records: readonly HeldRecord[], probe: HeldProbe, complete: boolean): WorkerSummary {
   if (!complete) return unknownSummary;
   try {
     const evidence: WorkerEvidence[] = [];

@@ -7,8 +7,20 @@ import { createTaskListIpc } from "../src/task-list-ipc.ts";
 import { TASK_HISTORY_MESSAGES } from "../../host/desktop-task-history-contract.ts";
 
 const item = (id: number) => ({
-  id, rule: "r", agent: "a", state: "done", attempts: 1, createdAt: null, claimedAt: null, finishedAt: null,
-  notBefore: null, summary: "s", error: "", stopping: false, usage: null, truncated: false,
+  id,
+  rule: "r",
+  agent: "a",
+  state: "done",
+  attempts: 1,
+  createdAt: null,
+  claimedAt: null,
+  finishedAt: null,
+  notBefore: null,
+  summary: "s",
+  error: "",
+  stopping: false,
+  usage: null,
+  truncated: false,
 });
 const page = (ids: number[]) => ({ items: ids.map(item), hasMore: false, nextBefore: null });
 
@@ -19,28 +31,55 @@ function fixture() {
   const urls: string[] = [];
   let resolve!: (value: Response) => void;
   let fetcher = (_url: string, _init?: RequestInit) =>
-    new Promise<Response>((yes) => { resolve = yes; });
+    new Promise<Response>((yes) => {
+      resolve = yes;
+    });
   const source = createTaskQuerySource({
     home: "unused",
     getState: () => state,
     readConfig: () => config() as never,
-    fetchImpl: (url, init) => { calls++; urls.push(String(url)); return fetcher(String(url), init); },
+    fetchImpl: (url, init) => {
+      calls++;
+      urls.push(String(url));
+      return fetcher(String(url), init);
+    },
     schedule: { now: () => 0, set: () => undefined, clear: () => undefined },
   });
   const event = {};
-  const ipc = createTaskListIpc({ assertSender: (v) => { assert.equal(v, event); }, source });
+  const ipc = createTaskListIpc({
+    assertSender: (v) => {
+      assert.equal(v, event);
+    },
+    source,
+  });
   const reply = (data: unknown, status = 200) => resolve(new Response(JSON.stringify(data), { status }));
   return {
-    ipc, event, calls: () => calls, urls, reply,
-    setState: (next: typeof state) => { state = next; },
-    setConfig: (next: typeof config) => { config = next; },
+    ipc,
+    event,
+    calls: () => calls,
+    urls,
+    reply,
+    setState: (next: typeof state) => {
+      state = next;
+    },
+    setConfig: (next: typeof config) => {
+      config = next;
+    },
   };
 }
 
 test("sender is checked first, then strict arity and list-only capability", async () => {
   const f = fixture();
   let touched = 0;
-  const poison = new Proxy({}, { ownKeys() { touched++; throw new Error("poison"); } });
+  const poison = new Proxy(
+    {},
+    {
+      ownKeys() {
+        touched++;
+        throw new Error("poison");
+      },
+    },
+  );
   await assert.rejects(f.ipc.read({}, [poison]));
   assert.equal(touched, 0);
   // Wrong arity, a non-list operation, invalid run ids and an undefined input are all refused
@@ -66,20 +105,42 @@ test("sender is checked first, then strict arity and list-only capability", asyn
 
 test("filters go to the server as the hub's own encoded query, never a local slice", async () => {
   const f = fixture();
-  const pending = f.ipc.read(f.event, [{ operation: "list", input: {
-    limit: 30, before: 12, q: "发布 失败", state: "failed", rule: "值班规则", agent: "claude", source: "task.ops", type: "created",
-  } }]);
+  const pending = f.ipc.read(f.event, [
+    {
+      operation: "list",
+      input: {
+        limit: 30,
+        before: 12,
+        q: "发布 失败",
+        state: "failed",
+        rule: "值班规则",
+        agent: "claude",
+        source: "task.ops",
+        type: "created",
+      },
+    },
+  ]);
   assert.equal(f.calls(), 1);
   const url = new URL(f.urls[0]);
   assert.equal(url.pathname, "/v1/ui/task-runs");
   assert.deepEqual(Object.fromEntries(url.searchParams), {
-    limit: "30", before: "12", q: "发布 失败", state: "failed", rule: "值班规则", agent: "claude",
-    source: "task.ops", type: "created",
+    limit: "30",
+    before: "12",
+    q: "发布 失败",
+    state: "failed",
+    rule: "值班规则",
+    agent: "claude",
+    source: "task.ops",
+    type: "created",
   });
   f.reply(page([5, 4]));
   const result = await pending;
   assert.equal(result.ok, true);
-  if (result.ok) assert.deepEqual(result.data.items.map((run) => run.id), [5, 4]);
+  if (result.ok)
+    assert.deepEqual(
+      result.data.items.map((run) => run.id),
+      [5, 4],
+    );
 });
 
 test("an empty input sends no query string at all", async () => {
@@ -108,7 +169,9 @@ test("the source's own runtime classification reaches the renderer verbatim", as
     assert.equal(f.calls(), 0);
   }
   const broken = fixture();
-  broken.setConfig(() => { throw new Error("bad-config"); });
+  broken.setConfig(() => {
+    throw new Error("bad-config");
+  });
   const result = await broken.ipc.read(broken.event, [{ operation: "list", input: {} }]);
   assert.equal(result.ok, false);
   if (!result.ok) assert.equal(result.error.code, "error");
@@ -140,8 +203,14 @@ test("malformed and oversized replies become one fixed failure, never unvalidate
 test("a throwing source is reported as error, not leaked as a rejection", async () => {
   const event = {};
   const ipc = createTaskListIpc({
-    assertSender: (v) => { assert.equal(v, event); },
-    source: { list: () => { throw new Error("secret"); } },
+    assertSender: (v) => {
+      assert.equal(v, event);
+    },
+    source: {
+      list: () => {
+        throw new Error("secret");
+      },
+    },
   });
   const result = await ipc.read(event, [{ operation: "list", input: {} }]);
   assert.equal(result.ok, false);

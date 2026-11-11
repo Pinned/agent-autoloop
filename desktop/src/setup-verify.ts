@@ -9,9 +9,7 @@
 // read from the CLI's own config, and every launch already answers "can it operate that hub"
 // through the attach control — refusing to save while a terminal hub is merely stopped would
 // strand the user, when the reconnect page is the honest answer.
-import type {
-  WorkerVerificationCode,
-} from "../../host/desktop-worker-verification.ts";
+import type { WorkerVerificationCode } from "../../host/desktop-worker-verification.ts";
 import { verifyDesktopWorkerProfile } from "../../host/desktop-worker-verification.ts";
 import type { DesktopSetupErrorCode, DesktopSetupRequest } from "../../host/desktop-setup-contract.ts";
 import type { ProbeIO } from "../../host/desktop-protocol-probe.ts";
@@ -51,11 +49,9 @@ export async function verifySetupConnection(
   if (request.operation !== "join") return null;
   const { url, worker, key } = request.input;
   try {
-    const verified = await verifyDesktopWorkerProfile(
-      { url, worker: { name: worker, key } },
-      io,
-      { timeoutMs: options.timeoutMs ?? SETUP_VERIFY_TIMEOUT_MS },
-    );
+    const verified = await verifyDesktopWorkerProfile({ url, worker: { name: worker, key } }, io, {
+      timeoutMs: options.timeoutMs ?? SETUP_VERIFY_TIMEOUT_MS,
+    });
     return verified.ok ? null : refusal(verified.error.code);
   } catch {
     // A verifier that throws has proven nothing; that is the same answer as silence.

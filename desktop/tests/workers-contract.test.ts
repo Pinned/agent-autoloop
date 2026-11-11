@@ -132,7 +132,11 @@ test("the projection refuses malformed or hostile payloads instead of showing pa
     hub({ agents: [{ ...agent(), name: 7 }] }),
     hub({ channels: [channel({ online: "yes" })] }),
   ]) {
-    assert.throws(() => projectDesktopWorkersSnapshot(payload, null), /invalid-request/, JSON.stringify(payload).slice(0, 80));
+    assert.throws(
+      () => projectDesktopWorkersSnapshot(payload, null),
+      /invalid-request/,
+      JSON.stringify(payload).slice(0, 80),
+    );
   }
 });
 
@@ -142,7 +146,12 @@ test("a superset agent record is accepted, but the display record itself is stri
   assert.equal(projectDesktopWorkersSnapshot(hub({ agents: [extended] }), null).agents[0].id, "claude");
   // The wire response has no such allowance: an extra key is a broken envelope.
   assert.throws(
-    () => parseDesktopWorkersResponse({ version: 1, ok: true, state: { kind: "unavailable", message: DESKTOP_WORKERS_MESSAGES.unavailable, extra: 1 } }),
+    () =>
+      parseDesktopWorkersResponse({
+        version: 1,
+        ok: true,
+        state: { kind: "unavailable", message: DESKTOP_WORKERS_MESSAGES.unavailable, extra: 1 },
+      }),
     /invalid-request/,
   );
 });
@@ -176,7 +185,11 @@ test("fixed-message states are verbatim and cannot be reworded", () => {
     { version: 2, ok: true, state: { kind: "unavailable", message: DESKTOP_WORKERS_MESSAGES.unavailable } },
     { version: 1, ok: false, state: { kind: "unavailable", message: DESKTOP_WORKERS_MESSAGES.unavailable } },
     { version: 1, ok: true, state: { kind: "ready", snapshot: { version: 1 } } },
-    { version: 1, ok: true, state: { kind: "ready", snapshot: { ...projectDesktopWorkersSnapshot(hub(), null), version: 2 } } },
+    {
+      version: 1,
+      ok: true,
+      state: { kind: "ready", snapshot: { ...projectDesktopWorkersSnapshot(hub(), null), version: 2 } },
+    },
   ])
     assert.throws(() => parseDesktopWorkersResponse(poison), /invalid-request/, JSON.stringify(poison).slice(0, 80));
 });

@@ -136,8 +136,7 @@ export function createDesktopSetupDriver(dependencies: DesktopSetupDependencies)
     try {
       const candidate =
         value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, "operation")?.value : undefined;
-      if (["status", "init", "join", "launch-status", "complete", "connect"].includes(candidate))
-        operation = candidate;
+      if (["status", "init", "join", "launch-status", "complete", "connect"].includes(candidate)) operation = candidate;
       request = parseDesktopSetupRequest(value);
     } catch {
       return desktopSetupFailure(operation, "invalid-request");

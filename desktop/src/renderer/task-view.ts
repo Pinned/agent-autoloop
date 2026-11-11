@@ -152,7 +152,8 @@ export function mountTaskDialog(
     }
     for (const field of [entrySelect, typeSelect, concreteInput, summaryInput, detailInput])
       field.disabled = !!operation || !controller.canSubmit || state.kind !== "ready";
-    anotherButton.hidden = !operation || controller.submitState.kind === "busy" || controller.submitState.kind === "uncertain";
+    anotherButton.hidden =
+      !operation || controller.submitState.kind === "busy" || controller.submitState.kind === "uncertain";
     anotherButton.disabled = !controller.canBeginAnother;
     if (state.kind === "loading") status.textContent = "正在读取任务入口。";
     else if (state.kind === "ready") status.textContent = state.entries.length ? "" : DESKTOP_TASK_MESSAGES.noEntry;
@@ -163,7 +164,10 @@ export function mountTaskDialog(
       error.hidden = true;
       submitButton.hidden = false;
       doneButton.hidden = true;
-      submitButton.disabled = !controller.canSubmit || controller.entriesState.kind !== "ready" || controller.entriesState.entries.length === 0;
+      submitButton.disabled =
+        !controller.canSubmit ||
+        controller.entriesState.kind !== "ready" ||
+        controller.entriesState.entries.length === 0;
       submitButton.textContent = "创建并入队";
     } else if (submission.kind === "busy") {
       error.hidden = true;
@@ -185,7 +189,11 @@ export function mountTaskDialog(
       if (notifiedResult !== submission.result) {
         // Record first: refresh may synchronously reenter update or fail, but the ACK remains fact.
         notifiedResult = submission.result;
-        try { onCreated(); } catch { /* A refresh failure is not a failed submission. */ }
+        try {
+          onCreated();
+        } catch {
+          /* A refresh failure is not a failed submission. */
+        }
       }
     } else {
       error.textContent = submission.message;
@@ -213,8 +221,11 @@ export function mountTaskDialog(
     const input: DesktopTaskInput = { type, summary: summaryInput.value, detail: detailInput.value };
     if (!controller.canSubmit) return;
     controller.submitTask(input, {
-      entry: entrySelect.value, pattern: typeSelect.value, concrete: concreteInput.value,
-      summary: summaryInput.value, detail: detailInput.value,
+      entry: entrySelect.value,
+      pattern: typeSelect.value,
+      concrete: concreteInput.value,
+      summary: summaryInput.value,
+      detail: detailInput.value,
     });
   });
   cancelButton.addEventListener("click", () => dialog.close());

@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DesktopWorkerSnapshot } from "../../host/desktop-worker-contract.ts";
-import {
-  createRendererLocalReading,
-  type LocalReadingBridge,
-} from "../src/renderer/local-reading-controller.ts";
+import { createRendererLocalReading, type LocalReadingBridge } from "../src/renderer/local-reading-controller.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

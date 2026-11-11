@@ -92,7 +92,10 @@ function fixture(state: unknown = { kind: "loading" }) {
     },
   };
   const view = withDocument(() =>
-    mountLocalReadingView(root as unknown as HTMLElement, control as unknown as Parameters<typeof mountLocalReadingView>[1]),
+    mountLocalReadingView(
+      root as unknown as HTMLElement,
+      control as unknown as Parameters<typeof mountLocalReadingView>[1],
+    ),
   );
   return { root, control, view, refreshes: () => refreshes };
 }

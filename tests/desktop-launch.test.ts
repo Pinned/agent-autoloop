@@ -120,14 +120,22 @@ test("prepared install never overwrites an unknown policy target", (t) => {
 });
 
 test("launch responses are parsed strictly and never carry extra fields", () => {
-  const status = { version: 1, operation: "launch-status", ok: true, data: { completion: "complete", nextLaunch: "embedded", current: "embedded" } };
+  const status = {
+    version: 1,
+    operation: "launch-status",
+    ok: true,
+    data: { completion: "complete", nextLaunch: "embedded", current: "embedded" },
+  };
   assert.deepEqual(parseDesktopLaunchResponse(status, "launch-status"), status);
   assert.throws(() =>
     parseDesktopLaunchResponse({ ...status, data: { ...status.data, key: "leak" } }, "launch-status"),
   );
   // A role must match its launch mode, so a hand-edited policy cannot pass as a valid one.
   assert.throws(() =>
-    parseDesktopLaunchResponse({ ...status, data: { completion: "complete", nextLaunch: "embedded", current: null } }, "launch-status"),
+    parseDesktopLaunchResponse(
+      { ...status, data: { completion: "complete", nextLaunch: "embedded", current: null } },
+      "launch-status",
+    ),
   );
   const complete = { version: 1, operation: "complete", ok: true, data: { nextLaunch: "worker" } };
   assert.deepEqual(parseDesktopLaunchResponse(complete, "complete"), complete);

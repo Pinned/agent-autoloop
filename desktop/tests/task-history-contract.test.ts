@@ -296,7 +296,14 @@ test("detail ID, section cursor and related self identity are checked against re
   bad(success({ ...detail(), relatedRuns: page([run()]) }), request("detail"));
   bad(success(page([run()])), request("related"));
   for (const operation of ["events", "cards", "related", "feedback"] as const) {
-    const item = operation === "events" ? event() : operation === "cards" ? card() : operation === "feedback" ? feedback(9) : run(9);
+    const item =
+      operation === "events"
+        ? event()
+        : operation === "cards"
+          ? card()
+          : operation === "feedback"
+            ? feedback(9)
+            : run(9);
     const data = { items: [item], hasMore: true, nextCursor: cursor(operation) };
     assert.deepEqual(parseTaskHistoryResponse(success(data), request(operation)), success(data));
     bad(success({ ...data, nextCursor: cursor(operation, 9, 13) }), request(operation));

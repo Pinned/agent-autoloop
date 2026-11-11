@@ -19,10 +19,7 @@ import type {
   DesktopRulesCasInput,
   DesktopRulesCasPutResponse,
 } from "../../host/desktop-rules-cas-contract.ts";
-import type {
-  DesktopTaskActionInput,
-  DesktopTaskActionResponse,
-} from "../../host/desktop-task-action-contract.ts";
+import type { DesktopTaskActionInput, DesktopTaskActionResponse } from "../../host/desktop-task-action-contract.ts";
 import type {
   DesktopSettingsGetResponse,
   DesktopSettingsInput,
@@ -115,7 +112,9 @@ export interface DesktopBridge {
   tasksGet(before?: number): Promise<DesktopTasksResponse>;
   /** One page of the hub's run query; `q/state/rule/agent/source/type` filter on the server. */
   taskList(input?: RunListInput): Promise<TaskHistoryResponse<"list">>;
-  taskDetail<R extends Exclude<TaskHistoryRequest, { operation: "list" }>>(request: R): Promise<TaskHistoryResponse<R["operation"]>>;
+  taskDetail<R extends Exclude<TaskHistoryRequest, { operation: "list" }>>(
+    request: R,
+  ): Promise<TaskHistoryResponse<R["operation"]>>;
   /** The real rule entries the new-task panel offers, from the local hub while it runs. */
   taskEntries(): Promise<DesktopTaskEntriesResponse>;
   /** Create one task through the hub's own door; the input is checked again in main. */

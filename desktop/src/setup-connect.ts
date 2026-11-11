@@ -5,10 +5,7 @@
 // "Connected" means the owner door answered 200 for this hub. A port that merely accepts a socket
 // proves nothing, so reachability is never mistaken for a connection here — the same judgement
 // attach mode uses, exported from one place so the two can never drift.
-import type {
-  DesktopConnectData,
-  DesktopConnectFailure,
-} from "../../host/desktop-setup-contract.ts";
+import type { DesktopConnectData, DesktopConnectFailure } from "../../host/desktop-setup-contract.ts";
 import type { DesktopCliDetection } from "../../host/desktop-cli-detect.ts";
 import type { OwnerDoor, OwnerDoorOutcome } from "./owner-door.ts";
 
@@ -29,9 +26,7 @@ function failure(outcome: Exclude<OwnerDoorOutcome, "ok">): DesktopConnectFailur
  * Total by design: detection is an untrusted read of another program's directory, and every branch
  * must still answer the page. A thrown read is "invalid" rather than an error the UI cannot show.
  */
-export async function resolveSetupConnect(
-  dependencies: SetupConnectDependencies,
-): Promise<DesktopConnectData> {
+export async function resolveSetupConnect(dependencies: SetupConnectDependencies): Promise<DesktopConnectData> {
   let detection: DesktopCliDetection;
   try {
     detection = dependencies.detect();
@@ -53,9 +48,7 @@ export async function resolveSetupConnect(
   if (endpoint === null) return { kind: "attach-failed", port, reason: "config-changed" };
   try {
     const outcome = await dependencies.probe(endpoint);
-    return outcome === "ok"
-      ? { kind: "attach", port }
-      : { kind: "attach-failed", port, reason: failure(outcome) };
+    return outcome === "ok" ? { kind: "attach", port } : { kind: "attach-failed", port, reason: failure(outcome) };
   } catch {
     return { kind: "attach-failed", port, reason: "unreachable" };
   }

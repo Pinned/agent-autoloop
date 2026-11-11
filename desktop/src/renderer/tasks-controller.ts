@@ -46,8 +46,13 @@ export type TasksDetailState =
   | { readonly kind: "idle"; readonly runId: null }
   | { readonly kind: "loading"; readonly runId: number }
   | { readonly kind: "failed"; readonly runId: number; readonly message: string }
-  | { readonly kind: "ready"; readonly runId: number; readonly data: Extract<TaskHistoryResponse<"detail">, { ok: true }>["data"] };
-export type TasksSectionState = { readonly kind: "idle" | "loading" | "end" | "capped" } | { readonly kind: "failed"; readonly message: string };
+  | {
+      readonly kind: "ready";
+      readonly runId: number;
+      readonly data: Extract<TaskHistoryResponse<"detail">, { ok: true }>["data"];
+    };
+export type TasksSectionState =
+  { readonly kind: "idle" | "loading" | "end" | "capped" } | { readonly kind: "failed"; readonly message: string };
 /** Ratings are their own page: they never changed the run, so they never join its detail snapshot. */
 export type TasksFeedbackState = Readonly<{
   readonly kind: "idle" | "loading" | "ready" | "end" | "capped" | "failed";
@@ -58,14 +63,26 @@ export type TasksFeedbackState = Readonly<{
 }>;
 type DetailData = Extract<TaskHistoryResponse<"detail">, { ok: true }>["data"];
 const sectionNames: readonly Section[] = ["events", "cards", "related"];
-const sectionKey = (section: Section) => section === "related" ? "relatedRuns" : section;
+const sectionKey = (section: Section) => (section === "related" ? "relatedRuns" : section);
 // Only the three JSON items arrays count, including array punctuation, not metadata/core.
-const itemsBytes = (data: DetailData) => sectionNames.reduce((total, section) =>
-  total + new TextEncoder().encode(JSON.stringify(data[sectionKey(section)].items)).length, 0);
-const ITEM_CAP = 1000, BYTE_CAP = 1024 * 1024;
+const itemsBytes = (data: DetailData) =>
+  sectionNames.reduce(
+    (total, section) => total + new TextEncoder().encode(JSON.stringify(data[sectionKey(section)].items)).length,
+    0,
+  );
+const ITEM_CAP = 1000,
+  BYTE_CAP = 1024 * 1024;
 function initialSections(data?: DetailData): Readonly<Record<Section, TasksSectionState>> {
-  const state = (section: Section): TasksSectionState => Object.freeze({ kind: !data ? "idle" :
-    !data[sectionKey(section)].hasMore ? "end" : data[sectionKey(section)].items.length >= ITEM_CAP ? "capped" : "idle" });
+  const state = (section: Section): TasksSectionState =>
+    Object.freeze({
+      kind: !data
+        ? "idle"
+        : !data[sectionKey(section)].hasMore
+          ? "end"
+          : data[sectionKey(section)].items.length >= ITEM_CAP
+            ? "capped"
+            : "idle",
+    });
   return Object.freeze({ events: state("events"), cards: state("cards"), related: state("related") });
 }
 /** What the owner narrowed the server-side query to; empty fields are never sent. */
@@ -129,27 +146,35 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
     session = null;
     pageFlights = { events: null, cards: null, related: null };
     sectionStates = initialSections();
-    feedbackState = Object.freeze({ kind: "idle", items: Object.freeze([]), hasMore: false, nextCursor: null, message: "" });
+    feedbackState = Object.freeze({
+      kind: "idle",
+      items: Object.freeze([]),
+      hasMore: false,
+      nextCursor: null,
+      message: "",
+    });
     feedbackFlight = null;
     detail = Object.freeze({ kind: "idle", runId: null });
     action = null;
     actionFlight = null;
     notify();
   }
-  bridge.onRuntimeEvent?.(payload => {
+  bridge.onRuntimeEvent?.((payload) => {
     const wasAllowed = detailAllowed;
     const generation = detailGeneration;
     let allowed = false;
     try {
       const state = parseDesktopRuntimeEvent(payload).state;
       allowed = state.status === "running" && state.role === "hub-worker";
-    } catch { /* Invalid pushes close admission. */ }
+    } catch {
+      /* Invalid pushes close admission. */
+    }
     if (generation !== detailGeneration) return;
     detailAllowed = allowed;
     if (!allowed || wasAllowed !== allowed) closeDetail();
   });
   function openDetail(runId: number) {
-    if (!detailAllowed || load.kind !== "ready" || !load.runs.some(run => run.id === runId)) return;
+    if (!detailAllowed || load.kind !== "ready" || !load.runs.some((run) => run.id === runId)) return;
     if (detail.runId === runId && (detail.kind === "loading" || detail.kind === "ready")) return;
     startDetail(runId);
   }
@@ -160,7 +185,13 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
     if (action?.runId !== runId) action = null;
     pageFlights = { events: null, cards: null, related: null };
     sectionStates = initialSections();
-    feedbackState = Object.freeze({ kind: "idle", items: Object.freeze([]), hasMore: false, nextCursor: null, message: "" });
+    feedbackState = Object.freeze({
+      kind: "idle",
+      items: Object.freeze([]),
+      hasMore: false,
+      nextCursor: null,
+      message: "",
+    });
     feedbackFlight = null;
     const request = Object.freeze({ operation: "detail" as const, runId });
     detail = Object.freeze({ kind: "loading", runId });
@@ -175,17 +206,27 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
         if (!current(token) || detail.kind !== "loading") return;
         if (result.ok) {
           // The strict existing detail budget (128KiB/40 per section) is below these limits.
-          if (itemsBytes(result.data) > BYTE_CAP || sectionNames.some(s => result.data[sectionKey(s)].items.length > ITEM_CAP))
+          if (
+            itemsBytes(result.data) > BYTE_CAP ||
+            sectionNames.some((s) => result.data[sectionKey(s)].items.length > ITEM_CAP)
+          )
             throw new Error("initial-detail-budget-conflict");
           next = Object.freeze({ kind: "ready", runId, data: result.data });
           groups = initialSections(result.data);
         } else next = Object.freeze({ kind: "failed", runId, message: result.error.message });
-      } catch { next = Object.freeze({ kind: "failed", runId, message: TASK_HISTORY_MESSAGES.error }); }
+      } catch {
+        next = Object.freeze({ kind: "failed", runId, message: TASK_HISTORY_MESSAGES.error });
+      }
       if (!current(token) || detail.kind !== "loading") return;
       sectionStates = groups;
       detail = next;
       // A fresh authoritative read is exactly what an unresolved receipt was waiting for.
-      if (next.kind === "ready" && action?.runId === runId && action.state.kind === "settled" && action.state.mustReread)
+      if (
+        next.kind === "ready" &&
+        action?.runId === runId &&
+        action.state.kind === "settled" &&
+        action.state.mustReread
+      )
         action = Object.freeze({ runId, state: Object.freeze({ ...action.state, mustReread: false }) });
       notify();
       // Only a delivered run can carry the owner's rating; other states never open that read.
@@ -194,25 +235,43 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
     try {
       const read = bridge.taskDetail;
       if (!current(token)) return;
-      if (!read) { finish(undefined); return; }
+      if (!read) {
+        finish(undefined);
+        return;
+      }
       const pending = read(request);
       // Always observe rejection, even when the bridge reentered and invalidated this session.
       void Promise.resolve(pending).then(finish, () => finish(undefined));
-    } catch { finish(undefined); }
+    } catch {
+      finish(undefined);
+    }
   }
   function loadDetailMore(section: Section) {
     if (!sectionNames.includes(section) || detail.kind !== "ready" || !session || !current(session)) return;
-    const key = sectionKey(section), old = detail.data[key];
-    if (pageFlights[section] || sectionStates[section].kind === "capped" || !old.hasMore || !old.nextCursor ||
-        (section === "related" && detail.data.association.kind === "unavailable")) return;
+    const key = sectionKey(section),
+      old = detail.data[key];
+    if (
+      pageFlights[section] ||
+      sectionStates[section].kind === "capped" ||
+      !old.hasMore ||
+      !old.nextCursor ||
+      (section === "related" && detail.data.association.kind === "unavailable")
+    )
+      return;
     const token: PageFlight = Object.freeze({ session, section, cursor: old.nextCursor });
     const active = () => current(token.session) && pageFlights[section] === token && detail.kind === "ready";
-    const setState = (state: TasksSectionState) => { sectionStates = Object.freeze({ ...sectionStates, [section]: Object.freeze(state) }); };
+    const setState = (state: TasksSectionState) => {
+      sectionStates = Object.freeze({ ...sectionStates, [section]: Object.freeze(state) });
+    };
     pageFlights[section] = token;
     setState({ kind: "loading" });
     notify();
     if (!active()) return;
-    const request = Object.freeze({ operation: section, runId: token.session.runId, input: Object.freeze({ cursor: token.cursor }) });
+    const request = Object.freeze({
+      operation: section,
+      runId: token.session.runId,
+      input: Object.freeze({ cursor: token.cursor }),
+    });
     function finish(value: unknown) {
       if (!active()) return;
       let next: TasksSectionState = { kind: "failed", message: TASK_HISTORY_MESSAGES.error };
@@ -222,15 +281,30 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
         if (!active() || detail.kind !== "ready") return;
         if (!result.ok) next = { kind: "failed", message: result.error.message };
         else {
-          const data = detail.data, previous = data[key], page = result.data;
+          const data = detail.data,
+            previous = data[key],
+            page = result.data;
           // Validate the entire page against the current tail; never filter bad items into success.
           const tail = previous.items.at(-1);
-          if (previous.nextCursor !== token.cursor || (page.hasMore && page.nextCursor === token.cursor)) throw new Error("cursor");
-          const seen = new Set(previous.items.map(item => item.id));
-          if (page.items.some(item => seen.has(item.id) || (tail && (section === "events"
-            ? `${token.session.runId}:${item.id}` >= `${token.session.runId}:${tail.id}` : item.id >= tail.id)))) throw new Error("page-order");
+          if (previous.nextCursor !== token.cursor || (page.hasMore && page.nextCursor === token.cursor))
+            throw new Error("cursor");
+          const seen = new Set(previous.items.map((item) => item.id));
+          if (
+            page.items.some(
+              (item) =>
+                seen.has(item.id) ||
+                (tail &&
+                  (section === "events"
+                    ? `${token.session.runId}:${item.id}` >= `${token.session.runId}:${tail.id}`
+                    : item.id >= tail.id)),
+            )
+          )
+            throw new Error("page-order");
           const items = Object.freeze([...previous.items, ...page.items]);
-          const candidate = Object.freeze({ ...data, [key]: Object.freeze({ items, hasMore: page.hasMore, nextCursor: page.nextCursor }) }) as DetailData;
+          const candidate = Object.freeze({
+            ...data,
+            [key]: Object.freeze({ items, hasMore: page.hasMore, nextCursor: page.nextCursor }),
+          }) as DetailData;
           // Read latest committed groups at settlement; parallel groups cannot both spend old bytes.
           if (items.length > ITEM_CAP || itemsBytes(candidate) > BYTE_CAP) next = { kind: "capped" };
           else {
@@ -238,7 +312,9 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
             next = { kind: !page.hasMore ? "end" : items.length >= ITEM_CAP ? "capped" : "idle" };
           }
         }
-      } catch { /* Fixed error, original cursor and already displayed items are retained. */ }
+      } catch {
+        /* Fixed error, original cursor and already displayed items are retained. */
+      }
       if (!active() || detail.kind !== "ready") return;
       if (appended) detail = Object.freeze({ kind: "ready", runId: token.session.runId, data: appended });
       pageFlights[section] = null; // Matching identity only; no stale finally can free a newer slot.
@@ -248,10 +324,15 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
     try {
       const read = bridge.taskDetail;
       if (!active()) return;
-      if (!read) { finish(undefined); return; }
+      if (!read) {
+        finish(undefined);
+        return;
+      }
       const pending = read(request);
       void Promise.resolve(pending).then(finish, () => finish(undefined));
-    } catch { finish(undefined); }
+    } catch {
+      finish(undefined);
+    }
   }
 
   function notify() {
@@ -276,9 +357,10 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
     feedbackFlight = flight;
     set({ ...feedbackState, kind: "loading" });
     notify();
-    const request = cursor === null
-      ? Object.freeze({ operation: "feedback" as const, runId: token.runId, input: Object.freeze({}) })
-      : Object.freeze({ operation: "feedback" as const, runId: token.runId, input: Object.freeze({ cursor }) });
+    const request =
+      cursor === null
+        ? Object.freeze({ operation: "feedback" as const, runId: token.runId, input: Object.freeze({}) })
+        : Object.freeze({ operation: "feedback" as const, runId: token.runId, input: Object.freeze({ cursor }) });
     function finish(value: unknown) {
       if (!active()) return;
       // This reply is ours: release the slot, then judge only by the session fence. Checking the
@@ -299,7 +381,8 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
           if (page.items.some((item) => seen.has(item.id) || (tail && item.id >= tail.id)))
             throw new Error("page-order");
           const items = Object.freeze([...previous, ...page.items]);
-          if (items.length > ITEM_CAP) next = { ...feedbackState, kind: "capped", items, hasMore: false, nextCursor: null };
+          if (items.length > ITEM_CAP)
+            next = { ...feedbackState, kind: "capped", items, hasMore: false, nextCursor: null };
           else
             next = {
               kind: page.hasMore ? "idle" : "end",
@@ -319,7 +402,10 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
     try {
       const read = bridge.taskDetail;
       if (!active()) return;
-      if (!read) { finish(undefined); return; }
+      if (!read) {
+        finish(undefined);
+        return;
+      }
       const pending = read(request);
       void Promise.resolve(pending).then(finish, () => finish(undefined));
     } catch {
@@ -334,12 +420,7 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
   }
   // Nothing left main: the click may be repeated once the cause is fixed.
   const notSent = new Set<DesktopTaskActionCode>(["invalid", "busy", "unavailable", "no-hub", "config"]);
-  function settle(
-    runId: number,
-    request: TasksActionRequest,
-    message: string,
-    retryable: boolean,
-  ): void {
+  function settle(runId: number, request: TasksActionRequest, message: string, retryable: boolean): void {
     action = Object.freeze({
       runId,
       state: Object.freeze({ kind: "settled", request, message, retryable, mustReread: !retryable }),
@@ -431,9 +512,7 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
             const seen = new Set(fresh.map((run) => run.id));
             // The refreshed first page is authoritative; older pages survive only behind its cursor.
             const boundary = result.data.hasMore ? result.data.nextBefore : null;
-            const kept = boundary === null
-              ? []
-              : load.runs.filter((run) => !seen.has(run.id) && run.id < boundary);
+            const kept = boundary === null ? [] : load.runs.filter((run) => !seen.has(run.id) && run.id < boundary);
             load = Object.freeze({
               kind: "ready",
               runs: Object.freeze([...fresh, ...kept]),
@@ -569,7 +648,9 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
   }
 
   return {
-    get detailState(): TasksDetailState { return detail; },
+    get detailState(): TasksDetailState {
+      return detail;
+    },
     /** The receipt of this run's last attempt; a re-read of the same run keeps it visible. */
     get actionState(): TasksActionState {
       return action ? action.state : Object.freeze({ kind: "idle" });
@@ -588,7 +669,9 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
     get feedbackState(): TasksFeedbackState {
       return feedbackState;
     },
-    get sectionState(): Readonly<Record<Section, TasksSectionState>> { return sectionStates; },
+    get sectionState(): Readonly<Record<Section, TasksSectionState>> {
+      return sectionStates;
+    },
     get loadState(): TasksLoadState {
       return load;
     },

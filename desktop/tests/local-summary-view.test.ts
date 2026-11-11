@@ -117,5 +117,8 @@ test("only a pure worker's task page becomes the local summary", () => {
   assert.equal(tasksPageMode("hub-worker"), "hub-history");
   // An unconfirmed role keeps the full workspace, so it also keeps the hub history page.
   assert.equal(tasksPageMode(null), "hub-history");
-  assert.equal(pagesFor("worker").some((page) => page.id === "today"), false);
+  assert.equal(
+    pagesFor("worker").some((page) => page.id === "today"),
+    false,
+  );
 });

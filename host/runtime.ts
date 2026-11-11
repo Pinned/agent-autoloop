@@ -165,8 +165,11 @@ export const cancels = (worker: string) => query.cancels(getView(), worker);
 export const memo = (run: number, text: string, now = Date.now()): { stopped: boolean } =>
   execute("memo", [run, { text }], now);
 /** Records the owner's rating of a finished delivery. Nothing else changes: no event, card or queued turn. */
-export const feedback = (run: number, given: { kind: string; text: string }, now = Date.now()): { ok: true; id: number } =>
-  execute("feedback", [run, given], now);
+export const feedback = (
+  run: number,
+  given: { kind: string; text: string },
+  now = Date.now(),
+): { ok: true; id: number } => execute("feedback", [run, given], now);
 export const sweep = (now = Date.now()) => execute("sweep", [], now);
 
 export function tick(now = Date.now()) {

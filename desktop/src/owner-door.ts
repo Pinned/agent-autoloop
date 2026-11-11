@@ -31,10 +31,7 @@ export type OwnerDoorOptions = {
   timeoutMs?: number;
 };
 
-export async function probeOwnerDoor(
-  endpoint: OwnerDoor,
-  options: OwnerDoorOptions = {},
-): Promise<OwnerDoorOutcome> {
+export async function probeOwnerDoor(endpoint: OwnerDoor, options: OwnerDoorOptions = {}): Promise<OwnerDoorOutcome> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? 2000;
   let response: Response;

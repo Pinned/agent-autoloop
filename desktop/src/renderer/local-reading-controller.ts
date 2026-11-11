@@ -1,7 +1,4 @@
-import {
-  parseDesktopWorkerLocalReading,
-  type DesktopWorkerSnapshot,
-} from "../../../host/desktop-worker-contract.ts";
+import { parseDesktopWorkerLocalReading, type DesktopWorkerSnapshot } from "../../../host/desktop-worker-contract.ts";
 import type { DesktopBridge } from "../policy.ts";
 
 export type LocalReadingBridge = Pick<DesktopBridge, "workersLocal">;

@@ -119,9 +119,10 @@ function syncShell() {
     reconnectView = undefined;
     // The page the user was on is still current; it was only covered. Rebuild it once this
     // notification returns, so a render never re-enters the controller that is still notifying.
-    if (wasReconnect) queueMicrotask(() => {
-      if (shell === "workspace" && reconnectView === undefined) render(currentPage, false);
-    });
+    if (wasReconnect)
+      queueMicrotask(() => {
+        if (shell === "workspace" && reconnectView === undefined) render(currentPage, false);
+      });
   }
 }
 function applyShell(mode: ShellMode) {
@@ -150,8 +151,7 @@ function syncNavigation(role: Role) {
   navLabel.textContent = navLabelFor(role);
   // Nothing to create locally: a pure worker only receives work from the hub it belongs to.
   newTaskButton.hidden = role === "worker";
-  for (const button of navigation.querySelectorAll<HTMLButtonElement>("button"))
-    button.disabled = navigationDisabled;
+  for (const button of navigation.querySelectorAll<HTMLButtonElement>("button")) button.disabled = navigationDisabled;
   markCurrent();
   // A role change can strand the current page outside its own view. Leave the page only after this
   // notification returns: a render here would re-enter the setup controller mid-change. With the
@@ -166,13 +166,17 @@ function syncNavigation(role: Role) {
   // history for an owner and a local summary for a pure worker, and the reading lives on a
   // different page in each role. Rebuild it once the notification returns, and only if the role
   // actually moved the page under the user.
-  if (renderedFlavor !== null && shell === "workspace" && pages.some((page) => page.id === currentPage) &&
-      pageFlavor(role, currentPage) !== renderedFlavor)
+  if (
+    renderedFlavor !== null &&
+    shell === "workspace" &&
+    pages.some((page) => page.id === currentPage) &&
+    pageFlavor(role, currentPage) !== renderedFlavor
+  )
     queueMicrotask(() => {
       if (shell !== "workspace") return;
       const now = currentRole();
-      if (pagesFor(now).some((page) => page.id === currentPage) &&
-          pageFlavor(now, currentPage) !== renderedFlavor) render(currentPage, false);
+      if (pagesFor(now).some((page) => page.id === currentPage) && pageFlavor(now, currentPage) !== renderedFlavor)
+        render(currentPage, false);
     });
 }
 let setupView: ReturnType<typeof mountSetupView> | undefined;
@@ -198,7 +202,11 @@ const localReading = createRendererLocalReading(window.desktop, () => {
 });
 // The new-task dialog is app-level: one <dialog>, one entry list, one submission at a time.
 let taskGate = () => false;
-const taskControl = createRendererTask(window.desktop, () => taskPanel.update(), () => taskGate());
+const taskControl = createRendererTask(
+  window.desktop,
+  () => taskPanel.update(),
+  () => taskGate(),
+);
 const taskPanel = mountTaskDialog(taskControl, () => today.refresh());
 function openTaskDialog() {
   taskPanel.open();
@@ -216,8 +224,7 @@ const run = createRendererRun(
     // The launch record may already have proven a workspace while the first runtime reading was
     // still in flight; that reading is what reveals whether the hub behind it is reachable. Draw
     // the page only now, in the shape the shell just settled on.
-    if (shell === "workspace" && setupView === undefined && main.childElementCount === 0)
-      render(currentPage, false);
+    if (shell === "workspace" && setupView === undefined && main.childElementCount === 0) render(currentPage, false);
     // The runtime's role is the authoritative one; the launch record covers a stopped machine.
     syncNavigation(currentRole());
     if (currentPage === "workers") runCard?.update();
@@ -262,8 +269,7 @@ const setup = createRendererSetup(window.desktop, () => {
   // Completion is the one moment the setup page has nothing left to say: the launch record now
   // proves a workspace, so the page is taken down and the page behind it drawn. Without this the
   // empty-window check below never fires, because the setup page still owns #main.
-  if (setup.state.kind === "completed" && mode === "workspace" && setupView !== undefined)
-    render(currentPage, false);
+  if (setup.state.kind === "completed" && mode === "workspace" && setupView !== undefined) render(currentPage, false);
   // Saving does not start a runtime. Completion only requests it; runtime is authoritative.
   if (setup.state.kind === "prepared" || setup.state.kind === "completed") run.refresh();
   if (setup.state.kind === "configured") run.refresh();
@@ -277,8 +283,12 @@ const setup = createRendererSetup(window.desktop, () => {
   // stop claiming a page is current.
   markCurrent();
 });
-taskGate = () => run.state.kind === "ready" && run.state.snapshot.status === "running" &&
-  run.state.snapshot.role === "hub-worker" && !setup.busy && setup.state.kind !== "unknown-locked";
+taskGate = () =>
+  run.state.kind === "ready" &&
+  run.state.snapshot.status === "running" &&
+  run.state.snapshot.role === "hub-worker" &&
+  !setup.busy &&
+  setup.state.kind !== "unknown-locked";
 taskControl.gateChanged();
 // The automation page is app-level too: one entry list and one edit dialog, page switches only
 // re-attach the card, so an edit in progress is never lost to navigation. The draft keeps the

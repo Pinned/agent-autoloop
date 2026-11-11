@@ -28,8 +28,11 @@ export function createTaskActionIpc(options: {
     // Malformed drafts never leave main. A rejected draft is a receipt, not a throw: nothing was
     // sent, so the page may offer the edit again without waiting for a re-read.
     let input;
-    try { input = parseDesktopTaskActionInput(args[0]); }
-    catch { return desktopTaskActionFailure("invalid"); }
+    try {
+      input = parseDesktopTaskActionInput(args[0]);
+    } catch {
+      return desktopTaskActionFailure("invalid");
+    }
     if (flight !== undefined) return desktopTaskActionFailure("busy");
     const token = Object.freeze({});
     flight = token;
@@ -37,26 +40,42 @@ export function createTaskActionIpc(options: {
     try {
       // No lease means the write window is closed: not running, worker-only, a setup/runtime
       // transition, quitting, or a replaced document. Fail closed without sending.
-      try { lease = options.presentation.acquireTaskLease(); }
-      catch { return desktopTaskActionFailure("unavailable"); }
+      try {
+        lease = options.presentation.acquireTaskLease();
+      } catch {
+        return desktopTaskActionFailure("unavailable");
+      }
       if (!lease || flight !== token) return desktopTaskActionFailure("unavailable");
       const own = lease;
       const canSend = () => {
-        try { return flight === token && options.presentation.checkTaskLease(own) && flight === token; }
-        catch { return false; }
+        try {
+          return flight === token && options.presentation.checkTaskLease(own) && flight === token;
+        } catch {
+          return false;
+        }
       };
       if (!canSend()) return desktopTaskActionFailure("unavailable");
       let response: unknown;
-      try { response = await options.source.execute(input); }
-      catch { return desktopTaskActionFailure("uncertain"); }
+      try {
+        response = await options.source.execute(input);
+      } catch {
+        return desktopTaskActionFailure("uncertain");
+      }
       // A receipt is a hub fact. A gate change after the request left cannot undo what the hub
       // already recorded, and calling it uncertain would invite a duplicate write.
-      try { return parseDesktopTaskActionResponse(response); }
-      catch { return desktopTaskActionFailure("uncertain"); }
+      try {
+        return parseDesktopTaskActionResponse(response);
+      } catch {
+        return desktopTaskActionFailure("uncertain");
+      }
     } finally {
-      try { if (lease) options.presentation.releaseTaskLease(lease); }
-      catch { /* Cleanup observers cannot rewrite an acknowledged receipt. */ }
-      finally { if (flight === token) flight = undefined; }
+      try {
+        if (lease) options.presentation.releaseTaskLease(lease);
+      } catch {
+        /* Cleanup observers cannot rewrite an acknowledged receipt. */
+      } finally {
+        if (flight === token) flight = undefined;
+      }
     }
   };
 }

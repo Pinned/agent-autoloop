@@ -7,22 +7,57 @@ import { createRendererTasks } from "../src/renderer/tasks-controller.ts";
 import { mountTasksView } from "../src/renderer/tasks-view.ts";
 
 const run = (id: number, overrides: Partial<RunItem> = {}): RunItem => ({
-  id, rule: "值班规则", agent: "claude", state: "done", attempts: 1, createdAt: null, claimedAt: null,
-  finishedAt: null, notBefore: null, summary: "完成", error: "", stopping: false, usage: null, truncated: false,
+  id,
+  rule: "值班规则",
+  agent: "claude",
+  state: "done",
+  attempts: 1,
+  createdAt: null,
+  claimedAt: null,
+  finishedAt: null,
+  notBefore: null,
+  summary: "完成",
+  error: "",
+  stopping: false,
+  usage: null,
+  truncated: false,
   ...overrides,
 });
 const pageOf = (runs: RunItem[]) => ({ version: 1, ok: true, data: { items: runs, hasMore: false, nextBefore: null } });
 
 class Element {
-  className = ""; type = ""; hidden = false; disabled = false; value = ""; children: Element[] = []; private text = "";
-  listeners = new Map<string, () => void>(); attributes = new Map<string, string>();
-  set textContent(value: string) { this.text = value; this.children = []; }
-  get textContent(): string { return this.text + this.children.map((x) => x.textContent).join(" "); }
-  append(...items: Element[]) { this.children.push(...items); }
-  replaceChildren(...items: Element[]) { this.text = ""; this.children = items; }
-  setAttribute(key: string, value: string) { this.attributes.set(key, value); }
-  addEventListener(key: string, listener: () => void) { this.listeners.set(key, listener); }
-  fire(kind = "click") { this.listeners.get(kind)?.(); }
+  className = "";
+  type = "";
+  hidden = false;
+  disabled = false;
+  value = "";
+  children: Element[] = [];
+  private text = "";
+  listeners = new Map<string, () => void>();
+  attributes = new Map<string, string>();
+  set textContent(value: string) {
+    this.text = value;
+    this.children = [];
+  }
+  get textContent(): string {
+    return this.text + this.children.map((x) => x.textContent).join(" ");
+  }
+  append(...items: Element[]) {
+    this.children.push(...items);
+  }
+  replaceChildren(...items: Element[]) {
+    this.text = "";
+    this.children = items;
+  }
+  setAttribute(key: string, value: string) {
+    this.attributes.set(key, value);
+  }
+  addEventListener(key: string, listener: () => void) {
+    this.listeners.set(key, listener);
+  }
+  fire(kind = "click") {
+    this.listeners.get(kind)?.();
+  }
 }
 const all = (node: Element): Element[] => [node, ...node.children.flatMap(all)];
 const byClass = (root: Element, name: string) => all(root).filter((x) => x.className === name);
@@ -52,9 +87,10 @@ test("search and status are sent to the hub, and the bar says what the query act
     const search = byClass(root, "tasks-search")[0];
     const stateFilter = byClass(root, "tasks-state-filter")[0];
     // Every status is offered by its own fixed label; the first entry means "no status filter".
-    assert.deepEqual(stateFilter.children.map((option) => option.textContent), [
-      "全部状态", "排队中", "运行中", "失联", "完成", "没事可做", "没跑成", "已取消",
-    ]);
+    assert.deepEqual(
+      stateFilter.children.map((option) => option.textContent),
+      ["全部状态", "排队中", "运行中", "失联", "完成", "没事可做", "没跑成", "已取消"],
+    );
     assert.match(root.textContent, /关键词只匹配任务摘要与失败原因/);
     assert.match(root.textContent, /不是当前这一页/);
 

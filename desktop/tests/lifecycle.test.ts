@@ -34,8 +34,13 @@ type BusinessCase =
   | { stage: "ok"; routed: string[]; summary: string; todayReady: boolean; stopped: { state: object } }
   | TaskCreatedCase;
 const taskCreated = (routed: string[] = [LIFECYCLE_RULE_NAME]): TaskCreatedCase => ({
-  stage: "create", deadline: TASK_DEADLINE,
-  created: { version: 3, outcome: "accepted", receipt: { version: 2, ok: true, result: { event: 1, duplicate: false, routed } } },
+  stage: "create",
+  deadline: TASK_DEADLINE,
+  created: {
+    version: 3,
+    outcome: "accepted",
+    receipt: { version: 2, ok: true, result: { event: 1, duplicate: false, routed } },
+  },
 });
 const base = { isPackaged: false, hasHome: true, smoke: false };
 const validJoin = { url: "http://127.0.0.1:3350", worker: "smoke-worker", key: "k" };
@@ -174,7 +179,9 @@ test("lifecycle scripts drive only the real renderer bridge with bounded polling
   assert.match(finish, /get\.state\.error === null/);
   assert.throws(() => lifecycleHubBusinessFinishScript(NaN));
   assert.throws(() => lifecycleHubBusinessFinishScript(-1));
-  assert.throws(() => parseLifecycleTaskReceipt({ version: 2, ok: true, result: { event: 1, duplicate: false, routed: [] } }));
+  assert.throws(() =>
+    parseLifecycleTaskReceipt({ version: 2, ok: true, result: { event: 1, duplicate: false, routed: [] } }),
+  );
   assert.deepEqual(parseLifecycleTaskReceipt(taskCreated().created).routed, [LIFECYCLE_RULE_NAME]);
   const worker = lifecycleWorkerStartScript(validJoin);
   assert.match(worker, /window\.desktop\.setupStatus\(\)/);
@@ -259,10 +266,17 @@ test("hub drive aborts on every unverified stage instead of continuing", async (
   for (const first of cases) {
     const { port } = recorder();
     let evaluations = 0;
-    port.evaluate = async () => { evaluations++; return first; };
-    let aborted = 0; port.abort = () => { aborted++; };
+    port.evaluate = async () => {
+      evaluations++;
+      return first;
+    };
+    let aborted = 0;
+    port.abort = () => {
+      aborted++;
+    };
     await runLifecycleHubDrive(port, "/tmp/r");
-    assert.equal(aborted, 1); assert.equal(evaluations, 1);
+    assert.equal(aborted, 1);
+    assert.equal(evaluations, 1);
   }
   const runCases = [
     { start: { ok: true }, running: null },
@@ -271,22 +285,34 @@ test("hub drive aborts on every unverified stage instead of continuing", async (
   for (const second of runCases) {
     const { events, port } = recorder();
     let evaluations = 0;
-    port.evaluate = async (script) => { evaluations++; return (
-      script === lifecycleHubSetupScript()
+    port.evaluate = async (script) => {
+      evaluations++;
+      return script === lifecycleHubSetupScript()
         ? {
             status: { ok: true, data: { configuration: "unconfigured" } },
             init: { ok: true, data: { role: "hub-worker" } },
           }
-        : second); };
+        : second;
+    };
     await runLifecycleHubDrive(port, "/tmp/r");
-    assert.equal(evaluations, 2); assert.equal(events.length, 1); assert.match(events[0], /^abort:/);
+    assert.equal(evaluations, 2);
+    assert.equal(events.length, 1);
+    assert.match(events[0], /^abort:/);
   }
   const businessCases: BusinessCase[] = [
     { stage: "agents" },
     { stage: "ok", routed: [], summary: "", todayReady: true, stopped: { state: { status: "stopped", error: null } } },
     taskCreated([]),
-    { stage: "create", deadline: TASK_DEADLINE, created: { version: 3, outcome: "uncertain", message: DESKTOP_TASK_MESSAGES.uncertain } },
-    { stage: "create", deadline: TASK_DEADLINE, created: { version: 2, ok: true, result: { event: 1, duplicate: false, routed: [LIFECYCLE_RULE_NAME] } } },
+    {
+      stage: "create",
+      deadline: TASK_DEADLINE,
+      created: { version: 3, outcome: "uncertain", message: DESKTOP_TASK_MESSAGES.uncertain },
+    },
+    {
+      stage: "create",
+      deadline: TASK_DEADLINE,
+      created: { version: 2, ok: true, result: { event: 1, duplicate: false, routed: [LIFECYCLE_RULE_NAME] } },
+    },
     { ...taskCreated(), deadline: NaN },
     {
       stage: "ok",
@@ -313,7 +339,8 @@ test("hub drive aborts on every unverified stage instead of continuing", async (
         };
       if (script === lifecycleHubRunScript())
         return { start: { ok: true }, running: { state: { status: "running", role: "hub-worker" } } };
-      if (script === lifecycleHubBusinessScript("/tmp/r")) return third.stage === "ok" ? taskCreated(third.routed) : third;
+      if (script === lifecycleHubBusinessScript("/tmp/r"))
+        return third.stage === "ok" ? taskCreated(third.routed) : third;
       assert.equal(script, lifecycleHubBusinessFinishScript(TASK_DEADLINE));
       return third;
     };
