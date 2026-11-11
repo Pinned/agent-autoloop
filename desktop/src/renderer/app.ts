@@ -501,11 +501,8 @@ function render(id: string, focus = true) {
 }
 newTaskButton.addEventListener("click", openTaskDialog);
 document.querySelector("#view-connection")!.addEventListener("click", () => render("workers"));
-document.querySelector("#hide-window")!.addEventListener("click", () => {
-  window.desktop.window("hide").catch(report);
-});
-document.querySelector("#quit-app")!.addEventListener("click", quitApp);
-// The one way out of the app, shared by the titlebar and a page that has no workspace behind it.
+// The one way out of the app is a page that has no workspace behind it; the shell itself offers
+// neither quit nor hide, leaving the window's own menu and tray as the machine-level exits.
 function quitApp() {
   window.desktop.window("quit").catch(report);
 }

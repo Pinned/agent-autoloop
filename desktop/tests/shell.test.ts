@@ -25,7 +25,10 @@ test("product shell has no development banners and keeps real runtime navigation
   assert.doesNotMatch(setup, /安装检查|保存不会启动运行服务/);
   assert.match(html, /id="runtime-status"/);
   assert.match(html, /id="view-connection"/);
-  assert.match(html, /id="quit-app"/);
+  // The shell no longer carries its own exits: no quit in the footer, no hide in the titlebar. The
+  // window's menu, the tray and the reconnect page keep those powers.
+  assert.doesNotMatch(html, /id="quit-app"|id="hide-window"/);
+  assert.match(html, /class="titlebar"[^>]*aria-hidden="true"/);
   assert.match(app, /page-head-copy/);
   assert.match(app, /page-head-actions/);
   assert.match(app, /if \(id === "settings"\) \{/);
