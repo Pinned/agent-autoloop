@@ -28,7 +28,7 @@ export type SetupState =
   | { readonly kind: "completed"; readonly mode: DesktopLaunchMode }
   | (Wizard & { readonly kind: "wizard" })
   | { readonly kind: "submitting"; readonly wizard: Wizard }
-  | { readonly kind: "configured"; readonly role: SetupRole; readonly created: boolean }
+  | { readonly kind: "configured"; readonly role: SetupRole }
   | { readonly kind: "blocked"; readonly message: string; readonly retry: boolean }
   | { readonly kind: "mutation-unresolved"; readonly message: string }
   | { readonly kind: "unknown-locked"; readonly message: string };
@@ -142,7 +142,7 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
       case "status":
         lock = null;
         if (response.data.configuration === "configured") {
-          set({ kind: "configured", role: response.data.role!, created: false });
+          set({ kind: "configured", role: response.data.role! });
         } else if (response.data.configuration === "unconfigured") {
           setWizard(initialWizard());
         } else {
