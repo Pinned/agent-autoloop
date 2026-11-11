@@ -153,7 +153,7 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
           form.append(
             element(
               "p",
-              "应用启动时会读取本机 CLI 的连接配置（仅回环地址与本机认证所需的 owner），不读取密钥。该配置指向中台时，应用直接接入，不会另起一个；连不上则显示重连页。",
+              "应用启动时会读取本机 CLI 的连接配置（回环地址与本机认证所需的 owner）；owner 只在每次请求时从该配置读取，不存入应用状态、页面或日志。该配置指向中台时，应用直接接入，不会另起一个；连不上则显示重连页。",
               "muted",
             ),
             element("p", "本机 CLI 未配置中台、配置为纯执行机或未安装时，应用使用自己的内置中台；原任务与记录保留在原中台，不会自动迁移。", "muted"),
@@ -267,7 +267,7 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
             ),
           );
       } else if (state.kind === "configured") {
-        status.textContent = state.created ? "本机配置已保存。" : "这台电脑已有配置，本轮不提供覆盖或切换角色。";
+        status.textContent = "这台电脑已有配置，本轮不提供覆盖或切换角色。";
         panel.append(
           element("h2", roles[state.role]),
           element("p", "本次未启动服务；Agent 登录未验证。这里不判断运行服务当前是否在线。", "muted"),

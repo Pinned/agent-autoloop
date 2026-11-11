@@ -234,7 +234,7 @@ test("status maps configurations and fixed errors; retries are explicit", async 
     f.gates[0].resolve(status(configuration, configuration === "configured" ? "worker" : null));
     await flush();
     if (configuration === "configured") {
-      assert.deepEqual(f.controller.state, { kind: "configured", role: "worker", created: false });
+      assert.deepEqual(f.controller.state, { kind: "configured", role: "worker" });
       f.controller.leave();
       f.controller.open();
     } else {
