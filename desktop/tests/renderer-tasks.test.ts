@@ -45,7 +45,7 @@ const pageOf = (runs: RunItem[], overrides: { hasMore?: boolean; nextBefore?: nu
   data: {
     items: runs,
     hasMore: overrides.hasMore ?? false,
-    nextBefore: overrides.hasMore === undefined ? null : overrides.nextBefore ?? null,
+    nextBefore: overrides.hasMore === undefined ? null : (overrides.nextBefore ?? null),
   },
 });
 const failureOf = (code: keyof typeof TASK_HISTORY_MESSAGES): Record<string, unknown> => ({
@@ -182,7 +182,10 @@ test("appended pages are deduplicated by run id, keeping the walks honest", asyn
   f.answer(pageOf([run(3, { state: "claimed" }), run(1)]));
   await flush();
   const runs = runsOf(f);
-  assert.deepEqual(runs.map((item) => item.id), [3, 2, 1]);
+  assert.deepEqual(
+    runs.map((item) => item.id),
+    [3, 2, 1],
+  );
   // An updated duplicate never rewrites the row already on screen.
   assert.equal(runs[0].state, "queued");
   assert.equal(f.controller.moreState.kind, "idle");
@@ -205,11 +208,11 @@ test("a failed or malformed page keeps the list and costs one fixed message", as
     assert.equal(more.kind, "failed");
     // The hub's own classification when it answered; the generic line when the reply was unusable.
     if (more.kind === "failed")
-      assert.ok([
-        TASK_HISTORY_MESSAGES.timeout,
-        TASK_HISTORY_MESSAGES.error,
-        DESKTOP_TASKS_MESSAGES.loadFailed,
-      ].includes(more.message));
+      assert.ok(
+        [TASK_HISTORY_MESSAGES.timeout, TASK_HISTORY_MESSAGES.error, DESKTOP_TASKS_MESSAGES.loadFailed].includes(
+          more.message,
+        ),
+      );
     // One retry click walks the same cursor again.
     f.controller.loadMore();
     assert.deepEqual(f.calls, [{}, { before: 2 }, { before: 2 }]);
@@ -229,14 +232,20 @@ test("a refresh during paging is refused, and a load during paging never restart
   f.answer(pageOf([run(1)]));
   await flush();
   assert.equal(f.controller.busy, false);
-  assert.deepEqual(runsOf(f).map((item) => item.id), [3, 2, 1]);
+  assert.deepEqual(
+    runsOf(f).map((item) => item.id),
+    [3, 2, 1],
+  );
   // After the walk ends, a refresh starts over from page one.
   f.controller.refresh();
   assert.deepEqual(f.calls, [{}, { before: 2 }, {}]);
   assert.equal(f.controller.loadState.kind, "loading");
   f.answer(pageOf([run(5)]));
   await flush();
-  assert.deepEqual(runsOf(f).map((item) => item.id), [5]);
+  assert.deepEqual(
+    runsOf(f).map((item) => item.id),
+    [5],
+  );
   assert.equal(f.controller.moreState.kind, "idle");
 });
 
@@ -251,7 +260,10 @@ test("the search and the status picker are the hub's own query, never a local fi
   assert.equal(f.controller.loadState.kind, "loading");
   f.answer(pageOf([run(9)]));
   await flush();
-  assert.deepEqual(runsOf(f).map((item) => item.id), [9]);
+  assert.deepEqual(
+    runsOf(f).map((item) => item.id),
+    [9],
+  );
   // Blank fields are omitted entirely: the contract refuses an empty filter value.
   f.controller.setFilter({ q: "  ", state: "failed" });
   assert.deepEqual(f.calls.at(-1), { state: "failed" });
@@ -279,7 +291,10 @@ test("later pages carry the same filter, and a changed filter fences the late pa
   assert.deepEqual(f.calls.at(-1), { q: "发布", before: 3 });
   f.answer(pageOf([run(2)], { hasMore: true, nextBefore: 2 }));
   await flush();
-  assert.deepEqual(runsOf(f).map((item) => item.id), [5, 3, 2]);
+  assert.deepEqual(
+    runsOf(f).map((item) => item.id),
+    [5, 3, 2],
+  );
   // A page still in the air when the owner changes the query never answers the new question.
   f.controller.loadMore();
   f.controller.setFilter({ q: "失败", state: "failed" });
@@ -289,7 +304,10 @@ test("later pages carry the same filter, and a changed filter fences the late pa
   assert.equal(f.controller.loadState.kind, "loading");
   f.answer(pageOf([run(7)]));
   await flush();
-  assert.deepEqual(runsOf(f).map((item) => item.id), [7]);
+  assert.deepEqual(
+    runsOf(f).map((item) => item.id),
+    [7],
+  );
   assert.equal(f.controller.moreState.kind, "idle");
 });
 

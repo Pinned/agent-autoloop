@@ -199,7 +199,10 @@ test("the local form is checked before the bridge; every handed-out reference is
   assert.equal(agentsOf(c.getState().draft?.value)[0].name, "甲");
   const state = c.getState();
   assert.throws(() => (state.snapshot!.agents[0].name = "poison"), TypeError);
-  assert.throws(() => (globalOf(state.draft!.value) as unknown as { askFirst: string[] }).askFirst.push("注入"), TypeError);
+  assert.throws(
+    () => (globalOf(state.draft!.value) as unknown as { askFirst: string[] }).askFirst.push("注入"),
+    TypeError,
+  );
   assert.throws(() => (state.draft!.rulesSeq = 1), TypeError);
 });
 
@@ -212,7 +215,10 @@ test("a raw bridge answer cannot be mutated after it is accepted", async () => {
   await flush();
   // The controller keeps its own frozen copy: later edits to the shared answer change nothing.
   (raw.data.agents as DesktopSettingsAgent[]).push({ id: "z", name: "注入", worker: "w1", use: "x", access: "edit" });
-  assert.equal(c.getState().snapshot?.agents.some((agent) => agent.id === "z"), false);
+  assert.equal(
+    c.getState().snapshot?.agents.some((agent) => agent.id === "z"),
+    false,
+  );
 });
 
 test("a late read from before a recovery never overwrites the recovery's answer", async () => {

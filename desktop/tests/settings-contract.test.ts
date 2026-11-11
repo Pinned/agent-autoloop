@@ -38,7 +38,10 @@ const getSuccess = () => ({ version: 1, ok: true, data: data() });
 
 test("the snapshot keeps only the editable sections, keyed maps become id-tagged lists", () => {
   const snapshot = data();
-  assert.deepEqual(snapshot.agents.map((agent) => agent.id), ["a1", "a2"]);
+  assert.deepEqual(
+    snapshot.agents.map((agent) => agent.id),
+    ["a1", "a2"],
+  );
   assert.deepEqual(snapshot.agents[0], { id: "a1", name: "甲", worker: "w1", use: "claude", access: "edit" });
   assert.deepEqual(snapshot.agents[1].command, ["node", "x.mjs"]);
   assert.deepEqual(snapshot.sources, [
@@ -84,11 +87,14 @@ test("agent fields are checked the way the door checks them", () => {
 });
 
 test("input is exactly section/value/rulesSeq; values are checked per section", () => {
-  assert.deepEqual(parseDesktopSettingsInput({ section: "settings", value: { timezone: "UTC", askFirst: [] }, rulesSeq: 1 }), {
-    section: "settings",
-    value: { timezone: "UTC", askFirst: [] },
-    rulesSeq: 1,
-  });
+  assert.deepEqual(
+    parseDesktopSettingsInput({ section: "settings", value: { timezone: "UTC", askFirst: [] }, rulesSeq: 1 }),
+    {
+      section: "settings",
+      value: { timezone: "UTC", askFirst: [] },
+      rulesSeq: 1,
+    },
+  );
   for (const value of [
     [],
     { section: "rules", value: [], rulesSeq: 1 },
@@ -110,25 +116,34 @@ test("input is exactly section/value/rulesSeq; values are checked per section", 
 
 test("a save's body is the versioned wrapper the door reads", () => {
   assert.deepEqual(
-    JSON.parse(desktopSettingsHubBody({
-      section: "settings",
-      value: { timezone: "UTC", askFirst: ["删数据"] },
-      rulesSeq: 9,
-    })),
+    JSON.parse(
+      desktopSettingsHubBody({
+        section: "settings",
+        value: { timezone: "UTC", askFirst: ["删数据"] },
+        rulesSeq: 9,
+      }),
+    ),
     { section: { timezone: "UTC", askFirst: ["删数据"] }, rulesSeq: 9 },
   );
   assert.deepEqual(
-    JSON.parse(desktopSettingsHubBody({
-      section: "sources",
-      value: [{ id: "app", name: "应用", adapter: "hook" }],
-      rulesSeq: 9,
-    })),
+    JSON.parse(
+      desktopSettingsHubBody({
+        section: "sources",
+        value: [{ id: "app", name: "应用", adapter: "hook" }],
+        rulesSeq: 9,
+      }),
+    ),
     { section: { app: { name: "应用", adapter: "hook" } }, rulesSeq: 9 },
   );
 });
 
 test("a confirmed save swaps one section and adopts the receipt's versions", () => {
-  const next = applyDesktopSettingsSection(data(), "settings", { timezone: "UTC", askFirst: [] }, { seq: 20, rulesSeq: 5 });
+  const next = applyDesktopSettingsSection(
+    data(),
+    "settings",
+    { timezone: "UTC", askFirst: [] },
+    { seq: 20, rulesSeq: 5 },
+  );
   assert.equal(next.timezone, "UTC");
   assert.deepEqual(next.askFirst, []);
   assert.equal(next.seq, 20);
@@ -150,7 +165,11 @@ test("replies are strict: fixed messages, paired codes/outcomes, no extra fields
     { version: 1, ok: false, error: { code: "error", message: "别的文案" } },
   ])
     assert.throws(() => parseDesktopSettingsGetResponse(value));
-  const put = { version: 1, ok: true, data: { section: "settings", value: { timezone: "UTC", askFirst: [] }, seq: 1, rulesSeq: 2 } };
+  const put = {
+    version: 1,
+    ok: true,
+    data: { section: "settings", value: { timezone: "UTC", askFirst: [] }, seq: 1, rulesSeq: 2 },
+  };
   assert.equal(parseDesktopSettingsPutResponse(put).ok, true);
   for (const [code, outcome] of [
     ["conflict", "not-sent"],
@@ -159,7 +178,13 @@ test("replies are strict: fixed messages, paired codes/outcomes, no extra fields
     ["uncertain", "not-sent"],
     ["error", "uncertain"],
   ])
-    assert.throws(() => parseDesktopSettingsPutResponse({ version: 1, ok: false, error: { code, outcome, message: DESKTOP_SETTINGS_MESSAGES[code as keyof typeof DESKTOP_SETTINGS_MESSAGES] } }));
+    assert.throws(() =>
+      parseDesktopSettingsPutResponse({
+        version: 1,
+        ok: false,
+        error: { code, outcome, message: DESKTOP_SETTINGS_MESSAGES[code as keyof typeof DESKTOP_SETTINGS_MESSAGES] },
+      }),
+    );
   assert.equal(desktopSettingsGetFailure("no-hub").ok, false);
   assert.equal(desktopSettingsPutFailure("conflict", "rejected").ok, false);
   assert.equal(parseDesktopSettingsData(data()).rulesSeq, 4);

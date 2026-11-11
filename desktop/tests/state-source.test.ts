@@ -413,7 +413,10 @@ test("the workers source projects presence, distribution and only the local work
     assert.equal(snapshot.agents[0].local, true);
     assert.equal(snapshot.agents[1].local, false);
     assert.equal(snapshot.agents[0].totals.doneToday, 3);
-    assert.deepEqual(snapshot.channels.map((channel) => channel.id), ["chat"]);
+    assert.deepEqual(
+      snapshot.channels.map((channel) => channel.id),
+      ["chat"],
+    );
     // Keys, links and any environment facts never leave main.
     assert.ok(!JSON.stringify(snapshot).includes("key"));
     assert.ok(!JSON.stringify(snapshot).includes("http"));
@@ -427,7 +430,10 @@ test("the workers source fails closed on transport, payload and config surprises
   const cases = [
     (async () => new Response("nope", { status: 500 })) as unknown as typeof fetch,
     (async () => new Response(JSON.stringify({ agents: "x" }), { status: 200 })) as unknown as typeof fetch,
-    (async () => new Response(JSON.stringify({ ...workersHubPayload, now: "not a date" }), { status: 200 })) as unknown as typeof fetch,
+    (async () =>
+      new Response(JSON.stringify({ ...workersHubPayload, now: "not a date" }), {
+        status: 200,
+      })) as unknown as typeof fetch,
     (async () => {
       throw new Error("connection refused");
     }) as unknown as typeof fetch,

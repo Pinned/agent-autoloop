@@ -47,8 +47,8 @@ test("only 200 counts; a hub that refuses this key is not a connection", async (
 });
 
 test("redirects are refused without reading where they point", async () => {
-  const explicit = fixture(() =>
-    new Response(null, { status: 302, headers: { location: "http://127.0.0.1:9/v1/state" } }),
+  const explicit = fixture(
+    () => new Response(null, { status: 302, headers: { location: "http://127.0.0.1:9/v1/state" } }),
   );
   assert.equal(await probeOwnerDoor(door, explicit.io), "redirect");
   const rewritten = fixture(() => {

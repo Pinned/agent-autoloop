@@ -46,10 +46,7 @@ test("no hub in the CLI config answers which embedded reason applies", async () 
     [{ state: "invalid" }, "invalid"],
   ];
   for (const [detection, reason] of cases) {
-    assert.deepEqual(
-      await resolveSetupConnect(deps({ detect: () => detection })),
-      { kind: "embedded", reason },
-    );
+    assert.deepEqual(await resolveSetupConnect(deps({ detect: () => detection })), { kind: "embedded", reason });
   }
 });
 
@@ -103,10 +100,7 @@ test("the connect response parses strictly and refuses a loose shape", () => {
   );
   assert.throws(
     () =>
-      parseDesktopSetupResponse(
-        { ...ok, data: { kind: "attach-failed", port: 4001, reason: "made-up" } },
-        "connect",
-      ),
+      parseDesktopSetupResponse({ ...ok, data: { kind: "attach-failed", port: 4001, reason: "made-up" } }, "connect"),
     /invalid-response/,
   );
   assert.throws(

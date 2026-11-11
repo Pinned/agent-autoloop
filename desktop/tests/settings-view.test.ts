@@ -207,11 +207,17 @@ test("a group that disappears takes the selection with it", () => {
   assert.ok(sources.className.split(" ").includes("active"));
   role = "worker";
   refresh(f.view);
-  assert.equal(f.tabs.children.some((button) => button.dataset.tab === "sources"), false);
+  assert.equal(
+    f.tabs.children.some((button) => button.dataset.tab === "sources"),
+    false,
+  );
   const first = f.tabs.children[0];
   // The prototype's own fallback: a lost selection lands on the group both roles keep.
   assert.equal(first.dataset.tab, "agents");
-  assert.equal(f.tabs.children.find((button) => button.className.split(" ").includes("active"))!.dataset.tab, "connection");
+  assert.equal(
+    f.tabs.children.find((button) => button.className.split(" ").includes("active"))!.dataset.tab,
+    "connection",
+  );
 });
 
 test("a draft inside a group the machine loses is dropped, not hidden", async () => {
@@ -226,13 +232,22 @@ test("a draft inside a group the machine loses is dropped, not hidden", async ()
   click(sources);
   const edit = all(f.root).find((node) => node.tagName === "button" && node.textContent === "编辑本组配置")!;
   click(edit);
-  assert.ok(all(f.root).some((node) => node.id === "settings-sources-0-name"), "the draft is on screen");
+  assert.ok(
+    all(f.root).some((node) => node.id === "settings-sources-0-name"),
+    "the draft is on screen",
+  );
 
   role = "worker";
   refresh(f.view);
   // The group is gone, the typed row is gone, and the remaining groups are editable again.
-  assert.equal(f.tabs.children.some((button) => button.dataset.tab === "sources"), false);
-  assert.equal(all(f.root).some((node) => node.id === "settings-sources-0-name"), false);
+  assert.equal(
+    f.tabs.children.some((button) => button.dataset.tab === "sources"),
+    false,
+  );
+  assert.equal(
+    all(f.root).some((node) => node.id === "settings-sources-0-name"),
+    false,
+  );
   await flush();
   refresh(f.view);
   // A lost selection lands on the group both roles keep, as the prototype does.

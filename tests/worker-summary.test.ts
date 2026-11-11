@@ -9,12 +9,7 @@ import {
   parseDesktopWorkerSnapshot,
   parseDesktopWorkerSnapshotBytes,
 } from "../host/desktop-worker-contract.ts";
-import {
-  aggregateWorkerSummary,
-  summarizeHeld,
-  type HeldRecord,
-  type WorkerEvidence,
-} from "../worker/summary.ts";
+import { aggregateWorkerSummary, summarizeHeld, type HeldRecord, type WorkerEvidence } from "../worker/summary.ts";
 
 const evidence = (overrides: Partial<WorkerEvidence> = {}): WorkerEvidence => ({
   recordTrusted: true,
@@ -332,10 +327,14 @@ test("summarizeHeld maps one record to exactly one of the five buckets", () => {
     [record({ resultSaved: true, pid: null }), "empty", false, "pendingSync"],
   ];
   for (const [item, group, linked, bucket] of cases)
-    assert.deepEqual(summarizeHeld([item], probe(group, linked), true), {
-      quality: "complete",
-      counts: { ...zero, held: 1, [bucket]: 1 },
-    }, `${bucket}: ${JSON.stringify(item)}`);
+    assert.deepEqual(
+      summarizeHeld([item], probe(group, linked), true),
+      {
+        quality: "complete",
+        counts: { ...zero, held: 1, [bucket]: 1 },
+      },
+      `${bucket}: ${JSON.stringify(item)}`,
+    );
 });
 
 test("summarizeHeld reports a live group with no matching marker as uncertain, never executing", () => {
@@ -357,21 +356,29 @@ test("summarizeHeld fails closed when the scan is incomplete or the probe throws
   assert.deepEqual(summarizeHeld([record()], probe(), false), { quality: "unknown", counts: null });
   assert.deepEqual(summarizeHeld([], probe(), false), { quality: "unknown", counts: null });
   assert.deepEqual(
-    summarizeHeld([record()], {
-      group: () => {
-        throw new Error("ps unavailable");
+    summarizeHeld(
+      [record()],
+      {
+        group: () => {
+          throw new Error("ps unavailable");
+        },
+        linked: () => true,
       },
-      linked: () => true,
-    }, true),
+      true,
+    ),
     { quality: "unknown", counts: null },
   );
   assert.deepEqual(
-    summarizeHeld([record()], {
-      group: () => "live",
-      linked: () => {
-        throw new Error("ps unavailable");
+    summarizeHeld(
+      [record()],
+      {
+        group: () => "live",
+        linked: () => {
+          throw new Error("ps unavailable");
+        },
       },
-    }, true),
+      true,
+    ),
     { quality: "unknown", counts: null },
   );
 });
@@ -384,5 +391,5 @@ test("summarizeHeld counts many records without carrying identity or process det
     counts: { ...zero, held: 3, executing: 2, preparing: 1 },
   });
   assert.equal(JSON.stringify(summary).includes("4242"), false);
-  assert.equal(JSON.stringify(summary).includes("\"run\""), false);
+  assert.equal(JSON.stringify(summary).includes('"run"'), false);
 });

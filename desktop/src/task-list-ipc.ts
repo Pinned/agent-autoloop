@@ -7,27 +7,33 @@ import {
   parseTaskHistoryResponse,
   taskHistoryFailure,
   type TaskHistoryResponse,
-} from '../../host/desktop-task-history-contract.ts';
-import type { TaskQuerySource } from './task-query-source.ts';
+} from "../../host/desktop-task-history-contract.ts";
+import type { TaskQuerySource } from "./task-query-source.ts";
 
 export function createTaskListIpc(options: {
   assertSender(event: unknown): void;
-  source: Pick<TaskQuerySource, 'list'>;
+  source: Pick<TaskQuerySource, "list">;
 }) {
   return {
-    async read(event: unknown, args: readonly unknown[]): Promise<TaskHistoryResponse<'list'>> {
+    async read(event: unknown, args: readonly unknown[]): Promise<TaskHistoryResponse<"list">> {
       options.assertSender(event);
       let request;
       try {
-        if (args.length !== 1) throw new Error('invalid');
+        if (args.length !== 1) throw new Error("invalid");
         request = parseTaskHistoryRequest(args[0]);
-        if (request.operation !== 'list') return taskHistoryFailure('invalid');
-      } catch { return taskHistoryFailure('invalid'); }
+        if (request.operation !== "list") return taskHistoryFailure("invalid");
+      } catch {
+        return taskHistoryFailure("invalid");
+      }
       try {
         const result = await options.source.list(request.input);
-        return parseTaskHistoryResponse(result.ok
-          ? { version: 1, ok: true, data: result.data } : taskHistoryFailure(result.error), request);
-      } catch { return taskHistoryFailure('error'); }
+        return parseTaskHistoryResponse(
+          result.ok ? { version: 1, ok: true, data: result.data } : taskHistoryFailure(result.error),
+          request,
+        );
+      } catch {
+        return taskHistoryFailure("error");
+      }
     },
   };
 }

@@ -188,7 +188,11 @@ test("trusted v3 rejection has fixed text; old/damaged replies and bridge failur
     { version: 2, ok: true, result: { event: "ui-x", duplicate: "yes", routed: [] } },
     { version: 2, ok: false, error: { code: "error", message: "自造文案" } },
     { version: 2, ok: true, result: { event: 1, duplicate: false, routed: ["值班规则"] } },
-    { version: 3, outcome: "accepted", receipt: { version: 2, ok: true, result: { event: "ui-x", duplicate: "yes", routed: [] } } },
+    {
+      version: 3,
+      outcome: "accepted",
+      receipt: { version: 2, ok: true, result: { event: "ui-x", duplicate: "yes", routed: [] } },
+    },
     { version: 3, outcome: "rejected", message: "自造文案" },
   ]) {
     const f = fixture();

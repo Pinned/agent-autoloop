@@ -73,8 +73,7 @@ type PutError =
   | { code: "conflict"; outcome: "rejected"; message: string }
   | { code: "uncertain"; outcome: "uncertain"; message: string };
 export type DesktopSettingsGetResponse =
-  | GetSuccess
-  | { version: 1; ok: false; error: { code: DesktopSettingsGetCode; message: string } };
+  GetSuccess | { version: 1; ok: false; error: { code: DesktopSettingsGetCode; message: string } };
 export type DesktopSettingsPutResponse = PutSuccess | { version: 1; ok: false; error: PutError };
 
 export const DESKTOP_SETTINGS_MESSAGES = Object.freeze({
@@ -100,7 +99,11 @@ function dataOf(value: unknown, key: string): unknown {
   return descriptor.value;
 }
 /** A record with exactly the allowed keys; required keys must be present. Accessors are never invoked. */
-function record(value: unknown, required: readonly string[], optional: readonly string[] = []): Record<string, unknown> {
+function record(
+  value: unknown,
+  required: readonly string[],
+  optional: readonly string[] = [],
+): Record<string, unknown> {
   if (!isPlainObject(value)) invalid();
   const keys = Reflect.ownKeys(value);
   if (keys.some((key) => typeof key !== "string" || (!required.includes(key) && !optional.includes(key)))) invalid();
@@ -148,11 +151,7 @@ function words(value: unknown, where: string, max: number, allowEmpty = false): 
 }
 
 function agentOf(value: unknown): DesktopSettingsAgent {
-  const item = record(
-    value,
-    ["id", "name", "worker", "use"],
-    ["model", "effort", "access", "command", "timeout"],
-  );
+  const item = record(value, ["id", "name", "worker", "use"], ["model", "effort", "access", "command", "timeout"]);
   const agent: DesktopSettingsAgent = {
     id: id(item.id, "Agent"),
     name: text(item.name, "Agent"),
@@ -184,8 +183,7 @@ function sourceOf(value: unknown): DesktopSettingsSource {
 function channelOf(value: unknown): DesktopSettingsChannel {
   const item = record(value, ["id", "name"], ["answerers", "links"]);
   const channel: DesktopSettingsChannel = { id: id(item.id, "通道"), name: text(item.name, "通道") };
-  if (item.answerers !== undefined)
-    channel.answerers = words(item.answerers, "通道", DESKTOP_SETTINGS_WORDS_MAX, true);
+  if (item.answerers !== undefined) channel.answerers = words(item.answerers, "通道", DESKTOP_SETTINGS_WORDS_MAX, true);
   if (item.links !== undefined) {
     if (typeof item.links !== "boolean") invalid();
     channel.links = item.links;
@@ -224,7 +222,11 @@ export function parseDesktopSettingsValue(section: DesktopSettingsSection, value
 export function parseDesktopSettingsInput(value: unknown): DesktopSettingsInput {
   const item = record(value, ["section", "value", "rulesSeq"]);
   const section = parseDesktopSettingsSection(item.section);
-  return within({ section, value: parseDesktopSettingsValue(section, item.value), rulesSeq: sequence(item.rulesSeq, 1) });
+  return within({
+    section,
+    value: parseDesktopSettingsValue(section, item.value),
+    rulesSeq: sequence(item.rulesSeq, 1),
+  });
 }
 
 export function parseDesktopSettingsSaveData(value: unknown): DesktopSettingsSaveData {
@@ -323,16 +325,7 @@ function putSuccess(value: unknown): PutSuccess {
 }
 
 export function parseDesktopSettingsData(value: unknown): DesktopSettingsData {
-  const item = record(value, [
-    "timezone",
-    "askFirst",
-    "workerIds",
-    "agents",
-    "sources",
-    "channels",
-    "seq",
-    "rulesSeq",
-  ]);
+  const item = record(value, ["timezone", "askFirst", "workerIds", "agents", "sources", "channels", "seq", "rulesSeq"]);
   const global = parseDesktopSettingsGlobal(item.timezone, item.askFirst);
   return within({
     timezone: global.timezone,
@@ -372,7 +365,11 @@ export function parseDesktopSettingsPutResponse(value: unknown): DesktopSettings
   });
 }
 export function desktopSettingsGetFailure(code: DesktopSettingsGetCode): DesktopSettingsGetResponse {
-  return parseDesktopSettingsGetResponse({ version: 1, ok: false, error: { code, message: DESKTOP_SETTINGS_MESSAGES[code] } });
+  return parseDesktopSettingsGetResponse({
+    version: 1,
+    ok: false,
+    error: { code, message: DESKTOP_SETTINGS_MESSAGES[code] },
+  });
 }
 export function desktopSettingsPutFailure(
   code: DesktopSettingsPutCode,

@@ -42,8 +42,22 @@ test("a rating on a finished run is recorded beside it and changes nothing else"
   // fixtureClear drops rows but keeps the identity counter, so the id is checked as an identity, not a value.
   assert.ok(Number.isSafeInteger(saved.id) && saved.id > 0);
   assert.deepEqual(
-    feedbackRows().map((row) => ({ id: row.id, run_id: row.run_id, kind: row.kind, text: row.text, created_at: row.created_at })),
-    [{ id: saved.id, run_id: job.run, kind: "交付满意", text: "这条做得对", created_at: new Date(at(5)).toISOString() }],
+    feedbackRows().map((row) => ({
+      id: row.id,
+      run_id: row.run_id,
+      kind: row.kind,
+      text: row.text,
+      created_at: row.created_at,
+    })),
+    [
+      {
+        id: saved.id,
+        run_id: job.run,
+        kind: "交付满意",
+        text: "这条做得对",
+        created_at: new Date(at(5)).toISOString(),
+      },
+    ],
   );
   // A record is not a turn: no event, no card, no queue entry, and the run keeps the outcome it had.
   assert.deepEqual(counts(), before);
@@ -64,7 +78,10 @@ test("several ratings on one run are all kept, in the order they were given", ()
       ["需要改善", "第二句"],
     ],
   );
-  assert.deepEqual(rows.map((row) => row.run_id), [job.run, job.run]);
+  assert.deepEqual(
+    rows.map((row) => row.run_id),
+    [job.run, job.run],
+  );
   assert.ok(rows[0].id < rows[1].id);
 });
 

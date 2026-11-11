@@ -4,7 +4,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { empty, evolve, keyOf, snapshot, type Row, type Table } from "../kernel/evolve.ts";
 import { taskQueryHttp } from "../host/task-query-http.ts";
-import { listRuns, readRunDetail, pageRunEvents, pageRunCards, pageRelatedRuns, pageRunFeedback } from "../host/desktop-task-query.ts";
+import {
+  listRuns,
+  readRunDetail,
+  pageRunEvents,
+  pageRunCards,
+  pageRelatedRuns,
+  pageRunFeedback,
+} from "../host/desktop-task-query.ts";
 import { encodeRunCursor, LIST_MAX_BYTES, DETAIL_MAX_BYTES } from "../host/desktop-task-query-contract.ts";
 const root = "http://fixture.invalid/v1/ui/task-runs";
 const at = "2026-11-08T00:00:00.000Z";

@@ -178,7 +178,13 @@ test("a close during the first probe cannot leave a live control behind", async 
   });
   let closed = 0;
   const control = {
-    getState: (): AttachState => ({ status: "starting", role: null, ownership: "external", pendingSync: null, error: null }),
+    getState: (): AttachState => ({
+      status: "starting",
+      role: null,
+      ownership: "external",
+      pendingSync: null,
+      error: null,
+    }),
     subscribe: () => () => {},
     start: async (): Promise<AttachState> => {
       await gate;

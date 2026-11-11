@@ -40,10 +40,7 @@ function previewOf(baseline: readonly DesktopRuleEntry[], draft: readonly Deskto
     removed: Math.max(0, baseline.length - draft.length),
   };
 }
-function previewText(
-  { added, changed, removed }: ReturnType<typeof previewOf>,
-  total: number,
-): string {
+function previewText({ added, changed, removed }: ReturnType<typeof previewOf>, total: number): string {
   const parts: string[] = [];
   if (added) parts.push(`新增 ${added} 条`);
   if (changed) parts.push(`修改 ${changed} 条`);

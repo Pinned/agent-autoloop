@@ -38,7 +38,15 @@ const WORKER_TABS: readonly Tab[] = ["agents", "connection", "general"];
 const tabsFor = (role: "hub-worker" | "worker" | null) =>
   role === "worker" ? TABS.filter((item) => WORKER_TABS.includes(item.id)) : TABS;
 const editableSection = (tab: Tab): DesktopSettingsSection | null =>
-  tab === "agents" ? "agents" : tab === "sources" ? "sources" : tab === "channels" ? "channels" : tab === "general" ? "settings" : null;
+  tab === "agents"
+    ? "agents"
+    : tab === "sources"
+      ? "sources"
+      : tab === "channels"
+        ? "channels"
+        : tab === "general"
+          ? "settings"
+          : null;
 
 function field(labelText: string, control: HTMLElement, hint?: string): HTMLLabelElement {
   const wrap = document.createElement("label");
@@ -87,7 +95,10 @@ function select(id: string, values: readonly string[], value: string): HTMLSelec
 }
 const wordsOf = (text: string) => text.split(/[\s,，]+/).filter(Boolean);
 
-export function mountSettingsView(controller: Settings, options: SettingsViewOptions): {
+export function mountSettingsView(
+  controller: Settings,
+  options: SettingsViewOptions,
+): {
   root: HTMLElement;
   init(): void;
   update(): void;
@@ -96,9 +107,11 @@ export function mountSettingsView(controller: Settings, options: SettingsViewOpt
   let tab: Tab = "agents";
   // One row of raw form values per entry; composed and checked only when the owner asks to save.
   type Row = Record<string, string | boolean>;
-  let editing:
-    | { section: DesktopSettingsSection; rows: Row[]; global: { timezone: string; askFirst: string } | null }
-    | null = null;
+  let editing: {
+    section: DesktopSettingsSection;
+    rows: Row[];
+    global: { timezone: string; askFirst: string } | null;
+  } | null = null;
 
   const root = document.createElement("section");
   root.className = "panel settings-panel";
@@ -108,7 +121,8 @@ export function mountSettingsView(controller: Settings, options: SettingsViewOpt
   title.textContent = "高级配置";
   const intro = document.createElement("p");
   intro.className = "muted rules-intro";
-  intro.textContent = "所有修改都写回本机中台，并基于开始编辑时的配置版本；配置被其他人改动时会拒绝本次保存，而不是覆盖。";
+  intro.textContent =
+    "所有修改都写回本机中台，并基于开始编辑时的配置版本；配置被其他人改动时会拒绝本次保存，而不是覆盖。";
   head.append(title, intro);
   const tabs = document.createElement("nav");
   tabs.className = "settings-tabs";
@@ -312,7 +326,9 @@ export function mountSettingsView(controller: Settings, options: SettingsViewOpt
     const renderRows = () => {
       const nodes = editing!.rows.map((row, index) => {
         const label =
-          String(row.name || "") || String(row.id || "") || `${TABS.find((item) => item.id === tab)?.title} ${index + 1}`;
+          String(row.name || "") ||
+          String(row.id || "") ||
+          `${TABS.find((item) => item.id === tab)?.title} ${index + 1}`;
         const details = rowShell(label);
         const set = (key: string) => (event: Event) => {
           row[key] = (event.target as HTMLInputElement).value;
@@ -377,7 +393,9 @@ export function mountSettingsView(controller: Settings, options: SettingsViewOpt
     const add = button("添加一项");
     add.addEventListener("click", () => {
       // An empty row is allowed in the form; the contract refuses it at save time with its own words.
-      editing!.rows.push(section === "agents" ? { id: "", name: "", worker: "", use: "", access: "edit" } : { id: "", name: "" });
+      editing!.rows.push(
+        section === "agents" ? { id: "", name: "", worker: "", use: "", access: "edit" } : { id: "", name: "" },
+      );
       renderRows();
     });
     const workers = document.createElement("datalist");

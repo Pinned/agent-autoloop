@@ -16,10 +16,7 @@ function element<K extends keyof HTMLElementTagNameMap>(tag: K, text = "", class
  * observe: what this machine's runtime says it currently holds. It never fills the gap with rows
  * that look like a queue, and it says where the real history lives.
  */
-export function mountLocalSummaryView(
-  root: HTMLElement,
-  control: ReturnType<typeof createRendererLocalReading>,
-) {
+export function mountLocalSummaryView(root: HTMLElement, control: ReturnType<typeof createRendererLocalReading>) {
   const scope = element("section", "", "panel local-summary-scope");
   scope.setAttribute("aria-label", "本机执行摘要范围");
   const head = element("div", "", "rules-head");

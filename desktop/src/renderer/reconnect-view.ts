@@ -71,8 +71,7 @@ export function mountReconnectView(root: HTMLElement, actions: ReconnectActions 
       copying = true;
       copyButton.disabled = true;
       status.textContent = "正在复制命令，请稍等。";
-      void actions
-        .copy!()
+      void actions.copy!()
         .then(
           () => {
             if (!closed) status.textContent = "命令已复制，可以直接粘贴到终端执行。";
@@ -89,9 +88,7 @@ export function mountReconnectView(root: HTMLElement, actions: ReconnectActions 
     command.append(copyButton);
   }
   panel.append(command);
-  panel.append(
-    element("p", "如果它已经在运行，请确认它监听在原来的回环地址与端口；应用不会停止或接管它。", "muted"),
-  );
+  panel.append(element("p", "如果它已经在运行，请确认它监听在原来的回环地址与端口；应用不会停止或接管它。", "muted"));
 
   // An empty action row is still a row: it would leave a gap under the note for buttons that were
   // never drawn. The container exists only when something can go in it.

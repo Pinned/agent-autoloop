@@ -105,9 +105,7 @@ export function createBootControl(options: BootControlOptions) {
     const port = chosen.port;
     let control: AttachControl;
     try {
-      control =
-        options.attachFactory?.(port) ??
-        createAttachControl({ port, endpoint: () => options.endpoint(port) });
+      control = options.attachFactory?.(port) ?? createAttachControl({ port, endpoint: () => options.endpoint(port) });
     } catch {
       // The probe cannot be built at all. The user asked for their terminal's hub, so the honest
       // answer is still that page — never a silent switch to a hub they did not choose.

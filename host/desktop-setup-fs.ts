@@ -3,11 +3,7 @@
 // bounded file inspection, so it must never wait for (or install) the runtime it merely describes.
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, type Stats } from "node:fs";
 import type { DesktopSetupStatus } from "./desktop-setup-contract.ts";
-import {
-  readDesktopSetupStatus,
-  type DesktopSetupFileStat,
-  type DesktopSetupReadIO,
-} from "./desktop-setup-state.ts";
+import { readDesktopSetupStatus, type DesktopSetupFileStat, type DesktopSetupReadIO } from "./desktop-setup-state.ts";
 
 function describe(stat: Stats): DesktopSetupFileStat {
   return {

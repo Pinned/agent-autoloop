@@ -100,7 +100,11 @@ test("input that breaks the door's limits is refused before any request is sent"
     { type: "t", summary: "", detail: "" },
     { type: "t", summary: "x", detail: "", extra: true },
   ]) {
-    assert.deepEqual(await s.create(bad as never), { version: 3, outcome: "not-sent", message: DESKTOP_TASK_MESSAGES["not-sent"] });
+    assert.deepEqual(await s.create(bad as never), {
+      version: 3,
+      outcome: "not-sent",
+      message: DESKTOP_TASK_MESSAGES["not-sent"],
+    });
   }
   assert.ok(!called);
 });

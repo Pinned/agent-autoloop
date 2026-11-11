@@ -1,7 +1,4 @@
-import {
-  DESKTOP_TASKS_MESSAGES,
-  DESKTOP_TASKS_STATUS_MESSAGES,
-} from "../../../host/desktop-tasks-contract.ts";
+import { DESKTOP_TASKS_MESSAGES, DESKTOP_TASKS_STATUS_MESSAGES } from "../../../host/desktop-tasks-contract.ts";
 import type { createRendererTasks } from "./tasks-controller.ts";
 import { FEEDBACK_KINDS, RUN_STATES, type RunItem } from "../../../host/desktop-task-query-contract.ts";
 
@@ -106,7 +103,8 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
     if (state.kind === "idle") return;
     textLine(node, state.kind === "busy" ? "正在提交操作，请勿重复点击。" : state.message);
     if (state.kind !== "settled") return;
-    if (state.retryable) actionButton(node, "action-retry", "重新提交", false, () => controller.submitAction(state.request));
+    if (state.retryable)
+      actionButton(node, "action-retry", "重新提交", false, () => controller.submitAction(state.request));
     else if (state.mustReread) actionButton(node, "action-reread", "重新读取此执行", false, () => controller.reread());
   }
   function detailNode(runId: number) {
@@ -114,7 +112,10 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
     node.className = "run-detail";
     const state = controller.detailState;
     if (state.kind === "idle" || state.runId !== runId) return node;
-    if (state.kind === "loading") { textLine(node, "正在读取详情。"); return node; }
+    if (state.kind === "loading") {
+      textLine(node, "正在读取详情。");
+      return node;
+    }
     if (state.kind === "failed") {
       textLine(node, state.message);
       const retry = document.createElement("button");
@@ -134,32 +135,52 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
       const button = document.createElement("button");
       button.type = "button";
       button.className = "detail-more";
-      button.disabled = state.kind === "loading" || state.kind === "end" || state.kind === "capped" ||
+      button.disabled =
+        state.kind === "loading" ||
+        state.kind === "end" ||
+        state.kind === "capped" ||
         (section === "related" && data.association.kind === "unavailable");
-      button.textContent = state.kind === "loading" ? `正在读取${label}……` : state.kind === "failed" ? `重试${label}` : `加载更多${label}`;
+      button.textContent =
+        state.kind === "loading" ? `正在读取${label}……` : state.kind === "failed" ? `重试${label}` : `加载更多${label}`;
       button.addEventListener("click", () => {
         // A detached button from a closed/replaced detail cannot request pages in a new run.
         if (controller.detailState === stateSnapshot) controller.loadDetailMore(section);
       });
       if (state.kind === "failed") textLine(node, state.message);
       else if (state.kind === "capped") textLine(node, "已达本次详情显示上限，仍有未显示数据");
-      else if (state.kind === "end" && !(section === "related" && data.association.kind === "unavailable")) textLine(node, "已显示本组全部数据。");
+      else if (state.kind === "end" && !(section === "related" && data.association.kind === "unavailable"))
+        textLine(node, "已显示本组全部数据。");
       else if (state.kind === "loading") textLine(node, `正在读取${label}。`);
       else if (state.kind === "idle") textLine(node, `${label}还有更多。`);
       node.append(button);
     }
     const stateSnapshot = state;
     const run = data.run;
-    textLine(node, `执行 #${run.id} · ${run.rule} → ${run.agent} · ${DESKTOP_TASKS_STATUS_MESSAGES[run.state]} · 尝试 ${run.attempts} 次`);
+    textLine(
+      node,
+      `执行 #${run.id} · ${run.rule} → ${run.agent} · ${DESKTOP_TASKS_STATUS_MESSAGES[run.state]} · 尝试 ${run.attempts} 次`,
+    );
     if (run.summary) textLine(node, run.summary);
     if (run.error) textLine(node, run.error);
-    const times = [run.createdAt && `安排 ${when(run.createdAt)}`, run.claimedAt && `领取 ${when(run.claimedAt)}`,
-      run.finishedAt && `结束 ${when(run.finishedAt)}`, run.notBefore && `下次不早于 ${when(run.notBefore)}`].filter(Boolean);
+    const times = [
+      run.createdAt && `安排 ${when(run.createdAt)}`,
+      run.claimedAt && `领取 ${when(run.claimedAt)}`,
+      run.finishedAt && `结束 ${when(run.finishedAt)}`,
+      run.notBefore && `下次不早于 ${when(run.notBefore)}`,
+    ].filter(Boolean);
     if (times.length) textLine(node, times.join(" · "));
-    if (run.usage) textLine(node, [
-      run.usage.input !== null && `输入 ${run.usage.input}`, run.usage.output !== null && `输出 ${run.usage.output}`,
-      run.usage.cached !== null && `缓存 ${run.usage.cached}`, run.usage.cost !== null && `花费 ${run.usage.cost}`,
-    ].filter(Boolean).join(" / "));
+    if (run.usage)
+      textLine(
+        node,
+        [
+          run.usage.input !== null && `输入 ${run.usage.input}`,
+          run.usage.output !== null && `输出 ${run.usage.output}`,
+          run.usage.cached !== null && `缓存 ${run.usage.cached}`,
+          run.usage.cost !== null && `花费 ${run.usage.cost}`,
+        ]
+          .filter(Boolean)
+          .join(" / "),
+      );
     if (run.truncated) textLine(node, "部分文字已截断。");
     // Run-level writes share the same single window and the same honest receipt below.
     const runActions = document.createElement("div");
@@ -209,7 +230,8 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
       actionButton(block, "feedback-submit", "记录反馈", !writes, () => {
         // The select only ever holds the three contract kinds; anything else is a broken DOM, not a draft.
         const kind = FEEDBACK_KINDS.find((value) => value === kinds.value);
-        if (fresh() && kind) controller.submitAction({ action: "feedback", runId: run.id, input: { kind, text: text.value } });
+        if (fresh() && kind)
+          controller.submitAction({ action: "feedback", runId: run.id, input: { kind, text: text.value } });
       });
       textLine(block, "反馈只记录评价，不自动重新执行。如需修改任务，请用“提交更正”开启新一轮。");
       node.append(block);
@@ -218,7 +240,10 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
     textLine(node, "触发事件");
     if (!data.events.items.length) textLine(node, "本批没有触发事件。");
     for (const event of data.events.items) {
-      textLine(node, [event.source, event.type, event.subject, event.summary, event.detail].filter(Boolean).join(" · "));
+      textLine(
+        node,
+        [event.source, event.type, event.subject, event.summary, event.detail].filter(Boolean).join(" · "),
+      );
       if (event.truncated) textLine(node, "部分事件文字已截断。");
     }
     sectionControl("events", "触发事件");
@@ -238,9 +263,11 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
       const block = document.createElement("div");
       block.className = "card-actions";
       if (card.kind === "ask") {
-        card.options.forEach((option, index) => actionButton(block, "answer-choice", option, !writes, () => {
-          if (fresh()) controller.submitAction({ action: "answer", cardId: card.id, input: { choice: index } });
-        }));
+        card.options.forEach((option, index) =>
+          actionButton(block, "answer-choice", option, !writes, () => {
+            if (fresh()) controller.submitAction({ action: "answer", cardId: card.id, input: { choice: index } });
+          }),
+        );
         // A free-form answer is the same decision, not a new round.
         const custom = actionInput(block, `自定义回答（卡片 #${card.id}）`, 4000);
         actionButton(block, "answer-text", "提交回答", !writes, () => {
@@ -360,8 +387,12 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
     } else if (state.kind === "ready") {
       // An empty answer to a narrowed query is not "this machine has no runs": say which it is.
       status.textContent = state.runs.length
-        ? narrowed ? `已按当前条件显示 ${state.runs.length} 条${state.hasMore ? "，更早的还在服务端" : ""}。` : ""
-        : narrowed ? "没有符合条件的执行记录。" : DESKTOP_TASKS_MESSAGES.noRun;
+        ? narrowed
+          ? `已按当前条件显示 ${state.runs.length} 条${state.hasMore ? "，更早的还在服务端" : ""}。`
+          : ""
+        : narrowed
+          ? "没有符合条件的执行记录。"
+          : DESKTOP_TASKS_MESSAGES.noRun;
       status.hidden = status.textContent === "";
     } else {
       status.textContent = state.message;

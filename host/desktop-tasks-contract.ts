@@ -10,14 +10,7 @@ export const DESKTOP_TASKS_RESPONSE_MAX_BYTES = 160 * 1024;
 export const DESKTOP_TASKS_RUNS_MAX = 100 as const;
 // The hub already caps a run's triggering events at 20; the projection keeps the same bound.
 export const DESKTOP_TASKS_EVENTS_MAX = 20 as const;
-export type DesktopTasksRunState =
-  | "queued"
-  | "claimed"
-  | "unknown"
-  | "done"
-  | "nothing"
-  | "failed"
-  | "cancelled";
+export type DesktopTasksRunState = "queued" | "claimed" | "unknown" | "done" | "nothing" | "failed" | "cancelled";
 export type DesktopTasksEvent = { source: string; type: string; subject: string; summary: string };
 export type DesktopTasksUsage = { input: number | null; output: number | null; cost: number | null };
 export type DesktopTasksRun = {

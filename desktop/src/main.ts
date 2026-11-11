@@ -279,9 +279,7 @@ if (ownsAppLock)
                 // The same predicate and reader boot uses, so first run cannot connect to a hub this
                 // run would not attach to (or vice versa).
                 detect: () =>
-                  mayDetectCli()
-                    ? detectDesktopCli(desktopCliHome(process.env))
-                    : { state: "absent" as const },
+                  mayDetectCli() ? detectDesktopCli(desktopCliHome(process.env)) : { state: "absent" as const },
                 endpoint: (port) => readDesktopCliEndpoint(desktopCliHome(process.env), port),
                 probe: (endpoint) => probeOwnerDoor(endpoint),
               }),
@@ -361,7 +359,11 @@ if (ownsAppLock)
         refresh: () => refreshMenus(),
         report: (message) => console.error(message),
       });
-      const detailSource = createTaskQuerySource({ home: runtimeHome, getState: () => presentation.snapshot(), readConfig });
+      const detailSource = createTaskQuerySource({
+        home: runtimeHome,
+        getState: () => presentation.snapshot(),
+        readConfig,
+      });
       // The list door: server-side search/filtering over the hub's own query, no lease. The source
       // itself classifies unavailable/no-hub, so an unrelated runtime transition cannot abort a read.
       const listIpc = createTaskListIpc({
@@ -374,21 +376,33 @@ if (ownsAppLock)
         source: detailSource,
       });
       // The write side of the same page: one owner action at a time, gated by the same lease.
-      const taskActionSource = createTaskActionSource({ home: runtimeHome, getState: () => presentation.snapshot(), readConfig });
+      const taskActionSource = createTaskActionSource({
+        home: runtimeHome,
+        getState: () => presentation.snapshot(),
+        readConfig,
+      });
       const taskAction = createTaskActionIpc({
         assertSender: (event) => assertSender(event as Parameters<typeof assertSender>[0], window.webContents, page),
         presentation,
         source: taskActionSource,
       });
       // The automation page's editor: one rules version per draft, checked again by the hub on save.
-      const rulesCasSource = createRulesCasSource({ home: runtimeHome, getState: () => presentation.snapshot(), readConfig });
+      const rulesCasSource = createRulesCasSource({
+        home: runtimeHome,
+        getState: () => presentation.snapshot(),
+        readConfig,
+      });
       const rulesCas = createRulesCasIpc({
         source: rulesCasSource,
         assertSender: (event) => assertSender(event, window.webContents, page),
         gate: () => undefined,
       });
       // The settings page edits the same file through the hub; the door checks role and version itself.
-      const settingsSource = createSettingsSource({ home: runtimeHome, getState: () => presentation.snapshot(), readConfig });
+      const settingsSource = createSettingsSource({
+        home: runtimeHome,
+        getState: () => presentation.snapshot(),
+        readConfig,
+      });
       const settings = createSettingsIpc({
         source: settingsSource,
         assertSender: (event) => assertSender(event, window.webContents, page),
@@ -410,10 +424,12 @@ if (ownsAppLock)
       // Admission failures answer ok:false; the outcome of a performed run lives in the snapshot's error field.
       async function performStart(): Promise<DesktopRuntimeResponse> {
         if (!owned()) return desktopRuntimeFailure("unavailable");
-        return presentation.run("start", () => setup.runStart(
-          () => controller.start(),
-          () => controller.getState(),
-        ));
+        return presentation.run("start", () =>
+          setup.runStart(
+            () => controller.start(),
+            () => controller.getState(),
+          ),
+        );
       }
       // The launch record is answered only after this run's hub direction is decided and its first
       // probe has landed. That is what keeps the shell from painting a workspace and then replacing
@@ -423,7 +439,8 @@ if (ownsAppLock)
           const response = await setup.runSetup({ version: 1, operation: "launch-status" });
           if (response.ok && response.operation === "launch-status") await boot.prepare(response.data.nextLaunch);
           return response;
-        }));
+        }),
+      );
       const launch = createLaunchControl({
         read: async (): Promise<DesktopLaunchStatus> => {
           const response = await readLaunchStatus();
@@ -513,7 +530,11 @@ if (ownsAppLock)
       }
       controller.subscribe(() => {
         // Owner data-source gates are unchanged; presentation reads the latest runtime, never this callback's old state.
-        try { watcher.sync(); } finally { presentation.changed(); }
+        try {
+          watcher.sync();
+        } finally {
+          presentation.changed();
+        }
       });
       nativeTheme.themeSource = loadTheme(prefsHome);
       session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
@@ -610,7 +631,10 @@ if (ownsAppLock)
       });
       window.webContents.on("did-frame-navigate", (_event, url, _code, _text, isMainFrame, processId, routingId) => {
         if (!isMainFrame) return;
-        if (url !== page) { invalidateDocument(); return; }
+        if (url !== page) {
+          invalidateDocument();
+          return;
+        }
         committedFrame = { processId, routingId };
       });
       window.webContents.on("render-process-gone", invalidateDocument);
@@ -626,8 +650,11 @@ if (ownsAppLock)
         // blocked. A newer navigation is already fenced by the token/committed-frame check below.
         if (!token || !committed || contents.isDestroyed()) return;
         const frame = contents.mainFrame;
-        const trusted = contents.getURL() === page && frame.url === page &&
-          frame.processId === committed.processId && frame.routingId === committed.routingId;
+        const trusted =
+          contents.getURL() === page &&
+          frame.url === page &&
+          frame.processId === committed.processId &&
+          frame.routingId === committed.routingId;
         if (trusted && documentToken === token && committedFrame === committed)
           presentation.finishDocument(token, page);
       });
@@ -817,11 +844,14 @@ if (ownsAppLock)
       ipcMain.handle(channels.taskList, (event, ...args: unknown[]) => listIpc.read(event, args));
       // One task at a time through the hub's door; the input is validated before any request.
       ipcMain.handle(channels.taskDetail, (event, ...args: unknown[]) => detailIpc.read(event, args));
-      ipcMain.handle(channels.taskCreate, createTaskCreateHandler({
-        assertSender: (event: Parameters<typeof assertSender>[0]) => assertSender(event, window.webContents, page),
-        presentation,
-        create: (input, canSend) => taskSource.create(input, canSend),
-      }));
+      ipcMain.handle(
+        channels.taskCreate,
+        createTaskCreateHandler({
+          assertSender: (event: Parameters<typeof assertSender>[0]) => assertSender(event, window.webContents, page),
+          presentation,
+          create: (input, canSend) => taskSource.create(input, canSend),
+        }),
+      );
       // Answer/close/stop/correct one round through the hub's own doors; the input is checked before any request.
       ipcMain.handle(channels.taskAction, taskAction);
       ipcMain.handle(channels.rulesCasGet, (event, ...args: unknown[]) => rulesCas.get(event, args));

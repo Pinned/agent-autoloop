@@ -36,9 +36,7 @@ function fixture(overrides: Partial<SettingsSourceOptions> = {}) {
     },
     fetchImpl: async (url, init) => {
       requests.push({ url: String(url), init: init! });
-      return new Response(
-        JSON.stringify(init?.method === "PUT" ? { ok: true, seq: 4, rulesSeq: 3 } : hub()),
-      );
+      return new Response(JSON.stringify(init?.method === "PUT" ? { ok: true, seq: 4, rulesSeq: 3 } : hub()));
     },
     // A real deadline, not a scheduling assertion: under load the fetch stub plus TS module
     // startup can exceed 50ms and would make "GET succeeds" intermittently fail on timing alone.
@@ -83,7 +81,11 @@ test("GET is the whole config; PUT is one section at a named version", async () 
   assert.equal(f.requests[0].init.method, "GET");
   assert.equal(new Headers(f.requests[0].init.headers).get("authorization"), "Bearer PRIVATE-OWNER");
 
-  const saved = await f.source.put({ section: "agents", value: [{ id: "a1", name: "甲", worker: "w1", use: "claude" }], rulesSeq: 2 });
+  const saved = await f.source.put({
+    section: "agents",
+    value: [{ id: "a1", name: "甲", worker: "w1", use: "claude" }],
+    rulesSeq: 2,
+  });
   assert.equal(saved.ok, true);
   assert.deepEqual(f.requests[1].url, "http://127.0.0.1:12345/v1/ui/config/agents");
   assert.equal(f.requests[1].init.method, "PUT");

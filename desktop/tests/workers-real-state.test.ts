@@ -72,13 +72,18 @@ test("real stateOf -> desktop keeps presence per worker and stamps only the loca
         { id: "remote", worker: "other-worker", seenAt: "2026-11-02T01:05:00.000Z", online: true },
       ],
     );
-    assert.deepEqual(hub.channels, [
-      { id: "chat", name: "聊天", seenAt: "2026-11-02T01:06:00.000Z", online: true },
-    ]);
+    assert.deepEqual(hub.channels, [{ id: "chat", name: "聊天", seenAt: "2026-11-02T01:06:00.000Z", online: true }]);
 
     const response = parseDesktopWorkersResponse(
       // The runtime-home worker name is the only source of the "local" label.
-      { version: 1, ok: true, state: { kind: "ready", snapshot: projectDesktopWorkersSnapshot(hub, localWorkerName({ worker: { name: "test-worker" } })) } },
+      {
+        version: 1,
+        ok: true,
+        state: {
+          kind: "ready",
+          snapshot: projectDesktopWorkersSnapshot(hub, localWorkerName({ worker: { name: "test-worker" } })),
+        },
+      },
     );
     assert.equal(response.state.kind, "ready");
     if (response.state.kind !== "ready") throw new Error("expected ready");

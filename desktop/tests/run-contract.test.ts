@@ -112,7 +112,10 @@ test("status text covers every status plus the offline pendingSync special case"
     "本机已停止；3 条结果离线持久待同步",
   );
   assert.equal(
-    desktopRuntimeStatusText({ status: "unavailable", pendingSync: null, ownership: "owned" }, { unavailable: "纯壳验证" }),
+    desktopRuntimeStatusText(
+      { status: "unavailable", pendingSync: null, ownership: "owned" },
+      { unavailable: "纯壳验证" },
+    ),
     "纯壳验证",
   );
 });
@@ -133,14 +136,19 @@ test("an external hub never borrows the embedded wording, even through a present
   // The presentation gate blanks role and status, but the hub is still someone else's; the caller's
   // "resources are not ready" wording would be a false claim about a process we do not own.
   assert.equal(
-    desktopRuntimeStatusText({ status: "unavailable", pendingSync: null, ownership: "external" }, { unavailable: "运行资源尚未就绪" }),
+    desktopRuntimeStatusText(
+      { status: "unavailable", pendingSync: null, ownership: "external" },
+      { unavailable: "运行资源尚未就绪" },
+    ),
     "已接入本机中台，当前操作暂不可用",
   );
 });
 
 test("ownership decides nothing about the embedded path", () => {
   // Every embedded status keeps its frozen wording; ownership only branches for external hubs.
-  for (const status of Object.keys(DESKTOP_RUNTIME_STATUS_MESSAGES) as (keyof typeof DESKTOP_RUNTIME_STATUS_MESSAGES)[]) {
+  for (const status of Object.keys(
+    DESKTOP_RUNTIME_STATUS_MESSAGES,
+  ) as (keyof typeof DESKTOP_RUNTIME_STATUS_MESSAGES)[]) {
     assert.equal(
       desktopRuntimeStatusText({ status, pendingSync: null, ownership: "owned" }),
       DESKTOP_RUNTIME_STATUS_MESSAGES[status],

@@ -111,7 +111,10 @@ test("only the actions that exist are drawn; a copy button needs a copy action",
     // controls that were deliberately not drawn.
     const bare = new Element("main");
     mountReconnectView(bare as unknown as HTMLElement);
-    assert.equal(all(bare).some((node) => node.className.split(" ").includes("setup-actions")), false);
+    assert.equal(
+      all(bare).some((node) => node.className.split(" ").includes("setup-actions")),
+      false,
+    );
   });
 });
 

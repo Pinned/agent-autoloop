@@ -123,7 +123,8 @@ test("the painted shell never overrides the launch decision or the setup page", 
       );
 });
 
-test("a runtime change re-projects the shell but never re-decides it", () => {  // The launch record decides "does this machine have a workspace"; the runtime only decides
+test("a runtime change re-projects the shell but never re-decides it", () => {
+  // The launch record decides "does this machine have a workspace"; the runtime only decides
   // "is the hub behind it answering". A runtime push that recomputed the first question would
   // paint the menu on a machine whose launch read has not answered yet.
   const app = readFileSync(new URL("../src/renderer/app.ts", import.meta.url), "utf8");

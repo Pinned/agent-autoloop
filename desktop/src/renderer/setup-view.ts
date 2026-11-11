@@ -45,8 +45,7 @@ function linkCopy(link: SetupLink | null, role: "hub-worker" | "worker"): string
       return `已连接到本机中台 127.0.0.1:${link.port}。点击完成进入主页面。`;
     case "failed": {
       const problem = link.problem;
-      if (problem.kind === "door")
-        return `未连接到中台 127.0.0.1:${problem.port}。${doorCopy(problem.reason)}`;
+      if (problem.kind === "door") return `未连接到中台 127.0.0.1:${problem.port}。${doorCopy(problem.reason)}`;
       return DESKTOP_SETUP_ERROR_MESSAGES[problem.code];
     }
     case "embedding":
@@ -225,9 +224,7 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
             );
         } else if (joined) {
           form.append(element("p", linkCopy(link, wizard.role), "setup-link"));
-          form.append(
-            element("p", "角色已锁定为本机配置，不能再返回上一步。完成会请求启动运行服务。", "muted"),
-          );
+          form.append(element("p", "角色已锁定为本机配置，不能再返回上一步。完成会请求启动运行服务。", "muted"));
         } else {
           field(
             form,

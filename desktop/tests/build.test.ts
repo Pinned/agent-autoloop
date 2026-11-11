@@ -114,8 +114,9 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.doesNotMatch(main, /restartPolicy|controller\.restart/);
   assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 28);
   // Each handler is checked inside its own block: a cross-handler match would let a missing
-  // sender check hide behind the next handler that has one.
-  const blocks = main.split("ipcMain.handle(channels.").slice(1);
+  // sender check hide behind the next handler that has one. A long handler may wrap its
+  // arguments onto their own lines, so the split tolerates whitespace after the open paren.
+  const blocks = main.split(/ipcMain\.handle\(\s*channels\./).slice(1);
   const blockOf = (name: string) => {
     const block = blocks.find((part) => part.startsWith(`${name},`));
     assert.ok(block, `handler ${name} is missing`);
@@ -153,7 +154,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(main, /const listIpc = createTaskListIpc\(\{/);
   const listIpc = read("../src/task-list-ipc.ts");
   assert.match(listIpc, /options\.assertSender\(event\);/);
-  assert.match(listIpc, /request\.operation !== 'list'/);
+  assert.match(listIpc, /request\.operation !== ["']list["']/);
   assert.doesNotMatch(listIpc, /acquireTaskLease|releaseTaskLease|checkTaskLease/);
   assert.doesNotMatch(listIpc, /\/v1\//);
   assert.match(
@@ -304,7 +305,10 @@ test("the workers page mounts this machine's own reading as display data, pulled
   assert.match(controller, /workersLocal/);
   // Only the erased DTO crosses; no config, runtime or supervisor module enters a renderer bundle.
   assert.match(controller, /from ["'].*host\/desktop-worker-contract\.ts/);
-  assert.doesNotMatch(controller, /node:|from ["'].*host\/(?:config|runtime|setup)\.ts|from ["'].*\.\.\/supervisor\.ts/);
+  assert.doesNotMatch(
+    controller,
+    /node:|from ["'].*host\/(?:config|runtime|setup)\.ts|from ["'].*\.\.\/supervisor\.ts/,
+  );
   assert.doesNotMatch(view, /innerHTML|insertAdjacentHTML|console\./);
   // A reading is display-only; the page must say so rather than implying a drain is proven safe.
   assert.match(view, /不代表可以安全停止或排空/);
@@ -353,8 +357,11 @@ test("the task source only ever fetches the two fixed hub task routes with the o
   // A malformed input is rejected before any request leaves the process.
   const handler = read("../src/task-create-control.ts");
   const preload = read("../src/preload.ts");
-  assert.match(main, /ipcMain\.handle\(channels\.taskCreate, createTaskCreateHandler\(\{/);
-  assert.match(main, /assertSender: \(event: Parameters<typeof assertSender>\[0\]\) => assertSender\(event, window\.webContents, page\)/);
+  assert.match(main, /ipcMain\.handle\(\s*channels\.taskCreate,\s*createTaskCreateHandler\(\{/);
+  assert.match(
+    main,
+    /assertSender: \(event: Parameters<typeof assertSender>\[0\]\) => assertSender\(event, window\.webContents, page\)/,
+  );
   assert.match(handler, /options\.assertSender\(event\)/);
   assert.match(handler, /args\.length !== 1/);
   assert.match(handler, /parseDesktopTaskCreateRequest\(args\[0\]\)/);
@@ -388,7 +395,10 @@ test("the automation page edits the hub's own entries through the versioned rule
   // The save carries the version it started from; the hub refuses a stale one, and main hands the
   // parsed input to the same single-flight unit the page talks to.
   assert.match(view, /needsReview|丢弃草稿并重新读取/);
-  assert.match(main, /createRulesCasSource\(\{ home: runtimeHome, getState: \(\) => presentation\.snapshot\(\), readConfig \}\)/);
+  assert.match(
+    main,
+    /createRulesCasSource\(\{\s*home: runtimeHome,\s*getState: \(\) => presentation\.snapshot\(\),\s*readConfig,?\s*\}\)/,
+  );
   assert.match(main, /desktop:rules:cas:get|channels\.rulesCasGet/);
 });
 
@@ -478,8 +488,8 @@ test("the global new-task dialog is a native dialog driven by the pure task cont
   assert.match(view, /controller\.operation/);
   assert.match(view, /controller\.canBeginAnother/);
   assert.match(view, /notifiedResult !== submission\.result/);
-  assert.ok(view.indexOf("notifiedResult = submission.result") < view.indexOf("try { onCreated(); }"));
-  assert.match(view, /try \{ onCreated\(\); \} catch/);
+  assert.ok(view.indexOf("notifiedResult = submission.result") < view.indexOf("onCreated();"));
+  assert.match(view, /try \{\s*onCreated\(\);\s*\} catch/);
   assert.doesNotMatch(view, /addEventListener\("close",[\s\S]*controller\.reset/);
   assert.match(view, /showModal\(\)/);
 });

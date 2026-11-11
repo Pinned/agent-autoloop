@@ -6,15 +6,12 @@
 import { parseHubEndpoint, readRuntimeConfig } from "./state-source.ts";
 import type { DesktopRuntimeRole, DesktopRuntimeStatus } from "../../host/desktop-run-contract.ts";
 
-export type HubDoorFailure =
-  "unavailable" | "no-hub" | "error" | "busy" | "conflict" | "invalid" | "uncertain";
+export type HubDoorFailure = "unavailable" | "no-hub" | "error" | "busy" | "conflict" | "invalid" | "uncertain";
 /**
  * A failure says whether the request could have left this process. A caller must not report "not saved"
  * for a write it may have sent: only `sent: false` is proof the hub never saw it.
  */
-export type HubDoorReply =
-  | { ok: true; payload: unknown }
-  | { ok: false; failure: HubDoorFailure; sent: boolean };
+export type HubDoorReply = { ok: true; payload: unknown } | { ok: false; failure: HubDoorFailure; sent: boolean };
 export type HubDoorOptions = {
   home: string;
   getState(): { status: DesktopRuntimeStatus; role: DesktopRuntimeRole | null };

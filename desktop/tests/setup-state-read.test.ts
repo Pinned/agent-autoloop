@@ -29,8 +29,7 @@ test("only the two disk reads bypass the private driver; connect is an observati
   // CLI config and a live probe rather than from this app's own files.
   for (const operation of ["status", "launch-status", "connect"] as const)
     assert.equal(isSetupObservation(operation), true);
-  for (const operation of ["init", "join", "complete"] as const)
-    assert.equal(isSetupObservation(operation), false);
+  for (const operation of ["init", "join", "complete"] as const) assert.equal(isSetupObservation(operation), false);
 });
 
 test("a first-run read answers unconfigured from disk without creating the data directory", (t) => {
@@ -113,7 +112,9 @@ test("a mutation still goes through the private driver and its own gates", async
   const control = createSetupControl({
     canSetup: () => true,
     run: (request) =>
-      isSetupDiskRead(request.operation) ? Promise.resolve(readSetupState("/anywhere", request.operation)) : setupRunner.run(request),
+      isSetupDiskRead(request.operation)
+        ? Promise.resolve(readSetupState("/anywhere", request.operation))
+        : setupRunner.run(request),
   });
   const response = await control.runSetup({ version: 1, operation: "init" } as DesktopSetupRequest);
   assert.equal(response.ok, false);

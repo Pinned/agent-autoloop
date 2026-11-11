@@ -62,10 +62,7 @@ test("a later launch whose terminal hub answers goes straight to the workspace",
   // The launch decision is the workspace, and a settled runtime keeps it: no setup page, no flash.
   const base = shellMode(configured, "idle");
   assert.equal(base, "workspace");
-  assert.equal(
-    projectShell({ base, setupOpen: false, runtimeSettled: true, runtime: boot.state()! }),
-    "workspace",
-  );
+  assert.equal(projectShell({ base, setupOpen: false, runtimeSettled: true, runtime: boot.state()! }), "workspace");
 });
 
 test("the same machine with the terminal hub stopped gets the reconnect page, never the setup page", async () => {
@@ -74,10 +71,7 @@ test("the same machine with the terminal hub stopped gets the reconnect page, ne
   assert.equal(boot.state()?.status, "unknown");
   const base = shellMode(configured, "idle");
   assert.equal(base, "workspace", "a configured machine never falls back to the first-run wizard");
-  assert.equal(
-    projectShell({ base, setupOpen: false, runtimeSettled: true, runtime: boot.state()! }),
-    "reconnect",
-  );
+  assert.equal(projectShell({ base, setupOpen: false, runtimeSettled: true, runtime: boot.state()! }), "reconnect");
 });
 
 test("with no CLI configured for a hub, the App starts its own silently and never attaches", async () => {

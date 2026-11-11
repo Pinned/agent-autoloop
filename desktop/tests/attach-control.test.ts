@@ -33,10 +33,12 @@ function scheduler() {
   };
 }
 
-function fixture(options: {
-  reachable?: boolean[];
-  endpoint?: () => AttachEndpoint | null;
-} = {}) {
+function fixture(
+  options: {
+    reachable?: boolean[];
+    endpoint?: () => AttachEndpoint | null;
+  } = {},
+) {
   const clock = scheduler();
   const answers = options.reachable ?? [];
   const calls: Array<{ url: string; authorization: string | undefined }> = [];

@@ -1,8 +1,4 @@
-import {
-  parseDesktopLaunchData,
-  type DesktopLaunchStatus,
-  type DesktopLaunchMode,
-} from "./desktop-launch-contract.ts";
+import { parseDesktopLaunchData, type DesktopLaunchStatus, type DesktopLaunchMode } from "./desktop-launch-contract.ts";
 // Shared by Electron main and the private driver. No Node or business-runtime imports.
 export const DESKTOP_SETUP_VERSION = 1 as const;
 export const DESKTOP_SETUP_REQUEST_MAX_BYTES = 16 * 1024;
@@ -144,7 +140,8 @@ export function parseDesktopSetupRequest(value: unknown): DesktopSetupRequest {
   return result;
 }
 
-export function desktopSetupFailure(operation: DesktopSetupOperation,
+export function desktopSetupFailure(
+  operation: DesktopSetupOperation,
   code: DesktopSetupErrorCode,
 ): DesktopSetupResponse {
   return { version: 1, operation, ok: false, error: { code, message: DESKTOP_SETUP_ERROR_MESSAGES[code] } };

@@ -43,7 +43,10 @@ test("a pure worker is offered only this machine's three pages", () => {
     ["tasks", "workers", "settings"],
   );
   for (const hidden of ["today", "automation"])
-    assert.equal(pagesFor("worker").some((page) => page.id === hidden), false);
+    assert.equal(
+      pagesFor("worker").some((page) => page.id === hidden),
+      false,
+    );
 });
 
 test("worker copy never promises hub-side powers", () => {

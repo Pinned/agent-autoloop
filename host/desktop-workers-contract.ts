@@ -148,11 +148,7 @@ function parseTotals(value: unknown): DesktopWorkersTotals {
  * Presence and `online` must agree with the payload's own `now` and the hub's window.
  * A contradictory pair is a broken read, never a badge we display anyway.
  */
-function parsePresence(
-  seenAt: unknown,
-  online: unknown,
-  now: number,
-): { seenAt: string | null; online: boolean } {
+function parsePresence(seenAt: unknown, online: unknown, now: number): { seenAt: string | null; online: boolean } {
   const at = stamp(seenAt);
   const live = boolean(online);
   const expected = at !== null && now - Date.parse(at) <= DESKTOP_WORKERS_ONLINE_MS;
@@ -182,14 +178,7 @@ function parseChannel(value: unknown, now: number): DesktopWorkersChannel {
   };
 }
 function parseSnapshot(value: unknown): DesktopWorkersSnapshot {
-  const item = record(value, [
-    "version",
-    "now",
-    "agents",
-    "agentsTruncated",
-    "channels",
-    "channelsTruncated",
-  ]);
+  const item = record(value, ["version", "now", "agents", "agentsTruncated", "channels", "channelsTruncated"]);
   if (item.version !== DESKTOP_WORKERS_VERSION) invalid();
   const nowText = text(item.now, 64);
   const now = Date.parse(nowText);

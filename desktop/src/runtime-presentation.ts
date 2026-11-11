@@ -10,7 +10,12 @@ import { desktopRuntimeEventOf } from "./runtime-event.ts";
 
 type RuntimeState = Parameters<typeof desktopRuntimeSnapshotOf>[0];
 type Operation = "start" | "stop";
-type Gates = { phase: "idle" | "confirming" | "preparing" | "quitting"; busy: boolean; blocked: boolean; quitting: boolean };
+type Gates = {
+  phase: "idle" | "confirming" | "preparing" | "quitting";
+  busy: boolean;
+  blocked: boolean;
+  quitting: boolean;
+};
 export const RUNTIME_PRESENTATION_DIAGNOSTIC = "运行状态推送或菜单刷新失败；界面状态可能未同步";
 
 export function createRuntimePresentation(options: {
@@ -37,7 +42,10 @@ export function createRuntimePresentation(options: {
     taskLeases.clear();
   }
   function taskQualified(): boolean {
-    if (checkingTasks) { revokeTaskLeases(); return false; }
+    if (checkingTasks) {
+      revokeTaskLeases();
+      return false;
+    }
     const epoch = taskEpoch;
     const targetDocument = document;
     checkingTasks = true;
@@ -50,27 +58,45 @@ export function createRuntimePresentation(options: {
       const busy = supplied.busy;
       const blocked = supplied.blocked;
       const quitting = supplied.quitting;
-      const valid = epoch === taskEpoch && document === targetDocument && !!document && documentAlive &&
-        transitions.size === 0 && phase === "idle" && !busy && !blocked && !quitting &&
-        status === "running" && role === "hub-worker";
+      const valid =
+        epoch === taskEpoch &&
+        document === targetDocument &&
+        !!document &&
+        documentAlive &&
+        transitions.size === 0 &&
+        phase === "idle" &&
+        !busy &&
+        !blocked &&
+        !quitting &&
+        status === "running" &&
+        role === "hub-worker";
       if (!valid) revokeTaskLeases();
       return valid;
     } catch {
       revokeTaskLeases();
       return false;
-    } finally { checkingTasks = false; }
+    } finally {
+      checkingTasks = false;
+    }
   }
 
   function diagnose() {
     if (reported) return;
     reported = true;
-    try { options.report(RUNTIME_PRESENTATION_DIAGNOSTIC); } catch {}
+    try {
+      options.report(RUNTIME_PRESENTATION_DIAGNOSTIC);
+    } catch {}
   }
   function admission(operation: Operation): DesktopRuntimeAdmissionCode | undefined {
     const before = generation;
     try {
       const supplied = options.gates();
-      const gates = { phase: supplied.phase, busy: supplied.busy, blocked: supplied.blocked, quitting: supplied.quitting };
+      const gates = {
+        phase: supplied.phase,
+        busy: supplied.busy,
+        blocked: supplied.blocked,
+        quitting: supplied.quitting,
+      };
       if (before !== generation) return "busy";
       if (gates.blocked) return "unknown";
       if (!documentAlive) return "unavailable";
@@ -80,18 +106,25 @@ export function createRuntimePresentation(options: {
       // setup.busy also counts runtime ownership: a stop must interrupt our pending start immediately.
       if (operation === "stop" && gates.busy && !values.includes("start")) return "busy";
       return undefined;
-    } catch { return "unknown"; }
+    } catch {
+      return "unknown";
+    }
   }
   function snapshot() {
     const before = generation;
     const state = options.read();
     const gates = options.gates();
     const values = [...transitions.values()];
-    const blocked = before !== generation || !documentAlive ||
-      gates.phase !== "idle" || (gates.busy && values.length === 0) || gates.blocked || gates.quitting;
+    const blocked =
+      before !== generation ||
+      !documentAlive ||
+      gates.phase !== "idle" ||
+      (gates.busy && values.length === 0) ||
+      gates.blocked ||
+      gates.quitting;
     const transition = values.includes("stop") ? "draining" : values.includes("start") ? "starting" : undefined;
     const result = desktopRuntimeSnapshotOf({
-      status: blocked ? "unavailable" : transition ?? state.status,
+      status: blocked ? "unavailable" : (transition ?? state.status),
       role: blocked || transition ? null : state.role,
       // Ownership survives every gate: a presentation block does not transfer the process to us.
       ownership: state.ownership,
@@ -119,15 +152,23 @@ export function createRuntimePresentation(options: {
           const event = desktopRuntimeEventOf(snapshot());
           if (before !== generation || document !== targetDocument || !documentAlive) continue;
           options.send(event);
-        } catch { diagnose(); }
+        } catch {
+          diagnose();
+        }
       }
       if (pendingPush) diagnose();
-    } finally { publishing = false; }
+    } finally {
+      publishing = false;
+    }
   }
   function changed() {
     generation++;
     if (taskLeases.size > 0 || checkingTasks) taskQualified();
-    try { options.refresh(); } catch { diagnose(); }
+    try {
+      options.refresh();
+    } catch {
+      diagnose();
+    }
     publish();
   }
 
@@ -145,7 +186,9 @@ export function createRuntimePresentation(options: {
       if (!taskLeases.has(lease)) return false;
       return taskQualified() && taskLeases.has(lease);
     },
-    releaseTaskLease(lease: object): void { taskLeases.delete(lease); },
+    releaseTaskLease(lease: object): void {
+      taskLeases.delete(lease);
+    },
     beginDocument(): object {
       const token = Object.freeze({});
       revokeTaskLeases();
@@ -178,7 +221,10 @@ export function createRuntimePresentation(options: {
         changed();
       }
     },
-    async run(operation: Operation, callback: () => RuntimeState | Promise<RuntimeState>): Promise<DesktopRuntimeResponse> {
+    async run(
+      operation: Operation,
+      callback: () => RuntimeState | Promise<RuntimeState>,
+    ): Promise<DesktopRuntimeResponse> {
       const refusal = admission(operation);
       if (refusal) return desktopRuntimeFailure(refusal);
       const token = Object.freeze({});
