@@ -32,15 +32,11 @@ const todayAnswer = (attention: number, askTitles: string[]): DesktopTodayRespon
   desktopTodayOf({
     kind: "ready",
     snapshot: {
-      version: 2,
+      version: 3,
       askTotal: askTitles.length,
-      noticeTotal: 0,
       spendingToday: { rounds: 1, cost: 0, missingCost: 1 },
       activeRuns: [],
-      recentRuns: [],
       activeTruncated: false,
-      recentTruncated: false,
-      historyTruncated: false,
       now: "2026-11-01T12:00:00.000Z",
       timezone: "Asia/Shanghai",
       totals: { running: 1, queued: 0, retrying: 0, unknown: 0, done: 2, doneToday: 1, attention },

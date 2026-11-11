@@ -77,7 +77,7 @@ test("projection selects only display fields and drops the credential link", () 
   assert.equal(snapshot.now, "2026-01-02T03:04:05.678Z");
 });
 
-test("projection caps each card kind independently without losing full totals", () => {
+test("projection drops notice cards without reading them and caps ask samples without losing totals", () => {
   const cards = Array.from({ length: 60 }, (_, i) => ({
     id: i + 1,
     kind: "notice",
@@ -94,15 +94,14 @@ test("projection caps each card kind independently without losing full totals", 
     })),
   );
   const snapshot = projectDesktopTodaySnapshot(hubState({ cards }));
-  assert.equal(snapshot.version, 2);
+  assert.equal(snapshot.version, 3);
   assert.equal(snapshot.askTotal, 25);
-  assert.equal(snapshot.noticeTotal, 60);
-  assert.equal(snapshot.cards.length, 40);
+  assert.equal(snapshot.cards.length, 20);
   assert.deepEqual(
-    snapshot.cards.slice(0, 20).map((card) => card.id),
+    snapshot.cards.map((card) => card.id),
     Array.from({ length: 20 }, (_, i) => i + 61),
   );
-  assert.ok(snapshot.cards.slice(20).every((card) => card.kind === "notice"));
+  assert.ok(snapshot.cards.every((card) => card.kind === "ask"));
 });
 
 test("projection rejects broken payloads", () => {
@@ -137,15 +136,15 @@ test("fixed-message states round-trip", () => {
 
 test("forged messages and wrong versions are rejected", () => {
   assert.throws(
-    () => parseDesktopTodayResponse({ version: 2, ok: true, state: { kind: "error", message: "x" } }),
+    () => parseDesktopTodayResponse({ version: 3, ok: true, state: { kind: "error", message: "x" } }),
     /invalid-request/,
   );
-  assert.throws(() => parseDesktopTodayResponse({ version: 2, ok: false, state: null }), /invalid-request/);
+  assert.throws(() => parseDesktopTodayResponse({ version: 3, ok: false, state: null }), /invalid-request/);
   assert.throws(
-    () => parseDesktopTodayResponse({ version: 2, ok: true, state: { kind: "error", message: "自造文案" } }),
+    () => parseDesktopTodayResponse({ version: 3, ok: true, state: { kind: "error", message: "自造文案" } }),
     /invalid-request/,
   );
-  assert.throws(() => parseDesktopTodayResponse({ version: 2, ok: true, state: { kind: "ready" } }), /invalid-request/);
+  assert.throws(() => parseDesktopTodayResponse({ version: 3, ok: true, state: { kind: "ready" } }), /invalid-request/);
 });
 
 test("extra fields are rejected on every level", () => {
@@ -162,7 +161,7 @@ test("extra fields are rejected on every level", () => {
   );
   assert.throws(() => {
     const snapshot = projectDesktopTodaySnapshot(hubState());
-    parseDesktopTodayResponse({ version: 2, ok: true, state: { kind: "ready", snapshot: { ...snapshot, link: "x" } } });
+    parseDesktopTodayResponse({ version: 3, ok: true, state: { kind: "ready", snapshot: { ...snapshot, link: "x" } } });
   }, /invalid-request/);
 });
 
@@ -171,7 +170,7 @@ test("snapshot bytes stay bounded", () => {
     hubState({
       cards: Array.from({ length: 20 }, (_, i) => ({
         id: i + 1,
-        kind: "notice",
+        kind: "ask",
         title: "t".repeat(100),
         text: "x".repeat(3000),
         by: "someone",
@@ -182,7 +181,7 @@ test("snapshot bytes stay bounded", () => {
   const oversized = hubState({
     cards: Array.from({ length: 20 }, (_, i) => ({
       id: i + 1,
-      kind: "notice",
+      kind: "ask",
       title: "t",
       text: "x".repeat(4900),
       by: null,
@@ -218,17 +217,19 @@ const run = (id: number, state = "claimed", extra: Record<string, unknown> = {})
   summary: "完成摘要",
   ...extra,
 });
-const ready = (snapshot: unknown) => ({ version: 2, ok: true, state: { kind: "ready", snapshot } });
+const ready = (snapshot: unknown) => ({ version: 3, ok: true, state: { kind: "ready", snapshot } });
 
 test("spending is today's accounting, not historical totals or the visible run count", () => {
   const snapshot = projectDesktopTodaySnapshot(hubState({ runs: [run(1, "done")] }));
   assert.deepEqual(snapshot.spendingToday, { rounds: 4, cost: 0.25, missingCost: 1 });
   assert.equal(snapshot.totals.done, 12);
   assert.equal(snapshot.totals.doneToday, 3);
-  assert.equal(snapshot.recentRuns.length, 1);
+  // Done runs are not display material: they leave no sample and no truncation signal.
+  assert.deepEqual(snapshot.activeRuns, []);
+  assert.equal(snapshot.activeTruncated, false);
 });
 
-test("same-state runs split into bounded active and done samples, never full counts", () => {
+test("active runs form a bounded sample, never full counts; terminal states never enter it", () => {
   const runs = [
     run(1, "queued"),
     run(2, "unknown"),
@@ -242,26 +243,10 @@ test("same-state runs split into bounded active and done samples, never full cou
     snapshot.activeRuns.map((item) => item.id),
     [1, 2, 3, 4, 5, 6],
   );
-  assert.deepEqual(
-    snapshot.recentRuns.map((item) => item.id),
-    [20, 21, 22, 23, 24, 25],
-  );
   assert.equal(snapshot.activeTruncated, true);
-  assert.equal(snapshot.recentTruncated, true);
   assert.equal(snapshot.totals.running, 1);
   assert.deepEqual(Object.keys(snapshot.activeRuns[0]), ["id", "rule", "agent", "state", "summary"]);
   assert.deepEqual(parseDesktopTodayResponse(ready(snapshot)).state, { kind: "ready", snapshot });
-});
-
-test("truncation describes sample coverage including hub history pagination", () => {
-  const runs = Array.from({ length: 6 }, (_, i) => run(i + 1));
-  for (const hasMore of [false, true]) {
-    const snapshot = projectDesktopTodaySnapshot(hubState({ runs, hasMore }));
-    assert.equal(snapshot.activeTruncated, false);
-    assert.equal(snapshot.recentTruncated, false);
-    assert.equal(snapshot.historyTruncated, hasMore);
-    assert.deepEqual(snapshot.recentRuns, []);
-  }
 });
 
 test("run selection never reads links, sessions, paths, or unused terminal summaries", () => {
@@ -294,13 +279,21 @@ test("projection requires accounting and runs rather than silently accepting leg
     { spending: undefined },
     { spending: {} },
     { runs: undefined },
-    { hasMore: undefined },
-    { hasMore: "yes" },
     { runs: [run(1, "invented")] },
     { runs: [null] },
   ]) {
     assert.throws(() => projectDesktopTodaySnapshot(hubState(override)), /invalid-request/);
   }
+  // hasMore fed hub pagination to the removed history section; it is no longer read at all, so a
+  // hostile getter there cannot disturb the projection.
+  const hostile = hubState();
+  Object.defineProperty(hostile, "hasMore", {
+    enumerable: true,
+    get() {
+      throw new Error("poison");
+    },
+  });
+  assert.doesNotThrow(() => projectDesktopTodaySnapshot(hostile));
 });
 
 test("accounting validates counts, finite nonnegative cost and missing-cost coverage", () => {
@@ -333,19 +326,11 @@ test("accounting validates counts, finite nonnegative cost and missing-cost cove
   );
 });
 
-test("v2 parser rejects legacy versions, missing fields, excessive samples and inconsistent card counts", () => {
+test("v3 parser rejects legacy versions, missing fields, excessive samples and inconsistent card counts", () => {
   const snapshot = projectDesktopTodaySnapshot(hubState());
   assert.throws(() => parseDesktopTodayResponse({ ...ready(snapshot), version: 1 }), /invalid-request/);
-  for (const field of [
-    "askTotal",
-    "noticeTotal",
-    "spendingToday",
-    "activeRuns",
-    "recentRuns",
-    "activeTruncated",
-    "recentTruncated",
-    "historyTruncated",
-  ]) {
+  assert.throws(() => parseDesktopTodayResponse({ ...ready(snapshot), version: 2 }), /invalid-request/);
+  for (const field of ["askTotal", "spendingToday", "activeRuns", "activeTruncated"]) {
     const incomplete = { ...snapshot } as Record<string, unknown>;
     delete incomplete[field];
     assert.throws(() => parseDesktopTodayResponse(ready(incomplete)), /invalid-request/);
@@ -353,12 +338,9 @@ test("v2 parser rejects legacy versions, missing fields, excessive samples and i
   for (const override of [
     { version: 1 },
     { askTotal: -1 },
-    { noticeTotal: 0.5 },
     { askTotal: 0 },
     { activeTruncated: 1 },
-    { recentTruncated: "true" },
     { activeRuns: Array.from({ length: 7 }, (_, i) => run(i + 1)) },
-    { recentRuns: [run(1, "queued")] },
     { activeRuns: [run(1, "done")] },
     { activeRuns: [run(1, "claimed", { link: "credential" })] },
     { activeRuns: [run(-1)] },
@@ -397,11 +379,11 @@ test("strict nested records reject getters, symbols and prototypes without evalu
   assert.throws(() => parseDesktopTodayResponse(ready({ ...snapshot, activeRuns: [badRun] })), /invalid-request/);
 });
 
-test("all 40 maximum protocol cards and 12 run summaries fit the response budget", () => {
+test("all 20 maximum protocol cards and 6 run summaries fit the response budget", () => {
   for (const character of ["x", "中", "😀", "\u0000"]) {
-    const cards = Array.from({ length: 40 }, (_, i) => ({
+    const cards = Array.from({ length: 20 }, (_, i) => ({
       id: i + 1,
-      kind: i < 20 ? "ask" : "notice",
+      kind: "ask",
       title: character.repeat(200),
       text: character.repeat(4000),
       by: "b".repeat(200),
@@ -414,7 +396,8 @@ test("all 40 maximum protocol cards and 12 run summaries fit the response budget
       }),
     );
     const snapshot = projectDesktopTodaySnapshot(hubState({ cards, runs }));
-    assert.equal(snapshot.cards.length, 40);
+    assert.equal(snapshot.cards.length, 20);
+    assert.equal(snapshot.activeRuns.length, 6);
     assert.equal(snapshot.cards[0].title, character.repeat(200));
     assert.equal(snapshot.cards[0].text, character.repeat(4000));
     const response = desktopTodayOf({ kind: "ready", snapshot });
@@ -434,7 +417,7 @@ test("Chinese and emoji use protocol code-point limits, not UTF-8 bytes", () => 
   }
 });
 
-test("cancelled is a valid hub state but never completion or active work", () => {
+test("cancelled is a valid hub state but never active work", () => {
   const cancelled = {
     state: "cancelled",
     get summary() {
@@ -443,11 +426,10 @@ test("cancelled is a valid hub state but never completion or active work", () =>
   };
   const snapshot = projectDesktopTodaySnapshot(hubState({ runs: [run(1), cancelled, run(3, "done")] }));
   assert.deepEqual(snapshot.activeRuns, [run(1)]);
-  assert.deepEqual(snapshot.recentRuns, [run(3, "done")]);
-  assert.equal(snapshot.recentTruncated, false);
+  assert.equal(snapshot.activeTruncated, false);
 });
 
-test("history not loaded and omitted done samples remain independent signals", () => {
+test("hub pagination and done runs leave no trace in the projection", () => {
   for (const hasMore of [false, true]) {
     for (const doneCount of [0, 6, 7]) {
       const snapshot = projectDesktopTodaySnapshot(
@@ -456,8 +438,8 @@ test("history not loaded and omitted done samples remain independent signals", (
           runs: Array.from({ length: doneCount }, (_, i) => run(i + 1, "done")),
         }),
       );
-      assert.equal(snapshot.historyTruncated, hasMore);
-      assert.equal(snapshot.recentTruncated, doneCount > 6);
+      assert.deepEqual(snapshot.activeRuns, []);
+      assert.equal(snapshot.activeTruncated, false);
       assert.deepEqual(parseDesktopTodayResponse(ready(snapshot)), ready(snapshot));
     }
   }
