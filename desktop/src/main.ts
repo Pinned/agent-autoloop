@@ -519,7 +519,7 @@ if (ownsAppLock)
           if (process.platform === "darwin") tray.setTitle(glance.attention > 0 ? String(glance.attention) : "");
           tray.setContextMenu(
             Menu.buildFromTemplate([
-              { label: "打开指挥台", click: () => quit.restore() },
+              { label: "打开指挥部", click: () => quit.restore() },
               ...glanceItems(glance),
               ...operations(),
               { type: "separator" },
@@ -560,7 +560,7 @@ if (ownsAppLock)
         minWidth: 760,
         minHeight: 540,
         show: false,
-        title: "agent-autoloop · 指挥台",
+        title: "agent-autoloop · 指挥部",
         titleBarStyle: "hiddenInset",
         backgroundColor: nativeTheme.shouldUseDarkColors ? "#0b0e14" : "#f4f6fa",
         icon: appIcon,
