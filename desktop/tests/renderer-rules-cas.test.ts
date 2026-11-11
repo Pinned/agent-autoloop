@@ -259,6 +259,24 @@ for (const value of [
     assert.equal(f.controller.getState().draft?.rulesSeq, 10);
   });
 
+test("a version-mismatched hub is reported as such, with the way out, not a generic failure", async () => {
+  const c = createRendererRulesCas({
+    rulesGet: () =>
+      Promise.resolve({
+        version: 3,
+        ok: false,
+        error: { code: "incompatible", message: messages.incompatible },
+      }),
+    rulesPut: () => Promise.resolve(ready()),
+  });
+  c.refresh();
+  await flush();
+  assert.equal(c.getState().loadError?.code, "incompatible");
+  assert.equal(c.getState().loadError?.message, messages.incompatible);
+  assert.match(messages.incompatible, /升级|内置/);
+  assert.equal(c.getState().draft, null);
+});
+
 for (const sync of [true, false])
   test(`bridge ${sync ? "throw" : "reject"} is contained with fixed messages`, async () => {
     const fail = () => {

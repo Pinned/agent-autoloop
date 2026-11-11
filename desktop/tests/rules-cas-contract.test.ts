@@ -149,7 +149,7 @@ test("v3 full snapshot only, neither old response nor commitVersion nor missing 
 });
 
 test("GET fixed table, PUT strict code/outcome/message pairs only", () => {
-  for (const code of ["unavailable", "no-hub", "error"] as const)
+  for (const code of ["unavailable", "no-hub", "error", "incompatible"] as const)
     assert.deepEqual(parseDesktopRulesCasGetResponse(desktopRulesCasGetFailure(code)), desktopRulesCasGetFailure(code));
   for (const [code, outcome] of [
     ["invalid", "not-sent"],
@@ -171,6 +171,8 @@ test("GET fixed table, PUT strict code/outcome/message pairs only", () => {
     ["invalid", "rejected"],
     ["uncertain", "not-sent"],
     ["busy", "rejected"],
+    // A save is never a version mismatch: an unsendable write is unavailable/invalid, never incompatible.
+    ["incompatible", "not-sent"],
   ])
     assert.throws(() =>
       parseDesktopRulesCasPutResponse({ version: 3, ok: false, error: { code, outcome, message: "固定" } }),

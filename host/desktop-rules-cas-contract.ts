@@ -16,13 +16,20 @@ export type DesktopRulesCasData = {
   seq: number;
   rulesSeq: number;
 };
-export type DesktopRulesCasGetCode = "unavailable" | "no-hub" | "error";
-export type DesktopRulesCasPutCode = DesktopRulesCasGetCode | "invalid" | "busy" | "conflict" | "uncertain";
+/** The failures a read and a save share: the local service, the hub's presence, the transport. */
+export type DesktopRulesCasTransportCode = "unavailable" | "no-hub" | "error";
+/**
+ * `incompatible` means the hub answered 200 with a body this contract cannot read: the version-
+ * mismatch signature of the app attached to an older terminal-side agent-autoloop. It is a read
+ * classification only — a save in that state is never attempted, and never called incompatible.
+ */
+export type DesktopRulesCasGetCode = DesktopRulesCasTransportCode | "incompatible";
+export type DesktopRulesCasPutCode = DesktopRulesCasTransportCode | "invalid" | "busy" | "conflict" | "uncertain";
 export type DesktopRulesCasOutcome = "not-sent" | "rejected" | "uncertain";
 type Success = { version: 3; ok: true; data: DesktopRulesCasData };
 type PutError =
   | { code: "invalid"; outcome: "not-sent" | "uncertain"; message: string }
-  | { code: DesktopRulesCasGetCode | "busy"; outcome: "not-sent"; message: string }
+  | { code: DesktopRulesCasTransportCode | "busy"; outcome: "not-sent"; message: string }
   | { code: "conflict"; outcome: "rejected"; message: string }
   | { code: "uncertain"; outcome: "uncertain"; message: string };
 export type DesktopRulesCasGetResponse =
@@ -33,6 +40,8 @@ export const DESKTOP_RULES_CAS_MESSAGES = Object.freeze({
   unavailable: "本机运行服务未运行或角色未确认，不能读取或保存入口。",
   "no-hub": "此电脑没有可用的本机中台，请在中台所在设备上修改入口。",
   error: "无法读取本机入口或确认连接配置，草稿未保存，请检查后再试。",
+  incompatible:
+    "本机中台返回了此应用无法识别的入口数据，通常因为终端里的 agent-autoloop 版本过旧。请升级它并重启，或停止它改用应用内置中台。",
   invalid: "入口或规则版本无效；草稿已保留。若请求已发出，无法确认是否保存，请重新读取核对。",
   busy: "已有入口保存请求正在处理中，本次草稿未发送，请等待结果。",
   conflict: "规则已变化，本次保存被拒绝；请保留草稿，重新读取后核对再保存。",
@@ -86,11 +95,13 @@ function peek(value: unknown): unknown {
   if (!value || typeof value !== "object") invalid();
   return Object.getOwnPropertyDescriptor(value, "ok")?.value;
 }
-const getCodes: readonly string[] = ["unavailable", "no-hub", "error"];
+const getCodes: readonly string[] = ["unavailable", "no-hub", "error", "incompatible"];
+// A save is never classified as a version mismatch: a request the hub cannot read is uncertain.
+const putCodes: readonly string[] = ["unavailable", "no-hub", "error"];
 function pair(code: unknown, outcome: unknown): boolean {
   return (
     (code === "invalid" && (outcome === "not-sent" || outcome === "uncertain")) ||
-    ((getCodes.includes(code as string) || code === "busy") && outcome === "not-sent") ||
+    ((putCodes.includes(code as string) || code === "busy") && outcome === "not-sent") ||
     (code === "conflict" && outcome === "rejected") ||
     (code === "uncertain" && outcome === "uncertain")
   );

@@ -304,14 +304,18 @@ test("runtime accessors read zero; invalid GET shapes and immediate fetch reject
   assert.equal(calls, 0);
   assert.equal(f.reads(), 0);
   for (const body of [
-    "{bad",
     JSON.stringify({ ...snapshot(), rulesSeq: 0 }),
     JSON.stringify({ ...snapshot(), secret: "SECRET" }),
     JSON.stringify({ entries: [], agents: [], seq: 1 }),
   ]) {
     const broken = fixture({ fetchImpl: async () => new Response(body) });
-    assert.equal(error(await broken.source.get()).code, "error");
+    // A 200 whose body the contract cannot read is the version-mismatch signature, with its own
+    // way out — never the dead-end generic error this page once showed against an older hub.
+    assert.equal(error(await broken.source.get()).code, "incompatible");
   }
+  // A 200 that is not JSON at all is a broken or foreign server: the generic error, not a version call.
+  const notJson = fixture({ fetchImpl: async () => new Response("{bad") });
+  assert.equal(error(await notJson.source.get()).code, "error");
   const broken = fixture({ fetchImpl: () => Promise.reject(new Error("SECRET owner argv")) });
   assert.equal(error(await broken.source.put(input())).outcome, "uncertain");
   assert.equal(error(await broken.source.get()).code, "error");

@@ -149,3 +149,22 @@ test("a stalled request settles under the deadline and cannot be mistaken for su
   assert.equal(error(await f.source.put(input())).outcome, "uncertain");
   assert.equal(error(await f.source.get()).code, "error");
 });
+
+test("a 200 the contract cannot read is a version mismatch with its own way out", async () => {
+  // A hub one contract behind answers 200 with recognizable-but-wrong shapes: a missing field an
+  // older version never had, or a value this reader refuses. Extra fields are not a mismatch — the
+  // projection ignores them so a newer hub never breaks this app.
+  const missingRulesSeq = { ...hub() } as Record<string, unknown>;
+  delete missingRulesSeq.rulesSeq;
+  for (const body of [
+    JSON.stringify({ ...hub(), rulesSeq: 0 }),
+    JSON.stringify(missingRulesSeq),
+    JSON.stringify({ timezone: "Asia/Shanghai" }),
+  ]) {
+    const f = fixture({ fetchImpl: async () => new Response(body) });
+    assert.equal(error(await f.source.get()).code, "incompatible");
+  }
+  // A 200 that is not JSON at all never reaches the shape check: the door classifies it as an error.
+  const notJson = fixture({ fetchImpl: async () => new Response("{bad") });
+  assert.equal(error(await notJson.source.get()).code, "error");
+});

@@ -6,9 +6,9 @@ import {
   parseDesktopRulesCasPutResponse,
   desktopRulesCasGetFailure,
   desktopRulesCasPutFailure,
-  type DesktopRulesCasGetCode,
   type DesktopRulesCasGetResponse,
   type DesktopRulesCasPutResponse,
+  type DesktopRulesCasTransportCode,
 } from "../../host/desktop-rules-cas-contract.ts";
 import { parseHubEndpoint, readRuntimeConfig } from "./state-source.ts";
 import type { DesktopRuntimeRole, DesktopRuntimeStatus } from "../../host/desktop-run-contract.ts";
@@ -44,7 +44,9 @@ export function createRulesCasSource(options: RulesCasSourceOptions): RulesCasSo
   let getFlight: Flight | undefined;
   let putFlight: Flight | undefined;
 
-  function gate(): DesktopRulesCasGetCode | undefined {
+  // The gate only inspects the local runtime state, so it can never classify a reply — its refusals
+  // are the transport codes a read and a save share, never the read-only `incompatible`.
+  function gate(): DesktopRulesCasTransportCode | undefined {
     try {
       const state: unknown = options.getState();
       if (!state || typeof state !== "object" || Object.getPrototypeOf(state) !== Object.prototype)
@@ -172,33 +174,52 @@ export function createRulesCasSource(options: RulesCasSourceOptions): RulesCasSo
           text += decoder.decode(chunk.value, { stream: true });
         }
         text += decoder.decode();
-        const payload: unknown = JSON.parse(text);
-        let data: ReturnType<typeof parseDesktopRulesCasData>;
-        if (method === "GET") data = parseDesktopRulesCasData(payload);
-        else {
-          if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("响应无效");
-          const keys = Reflect.ownKeys(payload);
-          if (
-            keys.length !== 5 ||
-            !keys.every(
-              (key) => typeof key === "string" && ["ok", "entries", "agents", "seq", "rulesSeq"].includes(key),
-            )
-          )
-            throw new Error("响应无效");
-          const value = payload as Record<string, unknown>;
-          if (value.ok !== true) throw new Error("保存未确认");
-          data = parseDesktopRulesCasData({
-            entries: value.entries,
-            agents: value.agents,
-            seq: value.seq,
-            rulesSeq: value.rulesSeq,
-          });
+        let payload: unknown;
+        try {
+          payload = JSON.parse(text);
+        } catch {
+          // A 200 that is not JSON at all is a broken or foreign server, not an older hub.
+          finish(uncertain);
+          return;
         }
-        const result = { version: 3, ok: true, data };
-        const reply =
-          method === "GET" ? parseDesktopRulesCasGetResponse(result) : parseDesktopRulesCasPutResponse(result);
+        let parsed: Reply;
+        try {
+          let data: ReturnType<typeof parseDesktopRulesCasData>;
+          if (method === "GET") data = parseDesktopRulesCasData(payload);
+          else {
+            if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("响应无效");
+            const keys = Reflect.ownKeys(payload);
+            if (
+              keys.length !== 5 ||
+              !keys.every(
+                (key) => typeof key === "string" && ["ok", "entries", "agents", "seq", "rulesSeq"].includes(key),
+              )
+            )
+              throw new Error("响应无效");
+            const value = payload as Record<string, unknown>;
+            if (value.ok !== true) throw new Error("保存未确认");
+            data = parseDesktopRulesCasData({
+              entries: value.entries,
+              agents: value.agents,
+              seq: value.seq,
+              rulesSeq: value.rulesSeq,
+            });
+          }
+          const result = { version: 3, ok: true, data };
+          parsed = method === "GET" ? parseDesktopRulesCasGetResponse(result) : parseDesktopRulesCasPutResponse(result);
+        } catch {
+          // A 200 whose body the contract cannot read is the version-mismatch signature: the app is
+          // attached to an older terminal-side hub. A read names the way out; a write stays
+          // uncertain because the request itself may have been accepted by that older hub.
+          finish(
+            method === "GET"
+              ? desktopRulesCasGetFailure("incompatible")
+              : desktopRulesCasPutFailure("uncertain", "uncertain"),
+          );
+          return;
+        }
         check();
-        finish(reply);
+        finish(parsed);
       } catch {
         finish(uncertain);
       } finally {
