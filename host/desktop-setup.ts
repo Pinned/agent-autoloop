@@ -136,7 +136,7 @@ export function createDesktopSetupDriver(dependencies: DesktopSetupDependencies)
     try {
       const candidate =
         value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, "operation")?.value : undefined;
-      if (["status", "init", "join", "launch-status", "complete"].includes(candidate))
+      if (["status", "init", "join", "launch-status", "complete", "connect"].includes(candidate))
         operation = candidate;
       request = parseDesktopSetupRequest(value);
     } catch {
@@ -147,6 +147,11 @@ export function createDesktopSetupDriver(dependencies: DesktopSetupDependencies)
     if (request.operation === "status") {
       return { version: 1, operation: "status", ok: true, data: readDesktopSetupStatus(dependencies.home) };
     }
+    if (request.operation === "connect")
+      // `connect` reads the CLI's config outside this home and probes that hub; the app answers it
+      // in process. If it ever reaches this locked driver, the wiring is wrong — and it must never
+      // be mistaken for a `join`, which would write a configuration from a request that carried none.
+      return desktopSetupFailure("connect", "invalid-request");
     // Refuse an aliased/non-private home before runlock can create any files there.
     if (!homeIsSafe(dependencies.home)) return desktopSetupFailure(operation, "invalid-config");
     let lock: { release(): void };

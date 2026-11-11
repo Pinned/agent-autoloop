@@ -12,9 +12,18 @@ import { readDesktopSetupStatusFromDisk } from "../../host/desktop-setup-fs.ts";
 
 export type SetupDiskRead = "status" | "launch-status";
 
+/**
+ * A `connect` answers from the CLI's config plus one authenticated probe. It writes nothing, so it
+ * must not queue behind the runtime lock either: asking "is my hub up" cannot install a runtime.
+ */
+export type SetupObservation = SetupDiskRead | "connect";
+
 /** Every other operation mutates, so it stays behind the locked private driver. */
 export function isSetupDiskRead(operation: DesktopSetupOperation): operation is SetupDiskRead {
   return operation === "status" || operation === "launch-status";
+}
+export function isSetupObservation(operation: DesktopSetupOperation): operation is SetupObservation {
+  return isSetupDiskRead(operation) || operation === "connect";
 }
 
 export type SetupStateReaders = {

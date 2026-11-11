@@ -38,6 +38,8 @@ export const channels = Object.freeze({
   setupStatus: "desktop:setup:status",
   setupInit: "desktop:setup:init",
   setupJoin: "desktop:setup:join",
+  /** Read-only: reads the CLI's hub config and asks whether its owner key opens that hub. */
+  setupConnect: "desktop:setup:connect",
   runtimeGet: "desktop:runtime:get",
   runtimeStart: "desktop:runtime:start",
   runtimeStop: "desktop:runtime:stop",
@@ -82,6 +84,11 @@ export interface DesktopBridge {
   setupStatus(): Promise<DesktopSetupResponse>;
   initHub(): Promise<DesktopSetupResponse>;
   joinWorker(input: DesktopJoinInput): Promise<DesktopSetupResponse>;
+  /**
+   * Ask where this machine's hub comes from, without writing anything: the CLI's own config is
+   * read, and a configured hub is dialed with its owner key. It never installs a runtime.
+   */
+  setupConnect(): Promise<DesktopSetupResponse>;
   runtimeGet(): Promise<DesktopRuntimeResponse>;
   runtimeStart(): Promise<DesktopRuntimeResponse>;
   runtimeStop(): Promise<DesktopRuntimeResponse>;

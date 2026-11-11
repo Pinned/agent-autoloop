@@ -65,6 +65,8 @@ import {
 } from "../../host/desktop-setup-contract.ts";
 import { isSetupDiskRead, readSetupState } from "./setup-state-read.ts";
 import { verifySetupConnection } from "./setup-verify.ts";
+import { resolveSetupConnect } from "./setup-connect.ts";
+import { probeOwnerDoor } from "./owner-door.ts";
 import type * as RuntimeResources from "../scripts/runtime.mjs";
 
 let home: string | undefined;
@@ -183,11 +185,13 @@ if (ownsAppLock)
               }),
           }),
       });
-      // Where this run's hub comes from, decided once and before any page is painted. Detection
-      // is a real-launch fact only: a smoke or lifecycle run must never attach to a user's terminal
-      // hub, so both are excluded even when the app itself is enabled.
+      // Whether this run may look at the user's terminal CLI at all. A smoke or lifecycle run must
+      // never attach to a user's terminal hub, so both are excluded even when the app is enabled.
+      // First-run's connect step asks the same question, so it reads this one predicate.
+      const mayDetectCli = () => enabled && !lifecycle;
+      // Where this run's hub comes from, decided once and before any page is painted.
       const boot = createBootControl({
-        detect: () => (enabled && !lifecycle ? detectDesktopCli(desktopCliHome(process.env)) : null),
+        detect: () => (mayDetectCli() ? detectDesktopCli(desktopCliHome(process.env)) : null),
         endpoint: (port) => readDesktopCliEndpoint(desktopCliHome(process.env), port),
         onChange: () => bootChanged(),
       });
@@ -262,9 +266,26 @@ if (ownsAppLock)
         canSetup: () => controller.isIdle() && ["stopped", "unconfigured"].includes(controller.getState().status),
         // A status read describes files; it never needs the runtime it describes. Answering it in
         // process keeps first run from waiting on an install (and keeps a `status` read available
-        // while the runtime resources are still being prepared).
+        // while the runtime resources are still being prepared). `connect` joins it for the same
+        // reason: it only reads the CLI's config and probes that hub, so it has nothing to write.
         run: async (request): Promise<DesktopSetupResponse> => {
           if (isSetupDiskRead(request.operation)) return readSetupState(runtimeHome, request.operation);
+          if (request.operation === "connect")
+            return {
+              version: 1,
+              operation: "connect",
+              ok: true,
+              data: await resolveSetupConnect({
+                // The same predicate and reader boot uses, so first run cannot connect to a hub this
+                // run would not attach to (or vice versa).
+                detect: () =>
+                  mayDetectCli()
+                    ? detectDesktopCli(desktopCliHome(process.env))
+                    : { state: "absent" as const },
+                endpoint: (port) => readDesktopCliEndpoint(desktopCliHome(process.env), port),
+                probe: (endpoint) => probeOwnerDoor(endpoint),
+              }),
+            };
           // "Connected" is one question with one answer: can this credential operate that hub's
           // data right now. It is asked before the driver writes anything, so a refused connection
           // provably leaves the machine unconfigured and the page may offer a corrected retry.
@@ -717,6 +738,10 @@ if (ownsAppLock)
       ipcMain.handle(channels.setupJoin, (event, ...args: unknown[]) => {
         assertSender(event, window.webContents, page);
         return setupRequest("join", args);
+      });
+      ipcMain.handle(channels.setupConnect, (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        return setupRequest("connect", args);
       });
       // Runtime control mirrors the tray: same gate, same admission, same safe-stop semantics. Never a forced kill.
       ipcMain.handle(channels.runtimeGet, (event, ...args: unknown[]) => {

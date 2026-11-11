@@ -4,7 +4,12 @@ import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test, type TestContext } from "node:test";
-import { isSetupDiskRead, readSetupState, type SetupStateReaders } from "../src/setup-state-read.ts";
+import {
+  isSetupDiskRead,
+  isSetupObservation,
+  readSetupState,
+  type SetupStateReaders,
+} from "../src/setup-state-read.ts";
 import { createSetupControl } from "../src/setup-control.ts";
 import { createSetupRunner } from "../src/setup-runner.ts";
 import type { DesktopSetupRequest } from "../../host/desktop-setup-contract.ts";
@@ -15,11 +20,17 @@ function home(t: TestContext) {
   return path.join(root, "runtime-home");
 }
 
-test("only the two observations bypass the private driver; every mutation stays behind it", () => {
+test("only the two disk reads bypass the private driver; connect is an observation, not a disk read", () => {
   const reads = ["status", "launch-status"] as const;
   for (const operation of reads) assert.equal(isSetupDiskRead(operation), true);
-  for (const operation of ["init", "join", "complete"] as const)
+  for (const operation of ["init", "join", "complete", "connect"] as const)
     assert.equal(isSetupDiskRead(operation), false);
+  // `connect` joins the reads at the admission gate (no runtime lock), but it answers from the
+  // CLI config and a live probe rather than from this app's own files.
+  for (const operation of ["status", "launch-status", "connect"] as const)
+    assert.equal(isSetupObservation(operation), true);
+  for (const operation of ["init", "join", "complete"] as const)
+    assert.equal(isSetupObservation(operation), false);
 });
 
 test("a first-run read answers unconfigured from disk without creating the data directory", (t) => {

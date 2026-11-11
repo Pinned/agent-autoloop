@@ -140,6 +140,7 @@ async function realFixture() {
     initHub: async () => desktopSetupFailure("init", "operation-failed"),
     launchStatus: async () => desktopSetupFailure("launch-status", "operation-failed"),
     completeSetup: async () => desktopSetupFailure("complete", "operation-failed"),
+    setupConnect: async () => desktopSetupFailure("connect", "operation-failed"),
   };
   let view: ReturnType<typeof mountSetupView>;
   const control = createRendererSetup(bridge, () => withDocument(() => view.render(false)));
@@ -223,6 +224,9 @@ test("real app setup callback presents failed launch reads with explicit retry a
       },
       completeSetup: async () => {
         throw new Error("unexpected complete");
+      },
+      setupConnect: async () => {
+        throw new Error("unexpected connect");
       },
     };
     const context: Record<string, unknown> = {
