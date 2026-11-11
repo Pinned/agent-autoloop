@@ -58,22 +58,15 @@ function visibleText(root: TestElement): string {
   return root.children.length ? root.children.map(visibleText).join(" ") : root.textContent;
 }
 const snapshot = (overrides = {}) => ({
-  version: 2,
+  version: 3,
   now: "2026-01-02T03:04:05.678Z",
   timezone: "Asia/Shanghai",
   totals: { running: 3, queued: 2, retrying: 1, unknown: 0, done: 10, doneToday: 4, attention: 99 },
   askTotal: 25,
-  noticeTotal: 21,
-  cards: [
-    { id: 1, kind: "ask", title: "请决定", text: "<img src=x onerror=alert(1)>", by: "规则一" },
-    { id: 2, kind: "notice", title: "交付通知", text: "通知不等于完成任务", by: null },
-  ],
+  cards: [{ id: 1, kind: "ask", title: "请决定", text: "<img src=x onerror=alert(1)>", by: "规则一" }],
   spendingToday: { rounds: 3, cost: 0.00123456789, missingCost: 0 },
   activeRuns: [{ id: 7, rule: "推进规则", agent: "codex", state: "claimed", summary: "正在整理" }],
-  recentRuns: [{ id: 8, rule: "已完成规则", agent: "codex", state: "done", summary: "已交付" }],
   activeTruncated: true,
-  recentTruncated: true,
-  historyTruncated: false,
   ...overrides,
 });
 function fixture(state: unknown = { kind: "ready", snapshot: snapshot() }, withTasks = true) {
@@ -137,36 +130,23 @@ test("four independent headline tiles use exact ask/running/doneToday and real U
   assert.match(visibleText(f.root), /USD/);
 });
 
-test("asks and notices are separated, totals are not truncated lengths, and summaries retain real states", () => {
+test("asks and active runs are the page; notices and completed history leave no trace", () => {
   const f = fixture();
   assert.match(byId(f.root, "today-asks").textContent, /25 项/);
   assert.equal(byClass(byId(f.root, "today-asks"), "today-decision").length, 1);
-  assert.ok(!byId(f.root, "today-asks").textContent.includes("交付通知"));
-  assert.match(byId(f.root, "today-notices").textContent, /21 条/);
-  assert.match(byId(f.root, "today-recent").textContent, /已完成规则/);
+  assert.match(byId(f.root, "today-asks").textContent, /仅展示最近 1 项，共 25 项待决策/);
   assert.match(byId(f.root, "today-active").textContent, /推进规则/);
   assert.match(byId(f.root, "today-active").textContent, /仅展示最近/);
-  assert.match(byId(f.root, "today-recent").textContent, /当前历史范围内仅展示 1 条已完成记录/);
-  assert.match(byId(f.root, "today-recent").textContent, /已完成轮次/);
-  assert.match(byId(f.root, "today-recent").textContent, /当前历史范围内的已完成记录/);
-  assert.ok(!byId(f.root, "today-recent").textContent.includes("最近完成"));
+  // The removed sections are gone entirely: no notice group, no completed group, no wrapper.
+  for (const gone of ["today-notices", "today-recent", "today-completed"])
+    assert.equal(
+      all(f.root).some((node) => node.id === gone),
+      false,
+      gone,
+    );
+  assert.ok(!visibleText(f.root).includes("通知"));
+  assert.ok(!visibleText(f.root).includes("已完成"));
   assert.ok(!visibleText(f.root).includes("回答后继续"));
-});
-
-test("incomplete history is disclosed independently of completed-round sampling", () => {
-  const message = "更早的执行历史未加载，可前往任务列表查看。";
-  const emptyHistory = fixture({
-    kind: "ready",
-    snapshot: snapshot({ recentRuns: [], recentTruncated: false, historyTruncated: true }),
-  });
-  assert.ok(byId(emptyHistory.root, "today-recent").textContent.includes(message));
-  assert.match(byId(emptyHistory.root, "today-recent").textContent, /当前历史范围内暂无已完成记录/);
-  assert.ok(!byId(emptyHistory.root, "today-recent").textContent.includes("仅展示 0"));
-  const sampled = fixture();
-  assert.ok(!byId(sampled.root, "today-recent").textContent.includes(message));
-  const both = fixture({ kind: "ready", snapshot: snapshot({ historyTruncated: true }) });
-  assert.ok(byId(both.root, "today-recent").textContent.includes(message));
-  assert.match(byId(both.root, "today-recent").textContent, /当前历史范围内仅展示 1 条已完成记录/);
 });
 
 test("partial, all-missing and no-usage costs never claim a fabricated complete bill", () => {
@@ -248,12 +228,9 @@ test("genuine ready empty data displays empty states and external text stays lit
     kind: "ready",
     snapshot: snapshot({
       askTotal: 0,
-      noticeTotal: 0,
       cards: [],
       activeRuns: [],
-      recentRuns: [],
       activeTruncated: false,
-      recentTruncated: false,
     }),
   });
   assert.match(visibleText(empty.root), /没有待决策事项/);
@@ -263,5 +240,5 @@ test("genuine ready empty data displays empty states and external text stays lit
   assert.ok(!all(f.root).some((node) => node.tagName === "img"));
   f.control.state = { kind: "error", message: "fixed failure" };
   update(f);
-  assert.ok(!visibleText(f.root).includes("已交付"));
+  assert.ok(!visibleText(f.root).includes("正在整理"));
 });

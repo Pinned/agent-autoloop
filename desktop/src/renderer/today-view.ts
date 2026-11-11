@@ -7,13 +7,11 @@ const runNames: Record<RunSummary["state"], string> = {
   queued: "排队中",
   claimed: "运行中",
   unknown: "失联",
-  done: "已完成",
 };
 const runSymbols: Record<RunSummary["state"], string> = {
   queued: "◷",
   claimed: "●",
   unknown: "?",
-  done: "✓",
 };
 
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, text = "", className = "") {
@@ -39,7 +37,7 @@ function dollars(cost: number): string {
   return `$${decimal}`;
 }
 
-/** A read-only snapshot: no invented answers, notification actions, or per-task links. */
+/** A read-only snapshot: no invented answers, no per-task links, only asks and active runs. */
 export function mountTodayView(
   root: HTMLElement,
   control: Controller,
@@ -113,10 +111,9 @@ export function mountTodayView(
     return box;
   }
   function cardRow(card: DesktopTodaySnapshot["cards"][number]) {
-    const ask = card.kind === "ask";
-    const article = element("article", "", `today-card panel${ask ? " today-decision" : ""}`);
+    const article = element("article", "", "today-card panel today-decision");
     const head = element("div", "", "today-card-head");
-    head.append(element("h3", card.title), element("span", ask ? "! 待决策" : "通知", `today-card-kind ${card.kind}`));
+    head.append(element("h3", card.title), element("span", "! 待决策", "today-card-kind ask"));
     article.append(head, element("p", card.text, "today-card-text"));
     const foot = element("div", "", "today-card-foot");
     foot.append(element("span", card.by ? `来自 ${card.by}` : `卡片 #${card.id}`, "muted"));
@@ -180,13 +177,18 @@ export function mountTodayView(
           ? `USD · 已上报，部分未上报（${missingCost} 轮）`
           : `USD · ${rounds} 轮已上报费用`;
 
+    // The page shows what still needs the owner: open asks and active runs. Completed history and
+    // closed notices live in the tasks page, so the snapshot never carries them.
     const asks = group("today-asks", "待你决策", `${snapshot.askTotal} 项`);
-    const askCards = snapshot.cards.filter((card) => card.kind === "ask");
     if (!snapshot.askTotal) asks.append(empty("没有待决策事项", "需要你介入时，决策会集中出现在这里。"));
-    else asks.append(...askCards.map(cardRow));
-    if (snapshot.askTotal > askCards.length)
+    else asks.append(...snapshot.cards.map(cardRow));
+    if (snapshot.askTotal > snapshot.cards.length)
       asks.append(
-        element("p", `仅展示最近 ${askCards.length} 项，共 ${snapshot.askTotal} 项待决策。`, "today-list-note muted"),
+        element(
+          "p",
+          `仅展示最近 ${snapshot.cards.length} 项，共 ${snapshot.askTotal} 项待决策。`,
+          "today-list-note muted",
+        ),
       );
 
     const active = group("today-active", "正在推进", "运行与排队", true);
@@ -203,38 +205,7 @@ export function mountTodayView(
           "today-list-note muted",
         ),
       );
-
-    const recent = group("today-recent", "已完成与通知", "通知无需回答");
-    const notices = group("today-notices", "通知", `${snapshot.noticeTotal} 条`);
-    const noticeCards = snapshot.cards.filter((card) => card.kind === "notice");
-    if (!snapshot.noticeTotal) notices.append(element("p", "没有未结案通知。", "today-list-note muted"));
-    else notices.append(...noticeCards.map(cardRow));
-    if (snapshot.noticeTotal > noticeCards.length)
-      notices.append(
-        element(
-          "p",
-          `仅展示最近 ${noticeCards.length} 条，共 ${snapshot.noticeTotal} 条通知。`,
-          "today-list-note muted",
-        ),
-      );
-    const completed = group("today-completed", "已完成轮次", "当前历史范围内的已完成记录");
-    completed.append(
-      snapshot.recentRuns.length
-        ? runs(snapshot.recentRuns)
-        : element("p", "当前历史范围内暂无已完成记录。", "today-list-note muted"),
-    );
-    if (snapshot.recentTruncated && snapshot.recentRuns.length > 0)
-      completed.append(
-        element(
-          "p",
-          `当前历史范围内仅展示 ${snapshot.recentRuns.length} 条已完成记录，更多记录请查看任务列表。`,
-          "today-list-note muted",
-        ),
-      );
-    if (snapshot.historyTruncated)
-      completed.append(element("p", "更早的执行历史未加载，可前往任务列表查看。", "today-list-note muted"));
-    recent.append(notices, completed);
-    content.append(asks, active, recent);
+    content.append(asks, active);
   }
   update();
   return { update };
