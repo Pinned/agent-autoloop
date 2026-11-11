@@ -2,6 +2,7 @@ import {
   DESKTOP_SETUP_ERROR_MESSAGES,
   parseDesktopJoinInput,
   parseDesktopSetupResponse,
+  type DesktopConnectFailure,
   type DesktopJoinInput,
   type DesktopSetupErrorCode,
   type DesktopSetupOperation,
@@ -12,17 +13,48 @@ import type { DesktopLaunchStatus, DesktopLaunchMode } from "../../../host/deskt
 
 export type SetupRole = "hub-worker" | "worker";
 export type SetupDraft = Readonly<{ url: string; worker: string }>;
+
+/**
+ * Why the page could not confirm a connection. A door reason is the hub's own answer; an
+ * unavailable code is this app declining to ask at all. Neither is ever treated as a connection.
+ */
+export type SetupLinkProblem =
+  | { readonly kind: "door"; readonly port: number; readonly reason: DesktopConnectFailure }
+  | { readonly kind: "unavailable"; readonly code: DesktopSetupErrorCode };
+
+/**
+ * The connection state of step 2. Entering the step asks one question — can the credential this
+ * machine already holds operate a hub right now — and every answer is a state the page shows:
+ *
+ *   probing   the question is being asked;
+ *   attached  the terminal's hub answered, so "完成" may be pressed;
+ *   failed    nothing usable answered, or the question could not be asked; only "重试" may proceed;
+ *   embedding no hub is configured, so this machine's own hub is being configured without asking;
+ *   embedded  that configuration landed; the remaining action is the launch policy plus the start;
+ *   joined    a pure worker's join was accepted by the hub, so "完成" may be pressed.
+ */
+export type SetupLink =
+  | { readonly kind: "probing" }
+  | { readonly kind: "attached"; readonly port: number }
+  | { readonly kind: "failed"; readonly problem: SetupLinkProblem }
+  | { readonly kind: "embedding"; readonly reason: "absent" | "worker" | "invalid" }
+  | { readonly kind: "embedded"; readonly reason: "absent" | "worker" | "invalid" }
+  | { readonly kind: "joined" };
+
 export type Wizard = Readonly<{
-  /** Two steps: choose a role, then connect. Saving and connecting are one action. */
+  /** Two steps: choose a role, then connect. Completion is one action once connected. */
   step: 1 | 2;
   role: SetupRole;
   draft: SetupDraft;
+  /** Step 2's connection reading; null only on step 1, or before a worker has joined. */
+  link: SetupLink | null;
   error: string | null;
 }>;
 export type SetupState =
   | { readonly kind: "idle" }
   | { readonly kind: "reading-status" }
   | { readonly kind: "reading-launch" }
+  /** Crash recovery only: an earlier run wrote the config but never committed the launch policy. */
   | { readonly kind: "prepared"; readonly mode: DesktopLaunchMode }
   | { readonly kind: "completing"; readonly mode: DesktopLaunchMode }
   | { readonly kind: "completed"; readonly mode: DesktopLaunchMode }
@@ -38,8 +70,8 @@ export type SetupBridge = Pick<
   "setupStatus" | "initHub" | "joinWorker" | "launchStatus" | "completeSetup" | "setupConnect"
 >;
 
-/** What the wizard's own state machine drives. `connect` belongs to the step-2 flow, not here. */
-type WizardOperation = Exclude<DesktopSetupOperation, "connect">;
+/** Why a write is in flight: the automatic embed chain, or the one press of "完成". */
+type FlightIntent = "embed" | "commit" | null;
 
 /**
  * The write is gated on a live connection, and these three failures are answered before the
@@ -48,6 +80,38 @@ type WizardOperation = Exclude<DesktopSetupOperation, "connect">;
  */
 export function isConnectRefusal(code: DesktopSetupErrorCode): boolean {
   return code === "connection-failed" || code === "credential-rejected" || code === "identity-mismatch";
+}
+
+function isWrite(operation: DesktopSetupOperation): boolean {
+  return operation === "init" || operation === "join" || operation === "complete";
+}
+
+/** Once the configuration is written the role is settled, so a step back could only promise failure. */
+function settled(link: SetupLink | null): boolean {
+  return link !== null && (link.kind === "embedding" || link.kind === "embedded" || link.kind === "joined");
+}
+
+function freezeLink(value: SetupLink): SetupLink {
+  switch (value.kind) {
+    case "probing":
+    case "joined":
+      return Object.freeze({ kind: value.kind });
+    case "attached":
+      return Object.freeze({ kind: "attached", port: value.port });
+    case "failed": {
+      const problem = value.problem;
+      return Object.freeze({
+        kind: "failed",
+        problem:
+          problem.kind === "door"
+            ? Object.freeze({ kind: "door", port: problem.port, reason: problem.reason })
+            : Object.freeze({ kind: "unavailable", code: problem.code }),
+      });
+    }
+    case "embedding":
+    case "embedded":
+      return Object.freeze({ kind: value.kind, reason: value.reason });
+  }
 }
 
 /** A single-flight, in-memory UI controller. No credentials are retained in state. */
@@ -78,6 +142,7 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
       step: value.step,
       role: value.role,
       draft: Object.freeze({ url: value.draft.url, worker: value.draft.worker }),
+      link: value.link === null ? null : freezeLink(value.link),
       error: value.error,
     });
   }
@@ -85,7 +150,7 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
     set({ ...wizard(value), kind: "wizard" });
   }
   function initialWizard(): Wizard {
-    return wizard({ step: 1, role: "hub-worker", draft: { url: "", worker: "" }, error: null });
+    return wizard({ step: 1, role: "hub-worker", draft: { url: "", worker: "" }, link: null, error: null });
   }
   function locked(write: boolean) {
     // An existing unknown lock is never downgraded by a later response.
@@ -104,21 +169,37 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
   }
   /**
    * Whether this failed write provably wrote nothing, so the wizard may be corrected and retried.
-   * Those codes are answered by main before the driver runs, which is exactly why they can only be
-   * trusted for the two role writes: a `complete` that somehow claimed one still locks the session.
+   * Only `join` is answered by the connection check before the driver runs, and only the check's
+   * three codes can prove that. A `complete` that claimed one still locks the session.
    */
   function notApplied(response: DesktopSetupResponse): boolean {
-    return (
-      !response.ok &&
-      (response.operation === "init" || response.operation === "join") &&
-      isConnectRefusal(response.error.code)
-    );
+    return !response.ok && response.operation === "join" && isConnectRefusal(response.error.code);
   }
-  function apply(response: DesktopSetupResponse, snapshot: Wizard | null) {
+  function failedLink(code: DesktopSetupErrorCode): SetupLink {
+    return { kind: "failed", problem: { kind: "unavailable", code } };
+  }
+  function apply(response: DesktopSetupResponse, snapshot: Wizard | null, intent: FlightIntent) {
     if (!response.ok) {
+      if (snapshot && response.operation === "connect") {
+        // The question could not even be asked (busy, unavailable, no runtime resources). The page
+        // stays on step 2 and offers "重试"; a read never wrote anything to recover.
+        setWizard({ ...snapshot, link: failedLink(response.error.code), error: null });
+        return;
+      }
       if (notApplied(response) && snapshot) {
+        // The hub refused this key, so the machine is untouched and step 2 may be corrected.
         setWizard({ ...snapshot, error: response.error.message });
-      } else if (lock === "mutation") {
+        return;
+      }
+      if (intent === "embed" && snapshot) {
+        // The embed write was never pressed by the user, and "unknown" is handled before this
+        // point: every code reaching here is a refusal answered before anything was written.
+        // Locking the whole session over an automatic attempt would strand a first run that the
+        // user did not even ask for, so step 2 reports it and "重试" asks again.
+        setWizard({ ...snapshot, link: failedLink(response.error.code), error: null });
+        return;
+      }
+      if (lock === "mutation") {
         locked(true);
       } else {
         blocked(response.error.code);
@@ -152,16 +233,55 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
           blocked(response.data.configuration === "incomplete" ? "incomplete-setup" : "invalid-config");
         }
         break;
-      case "init":
-      case "join":
-        completionMode = response.data.role === "worker" ? "worker" : "embedded";
-        launch = Object.freeze({ completion: "prepared", nextLaunch: completionMode, current: completionMode });
-        set({ kind: "prepared", mode: completionMode });
+      case "connect": {
+        if (!snapshot) break;
+        const data = response.data;
+        if (data.kind === "attach") {
+          setWizard({ ...snapshot, link: { kind: "attached", port: data.port }, error: null });
+        } else if (data.kind === "attach-failed") {
+          setWizard({
+            ...snapshot,
+            link: { kind: "failed", problem: { kind: "door", port: data.port, reason: data.reason } },
+            error: null,
+          });
+        } else {
+          // No hub in the CLI's config: this machine becomes the hub. Its configuration is written
+          // without asking, which is why stepping back stops being available once that lands.
+          const embedding = wizard({ ...snapshot, link: { kind: "embedding", reason: data.reason }, error: null });
+          setWizard(embedding);
+          start("init", embedding, undefined, "embed");
+        }
         break;
+      }
+      case "join":
+        if (!snapshot) break;
+        // The hub accepted the key only after the connection check passed, so this is the same
+        // proof of a live connection the hub-worker step gets from its probe.
+        completionMode = "worker";
+        launch = Object.freeze({ completion: "prepared", nextLaunch: "worker", current: "worker" });
+        setWizard({ ...snapshot, link: { kind: "joined" }, error: null });
+        break;
+      case "init": {
+        if (!snapshot || intent !== "embed") break;
+        const previous = snapshot.link;
+        completionMode = "embedded";
+        launch = Object.freeze({ completion: "prepared", nextLaunch: "embedded", current: "embedded" });
+        setWizard({
+          ...snapshot,
+          link: { kind: "embedded", reason: previous && previous.kind === "embedding" ? previous.reason : "absent" },
+          error: null,
+        });
+        break;
+      }
     }
   }
-  function start(operation: WizardOperation, snapshot: Wizard | null = null, input?: DesktopJoinInput) {
-    const write = operation === "init" || operation === "join" || operation === "complete";
+  function start(
+    operation: DesktopSetupOperation,
+    snapshot: Wizard | null = null,
+    input?: DesktopJoinInput,
+    intent: FlightIntent = null,
+  ) {
+    const write = isWrite(operation);
     // Reserve and publish before any bridge/listener code can re-enter.
     flight = operation;
     flightGeneration = generation;
@@ -173,7 +293,10 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
           ? { kind: "completing", mode: completionMode }
           : operation === "status"
             ? { kind: "reading-status" }
-            : { kind: "submitting", wizard: snapshot! },
+            : operation === "connect"
+              ? // A probe stays on step 2: its loading entry is the page, not a separate screen.
+                { ...wizard(snapshot!), kind: "wizard" }
+              : { kind: "submitting", wizard: snapshot! },
     );
     function finish(value: unknown, rejected: boolean) {
       let response: DesktopSetupResponse | null = null;
@@ -190,24 +313,35 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
       // Safety is global: inspect before discarding a response to an old view.
       if (!response || (!response.ok && response.error.code === "unknown")) {
         locked(false);
-      } else if (!response.ok && write && !notApplied(response)) {
+      } else if (!response.ok && write && !notApplied(response) && intent !== "embed") {
+        // An embed write is the app's own automatic attempt, and every code but "unknown" (handled
+        // above) is answered before the driver writes anything: the embed path reports it on step 2
+        // and offers "重试" instead of stranding a first run the user never pressed for.
         locked(true);
       } else if (lock !== "unknown" && visible) {
-        apply(response, snapshot);
+        if (response.ok && operation === "init" && intent === "commit" && snapshot) {
+          // The app's own config is committed but the launch policy is not: the one remaining
+          // action of this same press is the policy write plus the start request.
+          completionMode = "embedded";
+          start("complete", snapshot);
+          return;
+        }
+        apply(response, snapshot, intent);
       }
       // Do not rebuild a departed view for ordinary late read results.
       if (visible || lock === "unknown") notify();
     }
     let result: Promise<DesktopSetupResponse>;
     try {
-      // A table, not a switch: adding a wizard operation to the contract then forces a bridge call
-      // here instead of leaving `result` unassigned.
-      const calls: { readonly [K in WizardOperation]: () => Promise<DesktopSetupResponse> } = {
+      // A table, not a switch: adding an operation to the contract then forces a bridge call here
+      // instead of leaving `result` unassigned.
+      const calls: { readonly [K in DesktopSetupOperation]: () => Promise<DesktopSetupResponse> } = {
         "launch-status": () => bridge.launchStatus(),
         complete: () => bridge.completeSetup(),
         status: () => bridge.setupStatus(),
         init: () => bridge.initHub(),
         join: () => bridge.joinWorker(input!),
+        connect: () => bridge.setupConnect(),
       };
       result = calls[operation]();
     } catch {
@@ -245,6 +379,7 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
       bootstrapped = true;
       start("launch-status");
     },
+    /** The explicit completion of an interrupted first run. Never the normal path. */
     complete(): boolean {
       if (flight !== null || lock !== null || state.kind !== "prepared") return false;
       completionMode = state.mode;
@@ -258,6 +393,7 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
           flightGeneration = generation;
           if (flight === "status") set({ kind: "reading-status" });
           else if (flight === "launch-status") set({ kind: "reading-launch" });
+          else if (flight === "connect" && flightSnapshot) setWizard(flightSnapshot);
           else if (flightSnapshot) set({ kind: "submitting", wizard: flightSnapshot });
         }
         notify();
@@ -277,21 +413,29 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
     chooseRole(role: SetupRole): void {
       const current = editable();
       if (!current || current.step !== 1 || (role !== "hub-worker" && role !== "worker")) return;
-      setWizard({ ...current, role, error: null });
+      setWizard({ ...current, role, link: null, error: null });
       notify();
     },
-    /** Advances from the role choice to the connect step; the draft is collected there. */
+    /**
+     * Advances from the role choice to the connect step. A hub-worker enters step 2 by asking the
+     * one question that page is about, so the user never has to press a button to learn the answer.
+     */
     next(): boolean {
       const current = editable();
       if (!current || current.step !== 1) return false;
-      setWizard({ ...current, step: 2, draft: current.draft, error: null });
-      notify();
+      const probing = wizard({ ...current, step: 2, link: null, error: null });
+      if (current.role !== "hub-worker") {
+        setWizard(probing);
+        notify();
+        return true;
+      }
+      start("connect", wizard({ ...probing, link: { kind: "probing" } }));
       return true;
     },
     /** Validates the non-secret part of a worker draft without a key and without contacting anything. */
     draft(draft: SetupDraft): boolean {
       const current = editable();
-      if (!current || current.step !== 2 || current.role !== "worker") return false;
+      if (!current || current.step !== 2 || current.role !== "worker" || settled(current.link)) return false;
       try {
         const parsed = parseDesktopJoinInput({ ...draft, key: "validation-only" });
         setWizard({ ...current, draft: { url: parsed.url, worker: parsed.worker }, error: null });
@@ -313,21 +457,31 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
         return false;
       }
     },
-    back(): void {
+    back(): boolean {
       const current = editable();
-      if (!current || current.step === 1) return;
-      setWizard({ ...current, step: 1, error: null });
+      if (!current || current.step === 1 || settled(current.link)) return false;
+      setWizard({ ...current, step: 1, link: null, error: null });
       notify();
+      return true;
     },
     /**
-     * Connect and save in one action: the join/init is verified by main before anything is
-     * written, so a refusal leaves this machine untouched and this page correctable.
+     * Completes step 2 in one action.
+     *
+     * A pure worker's first press connects and saves; its second press (when the page reads
+     * "joined") commits the launch policy. A hub-worker whose terminal hub answered writes its
+     * config and the policy in one press. When this machine is its own hub the config was already
+     * written automatically, so only the policy and the start request remain.
      */
     submit(key?: string): boolean {
       const current = editable();
       if (!current || current.step !== 2) return false;
-      let input: DesktopJoinInput | undefined;
       if (current.role === "worker") {
+        if (current.link?.kind === "joined") {
+          completionMode = "worker";
+          start("complete", current);
+          return true;
+        }
+        let input: DesktopJoinInput;
         try {
           input = parseDesktopJoinInput({ ...current.draft, key });
         } catch {
@@ -336,9 +490,27 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
           notify();
           return false;
         }
+        key = undefined;
+        start("join", wizard({ ...current, error: null }), input);
+        return true;
       }
-      key = undefined;
-      start(current.role === "worker" ? "join" : "init", wizard({ ...current, error: null }), input);
+      const link = current.link;
+      if (!link) return false;
+      if (link.kind === "embedded") {
+        completionMode = "embedded";
+        start("complete", current);
+        return true;
+      }
+      if (link.kind !== "attached") return false;
+      start("init", current, undefined, "commit");
+      return true;
+    },
+    /** Ask the same question again after a failed probe. It writes nothing, so it is always safe. */
+    retry(): boolean {
+      const current = editable();
+      if (!current || current.step !== 2 || current.role !== "hub-worker") return false;
+      if (!current.link || current.link.kind !== "failed") return false;
+      start("connect", wizard({ ...current, link: { kind: "probing" }, error: null }));
       return true;
     },
     recheck(): void {
