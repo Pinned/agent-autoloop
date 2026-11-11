@@ -35,8 +35,11 @@ export type SetupState =
 
 export type SetupBridge = Pick<
   DesktopBridge,
-  "setupStatus" | "initHub" | "joinWorker" | "launchStatus" | "completeSetup"
+  "setupStatus" | "initHub" | "joinWorker" | "launchStatus" | "completeSetup" | "setupConnect"
 >;
+
+/** What the wizard's own state machine drives. `connect` belongs to the step-2 flow, not here. */
+type WizardOperation = Exclude<DesktopSetupOperation, "connect">;
 
 /**
  * The write is gated on a live connection, and these three failures are answered before the
@@ -157,7 +160,7 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
         break;
     }
   }
-  function start(operation: DesktopSetupOperation, snapshot: Wizard | null = null, input?: DesktopJoinInput) {
+  function start(operation: WizardOperation, snapshot: Wizard | null = null, input?: DesktopJoinInput) {
     const write = operation === "init" || operation === "join" || operation === "complete";
     // Reserve and publish before any bridge/listener code can re-enter.
     flight = operation;
@@ -197,23 +200,16 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
     }
     let result: Promise<DesktopSetupResponse>;
     try {
-      switch (operation) {
-        case "launch-status":
-          result = bridge.launchStatus();
-          break;
-        case "complete":
-          result = bridge.completeSetup();
-          break;
-        case "status":
-          result = bridge.setupStatus();
-          break;
-        case "init":
-          result = bridge.initHub();
-          break;
-        case "join":
-          result = bridge.joinWorker(input!);
-          break;
-      }
+      // A table, not a switch: adding a wizard operation to the contract then forces a bridge call
+      // here instead of leaving `result` unassigned.
+      const calls: { readonly [K in WizardOperation]: () => Promise<DesktopSetupResponse> } = {
+        "launch-status": () => bridge.launchStatus(),
+        complete: () => bridge.completeSetup(),
+        status: () => bridge.setupStatus(),
+        init: () => bridge.initHub(),
+        join: () => bridge.joinWorker(input!),
+      };
+      result = calls[operation]();
     } catch {
       input = undefined;
       finish(undefined, true);

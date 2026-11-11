@@ -42,7 +42,10 @@ export function createSetupControl(options: {
       if (blocked) return Promise.resolve(desktopSetupFailure(request.operation, "unknown"));
       if (options.enabled === false || quitting)
         return Promise.resolve(desktopSetupFailure(request.operation, "unavailable"));
-      const readOnly = request.operation === "launch-status";
+      // `connect` sits with `launch-status`: it only reads the CLI's config and probes that hub, so
+      // it needs neither the runtime lock nor an idle runtime. A machine asking "is my hub up"
+      // must not be told "busy" because this app's own service happens to be starting.
+      const readOnly = request.operation === "launch-status" || request.operation === "connect";
       if (setupBusy || starts || stops || (!readOnly && !runtimeIdle()))
         return Promise.resolve(desktopSetupFailure(request.operation, "busy"));
       // Reserve synchronously, before request validation, prepare or any other await.

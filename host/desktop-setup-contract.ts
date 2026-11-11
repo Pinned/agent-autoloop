@@ -7,24 +7,45 @@ import {
 export const DESKTOP_SETUP_VERSION = 1 as const;
 export const DESKTOP_SETUP_REQUEST_MAX_BYTES = 16 * 1024;
 export const DESKTOP_SETUP_RESPONSE_MAX_BYTES = 64 * 1024;
-export type DesktopSetupOperation = "status" | "init" | "join" | "launch-status" | "complete";
+export type DesktopSetupOperation = "status" | "init" | "join" | "launch-status" | "complete" | "connect";
 export type DesktopJoinInput = { url: string; worker: string; key: string };
 export type DesktopSetupRequest =
   | { version: 1; operation: "status" }
   | { version: 1; operation: "init" }
   | { version: 1; operation: "launch-status" }
   | { version: 1; operation: "complete" }
+  | { version: 1; operation: "connect" }
   | { version: 1; operation: "join"; input: DesktopJoinInput };
 export type DesktopSetupStatus = {
   configuration: "unconfigured" | "configured" | "incomplete" | "invalid";
   role: "hub-worker" | "worker" | null;
 };
+
+/**
+ * Why this app did not attach to a terminal hub. These are the owner door's own failure kinds:
+ * "connected" is never inferred from a failed probe, so the page can only enable "完成" after "ok".
+ */
+export type DesktopConnectFailure =
+  | "unreachable"
+  | "credential-rejected"
+  | "redirect"
+  | "timeout"
+  | "invalid-response"
+  /** The config no longer describes the port detection saw: there is no key we can trust for it. */
+  | "config-changed";
+/** Where this machine's hub comes from, read from the CLI's config without writing anything. */
+export type DesktopConnectData =
+  | { kind: "attach"; port: number }
+  | { kind: "attach-failed"; port: number; reason: DesktopConnectFailure }
+  | { kind: "embedded"; reason: "absent" | "worker" | "invalid" };
+
 export type DesktopSetupData = {
   "launch-status": DesktopLaunchStatus;
   complete: { nextLaunch: DesktopLaunchMode };
   status: DesktopSetupStatus;
   init: { configuration: "configured"; role: "hub-worker" };
   join: { configuration: "configured"; role: "worker" };
+  connect: DesktopConnectData;
 };
 export const DESKTOP_SETUP_ERROR_MESSAGES = Object.freeze({
   "invalid-request": "初始化请求无效。",
@@ -49,7 +70,7 @@ export type DesktopSetupResponse = {
 }[DesktopSetupOperation];
 
 const CONTROL = /[\x00-\x1f\x7f-\x9f]/;
-const operations: readonly string[] = ["status", "init", "join", "launch-status", "complete"];
+const operations: readonly string[] = ["status", "init", "join", "launch-status", "complete", "connect"];
 function invalid(): never {
   throw new Error("invalid-request");
 }
@@ -123,11 +144,47 @@ export function parseDesktopSetupRequest(value: unknown): DesktopSetupRequest {
   return result;
 }
 
-export function desktopSetupFailure(
-  operation: DesktopSetupOperation,
+export function desktopSetupFailure(operation: DesktopSetupOperation,
   code: DesktopSetupErrorCode,
 ): DesktopSetupResponse {
   return { version: 1, operation, ok: false, error: { code, message: DESKTOP_SETUP_ERROR_MESSAGES[code] } };
+}
+
+/**
+ * The connect answer is strict for the same reason every other response is: the page gates its
+ * primary action on it, so a loosely parsed shape could enable "完成" on a failure.
+ */
+function parseDesktopConnectData(value: unknown): DesktopConnectData {
+  const data = value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
+  if (!data) invalid();
+  if (data.kind === "embedded") {
+    const exact = record(value, ["kind", "reason"]);
+    return { kind: "embedded", reason: oneOf(exact.reason, ["absent", "worker", "invalid"] as const) };
+  }
+  if (data.kind === "attach") {
+    const exact = record(value, ["kind", "port"]);
+    return { kind: "attach", port: connectPort(exact.port) };
+  }
+  if (data.kind === "attach-failed") {
+    const exact = record(value, ["kind", "port", "reason"]);
+    return {
+      kind: "attach-failed",
+      port: connectPort(exact.port),
+      reason: oneOf(exact.reason, [
+        "unreachable",
+        "credential-rejected",
+        "redirect",
+        "timeout",
+        "invalid-response",
+        "config-changed",
+      ] as const),
+    };
+  }
+  return invalid();
+}
+function connectPort(value: unknown): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1024 || (value as number) > 65535) invalid();
+  return value as number;
 }
 
 export function parseDesktopSetupResponse(
@@ -162,6 +219,8 @@ export function parseDesktopSetupResponse(
       const role = data.role === null ? null : oneOf(data.role, ["hub-worker", "worker"] as const);
       if ((configuration === "configured") !== (role !== null)) invalid();
       result = { version: 1, operation: "status", ok: true, data: { configuration, role } };
+    } else if (expectedOperation === "connect") {
+      result = { version: 1, operation: "connect", ok: true, data: parseDesktopConnectData(response.data) };
     } else {
       const data = record(response.data, ["configuration", "role"]);
       if (data.configuration !== "configured" || data.role !== (expectedOperation === "init" ? "hub-worker" : "worker"))

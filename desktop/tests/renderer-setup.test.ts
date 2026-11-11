@@ -168,6 +168,7 @@ function fixture(listener?: (controller: ReturnType<typeof createRendererSetup>)
       joins.push(input);
       return run("join");
     },
+    setupConnect: () => run("connect"),
   };
   const controller = createRendererSetup(bridge, () => {
     notifications++;
