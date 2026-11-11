@@ -95,26 +95,13 @@ test("startup reads launch policy once before opening first-run wizard; legacy n
   }
 });
 
-test("hub confirmation requires finite read-only probe; absent credentials are not called absent hub", async () => {
+test("hub confirmation requires a finished installation check; saving never starts by itself", async () => {
   const f = fixture();
   await ready(f);
-  await allowSubmit(f, false);
   assert.equal(f.controller.submit(), false);
-  f.controller.probe();
-  f.controller.probe();
-  assert.equal(f.calls.filter((value) => value === "probe").length, 1);
-  f.gates.at(-1)!.resolve({
-    version: 1,
-    operation: "probe",
-    ok: true,
-    data: {
-      scope: "loopback-only",
-      candidates: [{ url: "http://127.0.0.1:3350", outcome: "credentials-required" }],
-      externalSupported: false,
-    },
-  });
+  f.controller.check();
+  f.gates.at(-1)!.resolve(checkResult());
   await flush();
-  assert.equal(f.controller.probeResult?.candidates[0].outcome, "credentials-required");
   assert.equal(f.controller.submit(), true);
   f.gates.at(-1)!.resolve(written("init"));
   await flush();
@@ -126,25 +113,6 @@ test("hub confirmation requires finite read-only probe; absent credentials are n
   f.gates.at(-1)!.resolve({ version: 1, operation: "complete", ok: true, data: { nextLaunch: "embedded" } });
   await flush();
   assert.equal(f.controller.state.kind, "completed");
-});
-
-test("probe failures retain drafts and checks, require retry, and malformed outcomes lock globally", async () => {
-  for (const code of ["busy", "operation-failed", "unknown"] as const) {
-    const f = fixture();
-    await ready(f);
-    await allowSubmit(f, false);
-    f.controller.probe();
-    f.gates.at(-1)!.resolve(desktopSetupFailure("probe", code));
-    await flush();
-    if (code === "unknown") {
-      assert.equal(f.controller.state.kind, "unknown-locked");
-    } else {
-      assert.equal(wizardState(f.controller.state).check, "skipped");
-      assert.equal(f.controller.submit(), false);
-      f.controller.probe();
-      assert.equal(f.calls.at(-1), "probe");
-    }
-  }
 });
 
 test("prepared startup completes explicitly; definite failure recovers policy but unknown is permanently locked", async () => {
@@ -189,7 +157,6 @@ function fixture(listener?: (controller: ReturnType<typeof createRendererSetup>)
   }
   const bridge: SetupBridge = {
     launchStatus: () => run("launch-status"),
-    probeHub: () => run("probe"),
     completeSetup: () => run("complete"),
     setupStatus: () => run("status"),
     checkBuiltinAgents: () => run("check"),
@@ -229,17 +196,7 @@ async function ready(f: Fixture, role: "hub-worker" | "worker" = "hub-worker") {
   assert.equal(f.controller.next(), true);
   assert.equal(f.controller.next(role === "worker" ? draft : undefined), true);
 }
-async function allowSubmit(f: Fixture, probe = true) {
-  if (probe && wizardState(f.controller.state).role === "hub-worker") {
-    f.controller.probe();
-    f.gates.at(-1)!.resolve({
-      version: 1,
-      operation: "probe",
-      ok: true,
-      data: { scope: "loopback-only", candidates: [], externalSupported: false },
-    });
-    await flush();
-  }
+async function allowSubmit(f: Fixture) {
   f.controller.check();
   f.gates.at(-1)!.resolve(desktopSetupFailure("check", "operation-failed"));
   await flush();
@@ -247,29 +204,20 @@ async function allowSubmit(f: Fixture, probe = true) {
   assert.equal(wizardState(f.controller.state).check, "skipped");
 }
 
-test("reopened new hub wizard cannot reuse a departed round's successful probe", async () => {
+test("reopened new hub wizard cannot reuse a departed round's finished check", async () => {
   const f = fixture();
   await ready(f);
   await allowSubmit(f);
-  assert.ok(f.controller.probeResult);
   f.controller.leave();
   f.controller.open();
   f.gates.at(-1)!.resolve(status());
   await flush();
   f.controller.next();
   f.controller.next();
-  await allowSubmit(f, false);
-  assert.equal(f.controller.probeResult, null);
+  assert.equal(wizardState(f.controller.state).check, null);
   assert.equal(f.controller.submit(), false);
   assert.equal(f.calls.filter((operation) => operation === "init").length, 0);
-  f.controller.probe();
-  f.gates.at(-1)!.resolve({
-    version: 1,
-    operation: "probe",
-    ok: true,
-    data: { scope: "loopback-only", candidates: [], externalSupported: false },
-  });
-  await flush();
+  await allowSubmit(f);
   assert.equal(f.controller.submit(), true);
 });
 
@@ -492,7 +440,7 @@ test("every definite write failure locks mutation, only explicit status may reco
       assert.equal(f.controller.submit(syntheticKey), false);
       f.controller.leave();
       f.controller.open();
-      assert.equal(f.calls.length, role === "hub-worker" ? 4 : 3);
+      assert.equal(f.calls.length, 3);
       f.controller.recheck();
       f.gates.at(-1)!.resolve(desktopSetupFailure("status", "busy"));
       await flush();
@@ -501,14 +449,7 @@ test("every definite write failure locks mutation, only explicit status may reco
       f.gates.at(-1)!.resolve(status());
       await flush();
       assert.equal(f.controller.state.kind, "wizard");
-      assert.deepEqual(f.calls, [
-        "status",
-        ...(role === "hub-worker" ? ["probe"] : []),
-        "check",
-        operation,
-        "status",
-        "status",
-      ]);
+      assert.deepEqual(f.calls, ["status", "check", operation, "status", "status"]);
     }
   }
 });

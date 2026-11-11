@@ -697,10 +697,6 @@ if (ownsAppLock)
         assertSender(event, window.webContents, page);
         return setupRequest("launch-status", args);
       });
-      ipcMain.handle(channels.probeHub, (event, ...args: unknown[]) => {
-        assertSender(event, window.webContents, page);
-        return setupRequest("probe", args);
-      });
       ipcMain.handle(channels.completeSetup, (event, ...args: unknown[]) => {
         assertSender(event, window.webContents, page);
         return setupRequest("complete", args);
@@ -921,7 +917,7 @@ if (ownsAppLock)
             result.runtimeEventSeen !== false ||
             result.navigateSeen !== false ||
             result.bridge.join(",") !==
-              "checkBuiltinAgents,completeSetup,copyLaunchCommand,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,probeHub,rulesCasGet,rulesCasPut,runtimeGet,runtimeReconnect,runtimeStart,runtimeStop,runtimeUseEmbedded,setTheme,settingsGet,settingsPut,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,taskList,tasksGet,todayState,window,workersGet,workersLocal" ||
+              "checkBuiltinAgents,completeSetup,copyLaunchCommand,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,rulesCasGet,rulesCasPut,runtimeGet,runtimeReconnect,runtimeStart,runtimeStop,runtimeUseEmbedded,setTheme,settingsGet,settingsPut,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,taskList,tasksGet,todayState,window,workersGet,workersLocal" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||

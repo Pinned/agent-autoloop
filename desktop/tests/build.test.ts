@@ -112,7 +112,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(main, /远程队列不会取消/);
   assert.match(main, /离线持久待同步/);
   assert.doesNotMatch(main, /restartPolicy|controller\.restart/);
-  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 29);
+  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 28);
   // Each handler is checked inside its own block: a cross-handler match would let a missing
   // sender check hide behind the next handler that has one.
   const blocks = main.split("ipcMain.handle(channels.").slice(1);
@@ -125,7 +125,6 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
     "launchCommandCopy",
     "setupStatus",
     "launchStatus",
-    "probeHub",
     "completeSetup",
     "setupCheck",
     "setupInit",
@@ -228,7 +227,6 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
     "launchStatus",
     "onNavigate",
     "onRuntimeEvent",
-    "probeHub",
     "rulesCasGet",
     "rulesCasPut",
     "runtimeGet",
@@ -600,7 +598,7 @@ test("every page's scope note gets its own spacing, not only the rules panel's",
 test("first-run reads answer from files before the runtime exists", () => {
   const main = read("../src/main.ts");
   const route = read("../src/setup-state-read.ts");
-  // The two observations are answered in process; every mutation and probe still waits on the
+  // The two observations are answered in process; every mutation and check still waits on the
   // private driver. Bundling the fs adapter into main is safe only because it imports no business host.
   assert.match(main, /isSetupDiskRead\(request\.operation\)/);
   assert.match(main, /readSetupState\(runtimeHome, request\.operation\)/);

@@ -347,10 +347,6 @@ for (const port of ["0", "80", "1023", "65536", "99999", "1024", "65535"]) {
         calls.push("join");
         throw new Error("unexpected-join");
       },
-      async probe() {
-        calls.push("probe");
-        throw new Error("unexpected-probe");
-      },
     });
     assert.deepEqual(await driver({ version: 1, operation: "launch-status" }), {
       version: 1,

@@ -58,7 +58,7 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
     const currentWizard =
       state.kind === "wizard"
         ? state
-        : state.kind === "checking" || state.kind === "submitting" || state.kind === "probing"
+        : state.kind === "checking" || state.kind === "submitting"
           ? state.wizard
           : undefined;
     const scope = currentWizard ? `${currentWizard.role}:${currentWizard.step}` : "";
@@ -118,12 +118,7 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
       else options.exit?.();
     };
 
-    if (
-      state.kind === "wizard" ||
-      state.kind === "checking" ||
-      state.kind === "submitting" ||
-      state.kind === "probing"
-    ) {
+    if (state.kind === "wizard" || state.kind === "checking" || state.kind === "submitting") {
       const wizard = state.kind === "wizard" ? state : state.wizard;
       const busy = control.busy;
       panel.setAttribute("aria-busy", String(busy));
@@ -191,33 +186,6 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
             element("p", `本机：${wizard.draft.worker}`, "muted"),
           );
         }
-        if (wizard.role === "hub-worker") {
-          form.append(button("检查本机已有中台", () => control.probe(), busy));
-          if (control.probeResult) {
-            const outcomes = {
-              unavailable: "未获得响应（可能未运行或超时，不代表本机没有中台）",
-              unrecognized: "响应不是可识别的中台协议",
-              "credentials-required": "需要显式凭证，尚未认证（不代表没有中台）",
-              incompatible: "协议不兼容",
-            };
-            const list = element("ul", "", "setup-checks");
-            for (const candidate of control.probeResult.candidates)
-              list.append(element("li", `${candidate.url}：${outcomes[candidate.outcome]}`));
-            form.append(
-              list,
-              element(
-                "p",
-                "这次检查只告诉你本机回环地址上有没有响应，不代表已经接入。应用启动时会按本机 CLI 的连接配置接入其中台（只读回环地址与本机认证所需的 owner，不读取密钥），不会停止或接管它。",
-                "muted",
-              ),
-              element(
-                "p",
-                "配置指向的中台连不上时，应用显示重连页，可重新连接或改用内置中台；本机 CLI 未配置中台、配置为纯执行机或未安装时，应用才启动内置中台。两边任务与记录各自保留，不会自动迁移。",
-                "muted",
-              ),
-            );
-          }
-        }
         form.append(button("检查执行程序安装", () => control.check(), busy));
         form.append(element("p", "只检查受限目录中的安装。未发现可能是漏报；Claude / Codex 登录均未验证。", "muted"));
         if (wizard.check && wizard.check !== "skipped") {
@@ -269,13 +237,11 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
         form.append(error);
       }
       status.textContent =
-        state.kind === "probing"
-          ? "正在只读检查指定回环地址，不会接管或停止已有服务。"
-          : state.kind === "checking"
-            ? "正在检查安装，请等待。离开页面不会取消检查。"
-            : state.kind === "submitting"
-              ? "正在保存本机配置，请等待。隐藏窗口不会取消操作。"
-              : "";
+        state.kind === "checking"
+          ? "正在检查安装，请等待。离开页面不会取消检查。"
+          : state.kind === "submitting"
+            ? "正在保存本机配置，请等待。隐藏窗口不会取消操作。"
+            : "";
       if (wizard.step > 1)
         actions.append(
           button(
@@ -289,8 +255,7 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
         );
       const submit = element("button", wizard.step === 3 ? "确认保存本机配置" : "下一步");
       submit.type = "submit";
-      submit.disabled =
-        busy || (wizard.step === 3 && (!wizard.check || (wizard.role === "hub-worker" && !control.probeResult)));
+      submit.disabled = busy || (wizard.step === 3 && !wizard.check);
       submit.className = "setup-primary";
       actions.append(submit, button(canDismiss() ? "暂不配置" : "退出应用…", leave, control.submitting));
       form.append(actions);

@@ -9,7 +9,7 @@ import {
   type DesktopSetupResponse,
 } from "../../../host/desktop-setup-contract.ts";
 import type { DesktopBridge } from "../policy.ts";
-import type { DesktopHubProbe, DesktopLaunchStatus, DesktopLaunchMode } from "../../../host/desktop-launch-contract.ts";
+import type { DesktopLaunchStatus, DesktopLaunchMode } from "../../../host/desktop-launch-contract.ts";
 
 export type SetupRole = "hub-worker" | "worker";
 export type SetupDraft = Readonly<{ url: string; worker: string }>;
@@ -25,7 +25,6 @@ export type SetupState =
   | { readonly kind: "idle" }
   | { readonly kind: "reading-status" }
   | { readonly kind: "reading-launch" }
-  | { readonly kind: "probing"; readonly wizard: Wizard }
   | { readonly kind: "prepared"; readonly mode: DesktopLaunchMode }
   | { readonly kind: "completing"; readonly mode: DesktopLaunchMode }
   | { readonly kind: "completed"; readonly mode: DesktopLaunchMode }
@@ -39,7 +38,7 @@ export type SetupState =
 
 export type SetupBridge = Pick<
   DesktopBridge,
-  "setupStatus" | "checkBuiltinAgents" | "initHub" | "joinWorker" | "launchStatus" | "probeHub" | "completeSetup"
+  "setupStatus" | "checkBuiltinAgents" | "initHub" | "joinWorker" | "launchStatus" | "completeSetup"
 >;
 
 /** A single-flight, in-memory UI controller. No credentials are retained in state. */
@@ -52,7 +51,6 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
   let lock: "mutation" | "unknown" | null = null;
   let bootstrapped = false;
   let launch: Readonly<DesktopLaunchStatus> | null = null;
-  let probeResult: Readonly<DesktopHubProbe> | null = null;
   let completionMode: DesktopLaunchMode = "embedded";
 
   function notify() {
@@ -109,15 +107,11 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
       if (lock === "mutation") {
         locked(true);
       } else if (
-        (response.operation === "check" || response.operation === "probe") &&
+        response.operation === "check" &&
         snapshot &&
         ["busy", "unavailable", "operation-failed"].includes(response.error.code)
       ) {
-        setWizard(
-          response.operation === "probe"
-            ? { ...snapshot, error: "本机中台检测未完成，请重试；尚不能保存中台配置。" }
-            : { ...snapshot, check: null, checkError: response.error.code, error: response.error.message },
-        );
+        setWizard({ ...snapshot, check: null, checkError: response.error.code, error: response.error.message });
       } else {
         blocked(response.error.code);
       }
@@ -134,12 +128,6 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
         } else if (launch.completion === "recovery" || launch.completion === "invalid") {
           blocked(launch.completion === "recovery" ? "incomplete-setup" : "invalid-config");
         } else set({ kind: "idle" });
-        break;
-      case "probe":
-        for (const candidate of response.data.candidates) Object.freeze(candidate);
-        Object.freeze(response.data.candidates);
-        probeResult = Object.freeze(response.data);
-        setWizard({ ...snapshot!, error: null });
         break;
       case "complete":
         completionMode = response.data.nextLaunch;
@@ -183,11 +171,9 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
         ? { kind: "reading-launch" }
         : operation === "complete"
           ? { kind: "completing", mode: completionMode }
-          : operation === "probe"
-            ? { kind: "probing", wizard: snapshot! }
-            : operation === "status"
-              ? { kind: "reading-status" }
-              : { kind: write ? "submitting" : "checking", wizard: snapshot! },
+          : operation === "status"
+            ? { kind: "reading-status" }
+            : { kind: write ? "submitting" : "checking", wizard: snapshot! },
     );
     function finish(value: unknown, rejected: boolean) {
       let response: DesktopSetupResponse | null = null;
@@ -217,9 +203,6 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
       switch (operation) {
         case "launch-status":
           result = bridge.launchStatus();
-          break;
-        case "probe":
-          result = bridge.probeHub();
           break;
         case "complete":
           result = bridge.completeSetup();
@@ -267,19 +250,10 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
     get launch(): Readonly<DesktopLaunchStatus> | null {
       return launch;
     },
-    get probeResult(): Readonly<DesktopHubProbe> | null {
-      return probeResult;
-    },
     bootstrap(): void {
       if (bootstrapped || flight !== null || lock !== null) return;
       bootstrapped = true;
       start("launch-status");
-    },
-    probe(): void {
-      const current = editable();
-      if (!current || current.role !== "hub-worker" || current.step !== 3) return;
-      probeResult = null;
-      start("probe", wizard(current));
     },
     complete(): boolean {
       if (flight !== null || lock !== null || state.kind !== "prepared") return false;
@@ -294,13 +268,10 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
           flightGeneration = generation;
           if (flight === "status") set({ kind: "reading-status" });
           else if (flight === "launch-status") set({ kind: "reading-launch" });
-          else if (flight === "probe") set({ kind: "probing", wizard: flightSnapshot! });
           else if (flight === "check") set({ kind: "checking", wizard: flightSnapshot! });
         }
         notify();
       } else if (lock === null && (state.kind === "idle" || (state.kind === "blocked" && state.retry))) {
-        // A new status/read round must never inherit a previous wizard's probe.
-        probeResult = null;
         start(state.kind === "blocked" && bootstrapped ? "launch-status" : "status");
       } else notify();
     },
@@ -375,11 +346,6 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
     submit(key?: string): boolean {
       const current = editable();
       if (!current || current.step !== 3 || current.check === null) return false;
-      if (current.role === "hub-worker" && probeResult === null) {
-        setWizard({ ...current, error: "请先检查本机已有中台；检测仅限指定回环地址，不会接管外部服务。" });
-        notify();
-        return false;
-      }
       let input: DesktopJoinInput | undefined;
       if (current.role === "worker") {
         try {
