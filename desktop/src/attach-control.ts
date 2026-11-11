@@ -9,8 +9,9 @@
 // the port this control attached to; if the config no longer describes that port, the read fails
 // and the request is not sent. A key is for the hub we verified, never for whatever listens next.
 import type { DesktopRuntimeRole } from "../../host/desktop-run-contract.ts";
+import { probeOwnerDoor, type OwnerDoor } from "./owner-door.ts";
 
-export type AttachEndpoint = { origin: string; owner: string };
+export type AttachEndpoint = OwnerDoor;
 export type AttachState = {
   status: "starting" | "running" | "unknown";
   role: DesktopRuntimeRole | null;
@@ -74,21 +75,12 @@ export function createAttachControl(options: {
     }
   }
 
-  /** An authenticated state read: reachability alone would not prove this key opens this hub. */
+  /**
+   * An authenticated state read: reachability alone would not prove this key opens this hub.
+   * The judgement itself lives in `owner-door.ts` so first run and attach mode cannot drift apart.
+   */
   async function reachable(endpoint: AttachEndpoint): Promise<boolean> {
-    let response: Response;
-    try {
-      response = await fetchImpl(`${endpoint.origin}/v1/state`, {
-        headers: { authorization: `Bearer ${endpoint.owner}` },
-        redirect: "error",
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-    } catch {
-      return false;
-    }
-    // The body is not evidence here; one acknowledged response is. Release it without buffering.
-    void response.body?.cancel().catch(() => {});
-    return response.ok;
+    return (await probeOwnerDoor(endpoint, { fetchImpl, timeoutMs })) === "ok";
   }
 
   /** The credential read is untrusted: a throw is the same answer as "the config no longer matches". */
