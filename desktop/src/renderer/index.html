@@ -15,10 +15,9 @@
     <script src="app.js" defer></script>
   </head>
   <body>
-    <header class="titlebar">
-      <span>agent-autoloop <span class="muted">/ 指挥部</span></span
-      ><button id="hide-window" aria-label="收起窗口，驻留托盘">收起窗口</button>
-    </header>
+    <!-- The titlebar stays as the window's drag region; its copy and its buttons are gone, so the
+         shell speaks only through pages. -->
+    <header class="titlebar" aria-hidden="true"></header>
     <div class="shell">
       <aside class="sidebar">
         <div class="brand">
@@ -36,7 +35,6 @@
       </aside>
       <main id="main" tabindex="-1" aria-labelledby="page-title"></main>
     </div>
-    <footer class="statusbar"><span>工作有进展，决策找你</span><button id="quit-app">退出应用…</button></footer>
     <div id="error" class="error" role="alert" hidden></div>
     <noscript>此桌面界面需要启用 JavaScript。</noscript>
   </body>

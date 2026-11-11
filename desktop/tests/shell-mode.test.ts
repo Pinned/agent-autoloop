@@ -29,8 +29,9 @@ test("a launch record decides: only a completed or legacy machine keeps the work
 test("the document's first frame is 'checking', so no menu is painted before the answer", () => {
   const html = readFileSync(new URL("../src/renderer/index.html", import.meta.url), "utf8");
   assert.match(html, /<html lang="zh-CN" data-shell="checking">/);
-  // The nodes stay in the document; hiding is a presentation rule, not a structural one.
-  for (const id of ["runtime-status", "view-connection", "quit-app", "new-task", "navigation"])
+  // The nodes stay in the document; hiding is a presentation rule, not a structural one. The shell
+  // itself offers no quit or hide button — the window's own menu and tray are the machine-level exits.
+  for (const id of ["runtime-status", "view-connection", "new-task", "navigation"])
     assert.match(html, new RegExp(`id="${id}"`), id);
 });
 
