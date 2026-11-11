@@ -72,7 +72,3 @@ export const navigationSignature = (role: Role): string =>
   pagesFor(role)
     .map((page) => `${page.id}:${page.nav}`)
     .join(",");
-
-export const navLabelFor = (role: Role): string => (role === "worker" ? "纯 WORKER" : "工作空间");
-export const eyebrowFor = (role: Role): string =>
-  role === "worker" ? "本机执行机 / 受限视图" : "工作空间 / 本机工作台";

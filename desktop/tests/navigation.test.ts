@@ -6,14 +6,7 @@
 // never reaches this projection's output, so "unknown role, full workspace" cannot leak a menu.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import {
-  eyebrowFor,
-  navLabelFor,
-  navigationSignature,
-  ownerPages,
-  pagesFor,
-  workerPages,
-} from "../src/renderer/navigation.ts";
+import { navigationSignature, ownerPages, pagesFor, workerPages } from "../src/renderer/navigation.ts";
 
 test("an unresolved role projects the full workspace, which only a configured machine may see", () => {
   assert.deepEqual(
@@ -56,14 +49,9 @@ test("worker copy never promises hub-side powers", () => {
   assert.doesNotMatch(worker.map((page) => page.description).join(" "), /新建任务/);
 });
 
-test("identity, label and eyebrow follow the role and nothing else", () => {
+test("identity follows the role and nothing else", () => {
   assert.equal(navigationSignature(null), navigationSignature("hub-worker"));
   assert.notEqual(navigationSignature("worker"), navigationSignature(null));
-  assert.equal(navLabelFor("worker"), "纯 WORKER");
-  assert.equal(navLabelFor("hub-worker"), "工作空间");
-  assert.equal(navLabelFor(null), "工作空间");
-  assert.equal(eyebrowFor("worker"), "本机执行机 / 受限视图");
-  assert.equal(eyebrowFor("hub-worker"), "工作空间 / 本机工作台");
 });
 
 test("every page the projection can return has a title and an icon key", () => {

@@ -20,15 +20,7 @@ import { mountTasksView } from "./tasks-view.ts";
 import { createRendererSettings } from "./settings-controller.ts";
 import { mountSettingsView } from "./settings-view.ts";
 import { mountReconnectView } from "./reconnect-view.ts";
-import {
-  eyebrowFor,
-  navLabelFor,
-  navigationSignature,
-  pagesFor,
-  tasksPageMode,
-  type Page as NavigationPage,
-  type Role,
-} from "./navigation.ts";
+import { navigationSignature, pagesFor, tasksPageMode, type Page as NavigationPage, type Role } from "./navigation.ts";
 import { projectShell, shellMode, type ShellMode } from "./shell-mode.ts";
 declare global {
   interface Window {
@@ -50,7 +42,6 @@ function icon(id: string) {
 }
 const main = document.querySelector<HTMLElement>("#main")!;
 const navigation = document.querySelector<HTMLElement>("#navigation")!;
-const navLabel = document.querySelector<HTMLElement>("#nav-label")!;
 const newTaskButton = document.querySelector<HTMLButtonElement>("#new-task")!;
 let currentPage = "today";
 // A page is current only while a business page actually owns #main. The setup view replaces #main,
@@ -148,7 +139,6 @@ function syncNavigation(role: Role) {
     for (const button of navigation.querySelectorAll<HTMLButtonElement>("button"))
       button.addEventListener("click", () => render(button.dataset.page!));
   }
-  navLabel.textContent = navLabelFor(role);
   // Nothing to create locally: a pure worker only receives work from the hub it belongs to.
   newTaskButton.hidden = role === "worker";
   for (const button of navigation.querySelectorAll<HTMLButtonElement>("button")) button.disabled = navigationDisabled;
@@ -443,8 +433,7 @@ function render(id: string, focus = true) {
   main.setAttribute("aria-labelledby", "page-title");
   const page = pages.find((item) => item.id === id)!;
   markCurrent();
-  const eyebrow = eyebrowFor(role);
-  main.innerHTML = `<header class="page-head"><div class="page-head-copy"><div class="eyebrow">${eyebrow}</div><h1 id="page-title">${page.title}</h1><p>${page.description}</p></div><div class="page-head-actions"></div></header>`;
+  main.innerHTML = `<header class="page-head"><div class="page-head-copy"><h1 id="page-title">${page.title}</h1><p>${page.description}</p></div><div class="page-head-actions"></div></header>`;
   if (id === "settings") {
     // The hub's own configuration, at the version it was read at; nothing here is stored locally.
     // The view is mounted before the first render() call below, so it is always present here.
