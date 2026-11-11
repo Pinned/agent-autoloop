@@ -136,7 +136,7 @@ export function createDesktopSetupDriver(dependencies: DesktopSetupDependencies)
     try {
       const candidate =
         value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, "operation")?.value : undefined;
-      if (["status", "check", "init", "join", "launch-status", "complete"].includes(candidate))
+      if (["status", "init", "join", "launch-status", "complete"].includes(candidate))
         operation = candidate;
       request = parseDesktopSetupRequest(value);
     } catch {
@@ -146,26 +146,6 @@ export function createDesktopSetupDriver(dependencies: DesktopSetupDependencies)
       return { version: 1, operation: "launch-status", ok: true, data: readDesktopLaunchStatus(dependencies.home) };
     if (request.operation === "status") {
       return { version: 1, operation: "status", ok: true, data: readDesktopSetupStatus(dependencies.home) };
-    }
-    if (request.operation === "check") {
-      try {
-        const installed = (id: "claude" | "codex") =>
-          dependencies.discovery.locate(id) ? ("found" as const) : ("not-found" as const);
-        return {
-          version: 1,
-          operation: "check",
-          ok: true,
-          data: {
-            scope: "installation-only",
-            agents: [
-              { id: "claude", installation: installed("claude"), login: "unknown" },
-              { id: "codex", installation: installed("codex"), login: "unknown" },
-            ],
-          },
-        };
-      } catch {
-        return desktopSetupFailure(operation, "operation-failed");
-      }
     }
     // Refuse an aliased/non-private home before runlock can create any files there.
     if (!homeIsSafe(dependencies.home)) return desktopSetupFailure(operation, "invalid-config");
@@ -273,7 +253,7 @@ async function main() {
     const value = await readDesktopSetupRequest(process.stdin);
     const candidate =
       value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, "operation")?.value : undefined;
-    if (["status", "check", "init", "join", "launch-status", "complete"].includes(candidate))
+    if (["status", "init", "join", "launch-status", "complete"].includes(candidate))
       response = desktopSetupFailure(candidate, "invalid-request");
     const request = parseDesktopSetupRequest(value);
     response = desktopSetupFailure(request.operation, "operation-failed");

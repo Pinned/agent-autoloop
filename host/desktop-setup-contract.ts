@@ -7,11 +7,10 @@ import {
 export const DESKTOP_SETUP_VERSION = 1 as const;
 export const DESKTOP_SETUP_REQUEST_MAX_BYTES = 16 * 1024;
 export const DESKTOP_SETUP_RESPONSE_MAX_BYTES = 64 * 1024;
-export type DesktopSetupOperation = "status" | "check" | "init" | "join" | "launch-status" | "complete";
+export type DesktopSetupOperation = "status" | "init" | "join" | "launch-status" | "complete";
 export type DesktopJoinInput = { url: string; worker: string; key: string };
 export type DesktopSetupRequest =
   | { version: 1; operation: "status" }
-  | { version: 1; operation: "check" }
   | { version: 1; operation: "init" }
   | { version: 1; operation: "launch-status" }
   | { version: 1; operation: "complete" }
@@ -20,20 +19,10 @@ export type DesktopSetupStatus = {
   configuration: "unconfigured" | "configured" | "incomplete" | "invalid";
   role: "hub-worker" | "worker" | null;
 };
-export type DesktopBuiltinAgent = {
-  id: "claude" | "codex";
-  installation: "found" | "not-found";
-  login: "unknown";
-};
-export type DesktopSetupCheck = {
-  scope: "installation-only";
-  agents: [DesktopBuiltinAgent & { id: "claude" }, DesktopBuiltinAgent & { id: "codex" }];
-};
 export type DesktopSetupData = {
   "launch-status": DesktopLaunchStatus;
   complete: { nextLaunch: DesktopLaunchMode };
   status: DesktopSetupStatus;
-  check: DesktopSetupCheck;
   init: { configuration: "configured"; role: "hub-worker" };
   join: { configuration: "configured"; role: "worker" };
 };
@@ -45,6 +34,11 @@ export const DESKTOP_SETUP_ERROR_MESSAGES = Object.freeze({
   "incomplete-setup": "上次初始化尚未完成，请先人工检查。",
   "invalid-config": "本机配置无效，请先人工检查。",
   "operation-failed": "初始化操作未完成，请检查本机状态。",
+  // A join is verified before anything is written. These three are the only failures that
+  // provably left no configuration behind, which is why the page may offer a corrected retry.
+  "connection-failed": "无法连接中台，或中台版本不支持本应用。尚未保存任何配置。",
+  "credential-rejected": "中台不接受这个加入密钥。尚未保存任何配置。",
+  "identity-mismatch": "这个密钥属于另一个执行机名称。尚未保存任何配置。",
   unknown: "无法确认操作已安全完成，请勿重复操作。",
 });
 export type DesktopSetupErrorCode = keyof typeof DESKTOP_SETUP_ERROR_MESSAGES;
@@ -55,7 +49,7 @@ export type DesktopSetupResponse = {
 }[DesktopSetupOperation];
 
 const CONTROL = /[\x00-\x1f\x7f-\x9f]/;
-const operations: readonly string[] = ["status", "check", "init", "join", "launch-status", "complete"];
+const operations: readonly string[] = ["status", "init", "join", "launch-status", "complete"];
 function invalid(): never {
   throw new Error("invalid-request");
 }
@@ -168,33 +162,6 @@ export function parseDesktopSetupResponse(
       const role = data.role === null ? null : oneOf(data.role, ["hub-worker", "worker"] as const);
       if ((configuration === "configured") !== (role !== null)) invalid();
       result = { version: 1, operation: "status", ok: true, data: { configuration, role } };
-    } else if (expectedOperation === "check") {
-      const data = record(response.data, ["scope", "agents"]);
-      if (
-        data.scope !== "installation-only" ||
-        !Array.isArray(data.agents) ||
-        data.agents.length !== 2 ||
-        Object.getPrototypeOf(data.agents) !== Array.prototype ||
-        Reflect.ownKeys(data.agents).length !== 3
-      )
-        invalid();
-      const agent = <I extends "claude" | "codex">(value: unknown, id: I): DesktopBuiltinAgent & { id: I } => {
-        const entry = record(value, ["id", "installation", "login"]);
-        if (entry.id !== id || entry.login !== "unknown") invalid();
-        return { id, installation: oneOf(entry.installation, ["found", "not-found"] as const), login: "unknown" };
-      };
-      const first = Object.getOwnPropertyDescriptor(data.agents, "0");
-      const second = Object.getOwnPropertyDescriptor(data.agents, "1");
-      if (!first || !("value" in first) || !second || !("value" in second)) invalid();
-      result = {
-        version: 1,
-        operation: "check",
-        ok: true,
-        data: {
-          scope: "installation-only",
-          agents: [agent(first!.value, "claude"), agent(second!.value, "codex")],
-        },
-      };
     } else {
       const data = record(response.data, ["configuration", "role"]);
       if (data.configuration !== "configured" || data.role !== (expectedOperation === "init" ? "hub-worker" : "worker"))

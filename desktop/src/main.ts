@@ -64,6 +64,7 @@ import {
   type DesktopSetupResponse,
 } from "../../host/desktop-setup-contract.ts";
 import { isSetupDiskRead, readSetupState } from "./setup-state-read.ts";
+import { verifySetupConnection } from "./setup-verify.ts";
 import type * as RuntimeResources from "../scripts/runtime.mjs";
 
 let home: string | undefined;
@@ -262,10 +263,14 @@ if (ownsAppLock)
         // A status read describes files; it never needs the runtime it describes. Answering it in
         // process keeps first run from waiting on an install (and keeps a `status` read available
         // while the runtime resources are still being prepared).
-        run: (request): Promise<DesktopSetupResponse> =>
-          isSetupDiskRead(request.operation)
-            ? Promise.resolve(readSetupState(runtimeHome, request.operation))
-            : setupRunner.run(request),
+        run: async (request): Promise<DesktopSetupResponse> => {
+          if (isSetupDiskRead(request.operation)) return readSetupState(runtimeHome, request.operation);
+          // "Connected" is one question with one answer: can this credential operate that hub's
+          // data right now. It is asked before the driver writes anything, so a refused connection
+          // provably leaves the machine unconfigured and the page may offer a corrected retry.
+          const refused = await verifySetupConnection(request, { fetch: (url, init) => fetch(url, init) });
+          return refused ? desktopSetupFailure(request.operation, refused) : setupRunner.run(request);
+        },
       });
       // The today page reads the local hub over loopback while it runs; never while it does not.
       const todaySource = createTodaySource({ home: runtimeHome, getState: runtimeState, readConfig });
@@ -705,10 +710,6 @@ if (ownsAppLock)
         assertSender(event, window.webContents, page);
         return setupRequest("status", args);
       });
-      ipcMain.handle(channels.setupCheck, (event, ...args: unknown[]) => {
-        assertSender(event, window.webContents, page);
-        return setupRequest("check", args);
-      });
       ipcMain.handle(channels.setupInit, (event, ...args: unknown[]) => {
         assertSender(event, window.webContents, page);
         return setupRequest("init", args);
@@ -917,7 +918,7 @@ if (ownsAppLock)
             result.runtimeEventSeen !== false ||
             result.navigateSeen !== false ||
             result.bridge.join(",") !==
-              "checkBuiltinAgents,completeSetup,copyLaunchCommand,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,rulesCasGet,rulesCasPut,runtimeGet,runtimeReconnect,runtimeStart,runtimeStop,runtimeUseEmbedded,setTheme,settingsGet,settingsPut,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,taskList,tasksGet,todayState,window,workersGet,workersLocal" ||
+              "completeSetup,copyLaunchCommand,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,rulesCasGet,rulesCasPut,runtimeGet,runtimeReconnect,runtimeStart,runtimeStop,runtimeUseEmbedded,setTheme,settingsGet,settingsPut,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,taskList,tasksGet,todayState,window,workersGet,workersLocal" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||

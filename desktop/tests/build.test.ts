@@ -112,7 +112,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(main, /远程队列不会取消/);
   assert.match(main, /离线持久待同步/);
   assert.doesNotMatch(main, /restartPolicy|controller\.restart/);
-  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 28);
+  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 27);
   // Each handler is checked inside its own block: a cross-handler match would let a missing
   // sender check hide behind the next handler that has one.
   const blocks = main.split("ipcMain.handle(channels.").slice(1);
@@ -126,7 +126,6 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
     "setupStatus",
     "launchStatus",
     "completeSetup",
-    "setupCheck",
     "setupInit",
     "setupJoin",
     "runtimeGet",
@@ -218,7 +217,6 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
   const source = read("../src/preload.ts");
   const methods = [...source.matchAll(/^  (\w+):/gm)].map((match) => match[1]).sort();
   assert.deepEqual(methods, [
-    "checkBuiltinAgents",
     "completeSetup",
     "copyLaunchCommand",
     "getTheme",
@@ -270,7 +268,7 @@ test("onboarding is explicit and renderer bundles only the pure setup contract",
   assert.doesNotMatch(app, /render\("today", false\);\nsetup\.bootstrap\(\)/);
   assert.match(app, /shellMode\(setup\.launch, setup\.state\.kind\)/);
   assert.match(app, /if \(shell !== "workspace"\) return;/);
-  assert.doesNotMatch(app, /setupStatus\(|checkBuiltinAgents\(|initHub\(|joinWorker\(/);
+  assert.doesNotMatch(app, /setupStatus\(|initHub\(|joinWorker\(/);
   assert.doesNotMatch(controller, /node:|from ["'].*host\/(?:config|runtime|setup)\.ts/);
   assert.doesNotMatch(renderer, /function readConfig|function initSetup|node:|AGENT_AUTOLOOP_HOME/);
   assert.match(view, /input\.type = password \? "password"/);

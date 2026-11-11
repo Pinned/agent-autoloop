@@ -3,7 +3,6 @@ import {
   parseDesktopJoinInput,
   parseDesktopSetupResponse,
   type DesktopJoinInput,
-  type DesktopSetupCheck,
   type DesktopSetupErrorCode,
   type DesktopSetupOperation,
   type DesktopSetupResponse,
@@ -14,11 +13,10 @@ import type { DesktopLaunchStatus, DesktopLaunchMode } from "../../../host/deskt
 export type SetupRole = "hub-worker" | "worker";
 export type SetupDraft = Readonly<{ url: string; worker: string }>;
 export type Wizard = Readonly<{
-  step: 1 | 2 | 3;
+  /** Two steps: choose a role, then connect. Saving and connecting are one action. */
+  step: 1 | 2;
   role: SetupRole;
   draft: SetupDraft;
-  check: DesktopSetupCheck | "skipped" | null;
-  checkError: DesktopSetupErrorCode | null;
   error: string | null;
 }>;
 export type SetupState =
@@ -29,7 +27,6 @@ export type SetupState =
   | { readonly kind: "completing"; readonly mode: DesktopLaunchMode }
   | { readonly kind: "completed"; readonly mode: DesktopLaunchMode }
   | (Wizard & { readonly kind: "wizard" })
-  | { readonly kind: "checking"; readonly wizard: Wizard }
   | { readonly kind: "submitting"; readonly wizard: Wizard }
   | { readonly kind: "configured"; readonly role: SetupRole; readonly created: boolean }
   | { readonly kind: "blocked"; readonly message: string; readonly retry: boolean }
@@ -38,8 +35,17 @@ export type SetupState =
 
 export type SetupBridge = Pick<
   DesktopBridge,
-  "setupStatus" | "checkBuiltinAgents" | "initHub" | "joinWorker" | "launchStatus" | "completeSetup"
+  "setupStatus" | "initHub" | "joinWorker" | "launchStatus" | "completeSetup"
 >;
+
+/**
+ * The write is gated on a live connection, and these three failures are answered before the
+ * driver runs. They are the only write failures that prove nothing was written, so the page may
+ * keep the draft and offer a corrected retry instead of locking the session.
+ */
+export function isConnectRefusal(code: DesktopSetupErrorCode): boolean {
+  return code === "connection-failed" || code === "credential-rejected" || code === "identity-mismatch";
+}
 
 /** A single-flight, in-memory UI controller. No credentials are retained in state. */
 export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
@@ -69,8 +75,6 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
       step: value.step,
       role: value.role,
       draft: Object.freeze({ url: value.draft.url, worker: value.draft.worker }),
-      check: value.check,
-      checkError: value.checkError,
       error: value.error,
     });
   }
@@ -78,14 +82,7 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
     set({ ...wizard(value), kind: "wizard" });
   }
   function initialWizard(): Wizard {
-    return wizard({
-      step: 1,
-      role: "hub-worker",
-      draft: { url: "", worker: "" },
-      check: null,
-      checkError: null,
-      error: null,
-    });
+    return wizard({ step: 1, role: "hub-worker", draft: { url: "", worker: "" }, error: null });
   }
   function locked(write: boolean) {
     // An existing unknown lock is never downgraded by a later response.
@@ -102,16 +99,24 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
       retry: code === "busy" || code === "unavailable" || code === "operation-failed",
     });
   }
+  /**
+   * Whether this failed write provably wrote nothing, so the wizard may be corrected and retried.
+   * Those codes are answered by main before the driver runs, which is exactly why they can only be
+   * trusted for the two role writes: a `complete` that somehow claimed one still locks the session.
+   */
+  function notApplied(response: DesktopSetupResponse): boolean {
+    return (
+      !response.ok &&
+      (response.operation === "init" || response.operation === "join") &&
+      isConnectRefusal(response.error.code)
+    );
+  }
   function apply(response: DesktopSetupResponse, snapshot: Wizard | null) {
     if (!response.ok) {
-      if (lock === "mutation") {
+      if (notApplied(response) && snapshot) {
+        setWizard({ ...snapshot, error: response.error.message });
+      } else if (lock === "mutation") {
         locked(true);
-      } else if (
-        response.operation === "check" &&
-        snapshot &&
-        ["busy", "unavailable", "operation-failed"].includes(response.error.code)
-      ) {
-        setWizard({ ...snapshot, check: null, checkError: response.error.code, error: response.error.message });
       } else {
         blocked(response.error.code);
       }
@@ -144,14 +149,6 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
           blocked(response.data.configuration === "incomplete" ? "incomplete-setup" : "invalid-config");
         }
         break;
-      case "check": {
-        // Freeze parsed data, not objects supplied by the bridge.
-        for (const agent of response.data.agents) Object.freeze(agent);
-        Object.freeze(response.data.agents);
-        Object.freeze(response.data);
-        setWizard({ ...snapshot!, check: response.data, checkError: null, error: null });
-        break;
-      }
       case "init":
       case "join":
         completionMode = response.data.role === "worker" ? "worker" : "embedded";
@@ -173,7 +170,7 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
           ? { kind: "completing", mode: completionMode }
           : operation === "status"
             ? { kind: "reading-status" }
-            : { kind: write ? "submitting" : "checking", wizard: snapshot! },
+            : { kind: "submitting", wizard: snapshot! },
     );
     function finish(value: unknown, rejected: boolean) {
       let response: DesktopSetupResponse | null = null;
@@ -190,12 +187,12 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
       // Safety is global: inspect before discarding a response to an old view.
       if (!response || (!response.ok && response.error.code === "unknown")) {
         locked(false);
-      } else if (!response.ok && write) {
+      } else if (!response.ok && write && !notApplied(response)) {
         locked(true);
       } else if (lock !== "unknown" && visible) {
         apply(response, snapshot);
       }
-      // Do not rebuild a departed view for ordinary late read/check results.
+      // Do not rebuild a departed view for ordinary late read results.
       if (visible || lock === "unknown") notify();
     }
     let result: Promise<DesktopSetupResponse>;
@@ -209,9 +206,6 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
           break;
         case "status":
           result = bridge.setupStatus();
-          break;
-        case "check":
-          result = bridge.checkBuiltinAgents();
           break;
         case "init":
           result = bridge.initHub();
@@ -263,12 +257,12 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
     },
     open(): void {
       if (flight !== null) {
-        // Reopening explicitly adopts the existing read/check, never queues a new call.
+        // Reopening explicitly adopts the existing read, never queues a new call.
         if (flightGeneration !== generation && lock !== "unknown") {
           flightGeneration = generation;
           if (flight === "status") set({ kind: "reading-status" });
           else if (flight === "launch-status") set({ kind: "reading-launch" });
-          else if (flight === "check") set({ kind: "checking", wizard: flightSnapshot! });
+          else if (flightSnapshot) set({ kind: "submitting", wizard: flightSnapshot });
         }
         notify();
       } else if (lock === null && (state.kind === "idle" || (state.kind === "blocked" && state.retry))) {
@@ -287,65 +281,55 @@ export function createRendererSetup(bridge: SetupBridge, onChange: () => void) {
     chooseRole(role: SetupRole): void {
       const current = editable();
       if (!current || current.step !== 1 || (role !== "hub-worker" && role !== "worker")) return;
-      setWizard({ ...current, role, check: null, checkError: null, error: null });
+      setWizard({ ...current, role, error: null });
       notify();
     },
-    next(draft?: SetupDraft): boolean {
+    /** Advances from the role choice to the connect step; the draft is collected there. */
+    next(): boolean {
       const current = editable();
-      if (!current || current.step === 3) return false;
-      let nextDraft = current.draft;
-      if (current.step === 2 && current.role === "worker") {
-        try {
-          const parsed = parseDesktopJoinInput({ ...(draft ?? current.draft), key: "validation-only" });
-          nextDraft = { url: parsed.url, worker: parsed.worker };
-        } catch {
-          const supplied = draft ?? current.draft;
-          // Keep correctable non-secret fields, never a URL containing credentials.
-          const retained = {
-            url: typeof supplied.url === "string" ? supplied.url.slice(0, 2048) : "",
-            worker: typeof supplied.worker === "string" ? supplied.worker.slice(0, 128) : "",
-          };
-          try {
-            parseDesktopJoinInput({ url: retained.url, worker: "validation-only", key: "validation-only" });
-          } catch {
-            retained.url = "";
-          }
-          setWizard({ ...current, draft: retained, error: "请填写有效的中台地址与本机名称。" });
-          notify();
-          return false;
-        }
-      }
-      setWizard({
-        ...current,
-        step: current.step === 1 ? 2 : 3,
-        draft: nextDraft,
-        check: null,
-        checkError: null,
-        error: null,
-      });
+      if (!current || current.step !== 1) return false;
+      setWizard({ ...current, step: 2, draft: current.draft, error: null });
       notify();
       return true;
+    },
+    /** Validates the non-secret part of a worker draft without a key and without contacting anything. */
+    draft(draft: SetupDraft): boolean {
+      const current = editable();
+      if (!current || current.step !== 2 || current.role !== "worker") return false;
+      try {
+        const parsed = parseDesktopJoinInput({ ...draft, key: "validation-only" });
+        setWizard({ ...current, draft: { url: parsed.url, worker: parsed.worker }, error: null });
+        notify();
+        return true;
+      } catch {
+        // Keep correctable non-secret fields, never a URL containing credentials.
+        const retained = {
+          url: typeof draft.url === "string" ? draft.url.slice(0, 2048) : "",
+          worker: typeof draft.worker === "string" ? draft.worker.slice(0, 128) : "",
+        };
+        try {
+          parseDesktopJoinInput({ url: retained.url, worker: "validation-only", key: "validation-only" });
+        } catch {
+          retained.url = "";
+        }
+        setWizard({ ...current, draft: retained, error: "请填写有效的中台地址与本机名称。" });
+        notify();
+        return false;
+      }
     },
     back(): void {
       const current = editable();
       if (!current || current.step === 1) return;
-      setWizard({ ...current, step: current.step === 3 ? 2 : 1, check: null, checkError: null, error: null });
+      setWizard({ ...current, step: 1, error: null });
       notify();
     },
-    check(): void {
-      const current = editable();
-      if (!current || current.step !== 3) return;
-      start("check", wizard({ ...current, check: null, checkError: null, error: null }));
-    },
-    skipCheck(): void {
-      const current = editable();
-      if (!current || current.step !== 3 || current.checkError !== "operation-failed") return;
-      setWizard({ ...current, check: "skipped", checkError: null, error: null });
-      notify();
-    },
+    /**
+     * Connect and save in one action: the join/init is verified by main before anything is
+     * written, so a refusal leaves this machine untouched and this page correctable.
+     */
     submit(key?: string): boolean {
       const current = editable();
-      if (!current || current.step !== 3 || current.check === null) return false;
+      if (!current || current.step !== 2) return false;
       let input: DesktopJoinInput | undefined;
       if (current.role === "worker") {
         try {

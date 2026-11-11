@@ -55,12 +55,9 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
   }
   function render(focus = true) {
     const state = control.state;
-    const currentWizard =
-      state.kind === "wizard"
-        ? state
-        : state.kind === "checking" || state.kind === "submitting"
-          ? state.wizard
-          : undefined;
+    // A wizard is its own state at rest, and nested while its write is in flight; both render the
+    // same step so a redraw never loses the user's place.
+    const currentWizard = state.kind === "wizard" ? state : state.kind === "submitting" ? state.wizard : undefined;
     const scope = currentWizard ? `${currentWizard.role}:${currentWizard.step}` : "";
     // Keep unsent non-secret input only while redrawing the same unchanged draft.
     // A controller validation result or a step/role change remains authoritative.
@@ -94,7 +91,7 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
     copy.append(
       element("div", "桌面应用 / 本机配置", "eyebrow"),
       title,
-      element("p", "先选择此电脑的角色并保存配置，再明确完成首次配置并请求启动。保存本身不会启动。"),
+      element("p", "先选择此电脑的角色并连接中台，再明确完成首次配置并请求启动。保存不会启动运行服务。"),
     );
     header.append(copy);
     root.append(header);
@@ -118,12 +115,12 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
       else options.exit?.();
     };
 
-    if (state.kind === "wizard" || state.kind === "checking" || state.kind === "submitting") {
+    if (state.kind === "wizard" || state.kind === "submitting") {
       const wizard = state.kind === "wizard" ? state : state.wizard;
       const busy = control.busy;
       panel.setAttribute("aria-busy", String(busy));
       const steps = element("ol", "", "setup-steps");
-      ["选择角色", "配置本机", "检查与确认"].forEach((text, index) => {
+      ["选择角色", "连接"].forEach((text, index) => {
         const item = element("li", `${index + 1}. ${text}`);
         if (wizard.step === index + 1) item.setAttribute("aria-current", "step");
         steps.append(item);
@@ -150,7 +147,7 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
           choices.append(choice);
         }
         form.append(choices);
-      } else if (wizard.step === 2) {
+      } else {
         form.append(element("h2", roles[wizard.role]));
         if (wizard.role === "hub-worker") {
           form.append(
@@ -176,60 +173,17 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
             workerValue ?? wizard.draft.worker,
             "以小写字母开头，仅使用小写字母、数字与连字符，例如 worker-1。",
           );
-          form.append(element("p", "本步不连接中台。密钥在最后确认前填写。", "muted"));
-        }
-      } else {
-        form.append(element("h2", "确认本机配置"), element("p", `角色：${roles[wizard.role]}`, "muted"));
-        if (wizard.role === "worker") {
-          form.append(
-            element("p", `中台：${wizard.draft.url}`, "muted"),
-            element("p", `本机：${wizard.draft.worker}`, "muted"),
-          );
-        }
-        form.append(button("检查执行程序安装", () => control.check(), busy));
-        form.append(element("p", "只检查受限目录中的安装。未发现可能是漏报；Claude / Codex 登录均未验证。", "muted"));
-        if (wizard.check && wizard.check !== "skipped") {
-          const list = element("ul", "", "setup-checks");
-          for (const agent of wizard.check.agents)
-            list.append(
-              element(
-                "li",
-                `${agent.id === "claude" ? "Claude" : "Codex"}：${agent.installation === "found" ? "已发现安装" : "未发现安装"} · 登录未验证`,
-              ),
-            );
-          form.append(list);
-        } else if (wizard.check === "skipped") {
-          form.append(element("p", "你已确认跳过安装检查；安装与登录均未验证。", "muted"));
-        }
-        if (wizard.checkError === "operation-failed") {
-          const skip = element("label", "", "setup-skip");
-          const checkbox = element("input");
-          checkbox.type = "checkbox";
-          checkbox.disabled = busy;
-          checkbox.addEventListener("change", () => {
-            if (checkbox.checked) control.skipCheck();
-          });
-          skip.append(checkbox, document.createTextNode("我了解安装检查未完成，确认跳过此次检查。"));
-          form.append(skip);
-        }
-        if (wizard.role === "worker" && wizard.check && !busy) {
           keyInput = field(
             form,
             "setup-key",
             "执行机加入密钥",
             "",
-            "使用独立执行机凭证，不要填写中台管理凭证。仅用于保存；提交后立即清空，不在此验证远端有效性。",
+            "使用独立执行机凭证，不要填写中台管理凭证。提交后先验证能否操作中台，再保存配置。",
             true,
           );
+          form.append(element("p", "连接成功才会保存。连接失败时本机不留任何配置，可修改后重试。", "muted"));
         }
-        form.append(
-          element("p", "保存不会启动运行服务。纯执行机配置保存后，请前往执行机页启动并检查运行状态。", "muted"),
-        );
       }
-      if (wizard.checkError === "unavailable")
-        form.append(
-          element("p", "此检查只使用已有运行资源，不会自动下载。运行资源不可用时，无法确认 Agent 安装情况。", "muted"),
-        );
       if (wizard.error) {
         const error = element("p", wizard.error, "setup-error");
         error.setAttribute("role", "alert");
@@ -237,11 +191,7 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
         form.append(error);
       }
       status.textContent =
-        state.kind === "checking"
-          ? "正在检查安装，请等待。离开页面不会取消检查。"
-          : state.kind === "submitting"
-            ? "正在保存本机配置，请等待。隐藏窗口不会取消操作。"
-            : "";
+        state.kind === "submitting" ? "正在连接并保存本机配置，请等待。隐藏窗口不会取消操作。" : "";
       if (wizard.step > 1)
         actions.append(
           button(
@@ -253,28 +203,37 @@ export function mountSetupView(root: HTMLElement, control: Controller, close: ()
             busy,
           ),
         );
-      const submit = element("button", wizard.step === 3 ? "确认保存本机配置" : "下一步");
+      const label = wizard.step === 1 ? "下一步" : wizard.role === "worker" ? "连接并保存" : "保存本机配置";
+      const submit = element("button", label);
       submit.type = "submit";
-      submit.disabled = busy || (wizard.step === 3 && !wizard.check);
+      submit.disabled = busy;
       submit.className = "setup-primary";
       actions.append(submit, button(canDismiss() ? "暂不配置" : "退出应用…", leave, control.submitting));
       form.append(actions);
       form.addEventListener("submit", (event) => {
         event.preventDefault();
         if (control.busy) return;
-        if (wizard.step === 3) {
-          const input = keyInput;
-          try {
-            control.submit(input?.value);
-          } finally {
-            // submit() may synchronously redraw and install a new secret control.
-            // Only erase the old captured control; never discard the new reference.
-            if (input) input.value = "";
-          }
-        } else {
-          const url = form.querySelector<HTMLInputElement>("#setup-url")?.value;
-          const worker = form.querySelector<HTMLInputElement>("#setup-worker")?.value;
-          control.next(url !== undefined && worker !== undefined ? { url, worker } : undefined);
+        if (wizard.step === 1) {
+          control.next();
+          return;
+        }
+        if (wizard.role === "hub-worker") {
+          control.submit();
+          return;
+        }
+        const url = form.querySelector<HTMLInputElement>("#setup-url")?.value;
+        const worker = form.querySelector<HTMLInputElement>("#setup-worker")?.value;
+        const input = keyInput;
+        // Read the key before validating: a validation redraw clears the control it came from.
+        const key = input?.value;
+        try {
+          // An incomplete draft cannot connect, so it never becomes a network attempt.
+          if (url === undefined || worker === undefined || !control.draft({ url, worker })) return;
+          control.submit(key);
+        } finally {
+          // submit() may synchronously redraw and install a new secret control.
+          // Only erase the old captured control; never discard the new reference.
+          if (input) input.value = "";
         }
       });
     } else {

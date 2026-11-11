@@ -88,7 +88,7 @@ function withDocument(action: () => void) {
     else Reflect.deleteProperty(globalThis, "document");
   }
 }
-function fixture(step: 1 | 2 | 3 = 2) {
+function fixture(step: 1 | 2 = 2) {
   const root = new Element("main");
   const control = {
     state: {
@@ -96,8 +96,6 @@ function fixture(step: 1 | 2 | 3 = 2) {
       step,
       role: "worker",
       draft: { url: "", worker: "" },
-      check: step === 3 ? "skipped" : null,
-      checkError: null,
       error: null,
     } as SetupState,
     busy: false,
@@ -105,8 +103,9 @@ function fixture(step: 1 | 2 | 3 = 2) {
     chooseRole() {},
     next() {},
     back() {},
-    check() {},
-    skipCheck() {},
+    draft() {
+      return true;
+    },
     open() {},
     recheck() {},
     complete() {
@@ -134,7 +133,6 @@ async function realFixture() {
       ok: true,
       data: { configuration: "unconfigured", role: null },
     }),
-    checkBuiltinAgents: async () => desktopSetupFailure("check", "operation-failed"),
     joinWorker: (value) => {
       joins.push(value);
       return new Promise(() => {});
@@ -161,11 +159,10 @@ test("real controller synchronous invalid-key redraw permits a legal retry witho
     input(f.root, "setup-worker").value = "machine-1";
     f.root.querySelector("form")!.fire("submit");
   });
-  f.control.check();
   await Promise.resolve();
   await Promise.resolve();
-  f.control.skipCheck();
   withDocument(() => {
+    assert.equal(f.joins.length, 0, "an incomplete key never reaches the bridge");
     const old = input(f.root, "setup-key");
     old.value = "invalid\nsynthetic-key";
     f.root.querySelector("form")!.fire("submit");
@@ -217,9 +214,6 @@ test("real app setup callback presents failed launch reads with explicit retry a
       },
       setupStatus: async () => {
         throw new Error("unexpected status retry");
-      },
-      checkBuiltinAgents: async () => {
-        throw new Error("unexpected installation check");
       },
       initHub: async () => {
         throw new Error("unexpected init");
@@ -282,16 +276,18 @@ test("real app setup callback presents failed launch reads with explicit retry a
   }
 });
 
-test("setup uses Chinese execution-machine role terminology and truthful installation/login copy", () =>
+test("setup uses Chinese execution-machine role terminology and states that saving requires a connection", () =>
   withDocument(() => {
     const f = fixture(1);
     f.view.render();
     assert.match(f.root.textContent, /中台＋执行机/);
     assert.match(f.root.textContent, /执行机/);
     assert.doesNotMatch(f.root.textContent, /worker|AUTOLOOP/);
-    f.control.state = { ...f.control.state, step: 3 } as SetupState;
+    f.control.state = { ...f.control.state, step: 2 } as SetupState;
     f.view.render();
-    assert.match(f.root.textContent, /登录.*未验证/);
+    assert.match(f.root.textContent, /连接成功才会保存/);
+    assert.match(f.root.textContent, /保存不会启动/);
+    assert.doesNotMatch(f.root.textContent, /安装检查/);
   }));
 
 test("ordinary setup redraw preserves unsent non-secret fields without retaining them in controller state", () =>
@@ -407,7 +403,7 @@ test("app wires one inert singleton bootstrap; launch status precedes automatic 
 
 test("secret controls are cleared on redraw, submission and disposal including detached nodes", () =>
   withDocument(() => {
-    const f = fixture(3);
+    const f = fixture(2);
     f.view.render();
     const first = input(f.root, "setup-key");
     first.value = "synthetic-only-key";

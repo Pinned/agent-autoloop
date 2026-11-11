@@ -36,7 +36,6 @@ export const channels = Object.freeze({
   launchStatus: "desktop:setup:launch-status",
   completeSetup: "desktop:setup:complete",
   setupStatus: "desktop:setup:status",
-  setupCheck: "desktop:setup:check",
   setupInit: "desktop:setup:init",
   setupJoin: "desktop:setup:join",
   runtimeGet: "desktop:runtime:get",
@@ -81,7 +80,6 @@ export interface DesktopBridge {
   launchStatus(): Promise<DesktopSetupResponse>;
   completeSetup(): Promise<DesktopSetupResponse>;
   setupStatus(): Promise<DesktopSetupResponse>;
-  checkBuiltinAgents(): Promise<DesktopSetupResponse>;
   initHub(): Promise<DesktopSetupResponse>;
   joinWorker(input: DesktopJoinInput): Promise<DesktopSetupResponse>;
   runtimeGet(): Promise<DesktopRuntimeResponse>;

@@ -15,10 +15,10 @@ function home(t: TestContext) {
   return path.join(root, "runtime-home");
 }
 
-test("only the two observations bypass the private driver; every mutation and check stays behind it", () => {
+test("only the two observations bypass the private driver; every mutation stays behind it", () => {
   const reads = ["status", "launch-status"] as const;
   for (const operation of reads) assert.equal(isSetupDiskRead(operation), true);
-  for (const operation of ["check", "init", "join", "complete"] as const)
+  for (const operation of ["init", "join", "complete"] as const)
     assert.equal(isSetupDiskRead(operation), false);
 });
 
@@ -104,7 +104,7 @@ test("a mutation still goes through the private driver and its own gates", async
     run: (request) =>
       isSetupDiskRead(request.operation) ? Promise.resolve(readSetupState("/anywhere", request.operation)) : setupRunner.run(request),
   });
-  const response = await control.runSetup({ version: 1, operation: "check" } as DesktopSetupRequest);
+  const response = await control.runSetup({ version: 1, operation: "init" } as DesktopSetupRequest);
   assert.equal(response.ok, false);
   assert.deepEqual(prepared, ["prepare"]);
   assert.equal(control.blocked, false);

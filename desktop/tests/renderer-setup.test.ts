@@ -37,18 +37,6 @@ const status = (
   ok: true,
   data: { configuration, role },
 });
-const checkResult = (): DesktopSetupResponse => ({
-  version: 1,
-  operation: "check",
-  ok: true,
-  data: {
-    scope: "installation-only",
-    agents: [
-      { id: "claude", installation: "found", login: "unknown" },
-      { id: "codex", installation: "not-found", login: "unknown" },
-    ],
-  },
-});
 const written = (operation: "init" | "join"): DesktopSetupResponse =>
   operation === "init"
     ? { version: 1, operation, ok: true, data: { configuration: "configured", role: "hub-worker" } }
@@ -95,13 +83,9 @@ test("startup reads launch policy once before opening first-run wizard; legacy n
   }
 });
 
-test("hub confirmation requires a finished installation check; saving never starts by itself", async () => {
+test("the connect step saves in one action; saving never starts by itself", async () => {
   const f = fixture();
   await ready(f);
-  assert.equal(f.controller.submit(), false);
-  f.controller.check();
-  f.gates.at(-1)!.resolve(checkResult());
-  await flush();
   assert.equal(f.controller.submit(), true);
   f.gates.at(-1)!.resolve(written("init"));
   await flush();
@@ -113,6 +97,26 @@ test("hub confirmation requires a finished installation check; saving never star
   f.gates.at(-1)!.resolve({ version: 1, operation: "complete", ok: true, data: { nextLaunch: "embedded" } });
   await flush();
   assert.equal(f.controller.state.kind, "completed");
+});
+
+test("a refused connection writes nothing and keeps the wizard correctable", async () => {
+  for (const code of ["connection-failed", "credential-rejected", "identity-mismatch"] as const) {
+    const f = fixture();
+    await ready(f, "worker");
+    assert.equal(f.controller.submit(syntheticKey), true);
+    f.gates.at(-1)!.resolve(desktopSetupFailure("join", code));
+    await flush();
+    const state = wizardState(f.controller.state);
+    assert.equal(state.step, 2);
+    assert.equal(state.error, DESKTOP_SETUP_ERROR_MESSAGES[code]);
+    assert.equal(f.controller.busy, false);
+    assert.deepEqual(wizardState(f.controller.state).draft, draft);
+    assert.equal(f.controller.submit(syntheticKey), true);
+    f.gates.at(-1)!.resolve(written("join"));
+    await flush();
+    assert.deepEqual(f.controller.state, { kind: "prepared", mode: "worker" });
+    assert.deepEqual(f.calls, ["status", "join", "join"]);
+  }
 });
 
 test("prepared startup completes explicitly; definite failure recovers policy but unknown is permanently locked", async () => {
@@ -159,7 +163,6 @@ function fixture(listener?: (controller: ReturnType<typeof createRendererSetup>)
     launchStatus: () => run("launch-status"),
     completeSetup: () => run("complete"),
     setupStatus: () => run("status"),
-    checkBuiltinAgents: () => run("check"),
     initHub: () => run("init"),
     joinWorker: (input) => {
       joins.push(input);
@@ -194,32 +197,8 @@ async function ready(f: Fixture, role: "hub-worker" | "worker" = "hub-worker") {
   await flush();
   f.controller.chooseRole(role);
   assert.equal(f.controller.next(), true);
-  assert.equal(f.controller.next(role === "worker" ? draft : undefined), true);
+  if (role === "worker") assert.equal(f.controller.draft(draft), true);
 }
-async function allowSubmit(f: Fixture) {
-  f.controller.check();
-  f.gates.at(-1)!.resolve(desktopSetupFailure("check", "operation-failed"));
-  await flush();
-  f.controller.skipCheck();
-  assert.equal(wizardState(f.controller.state).check, "skipped");
-}
-
-test("reopened new hub wizard cannot reuse a departed round's finished check", async () => {
-  const f = fixture();
-  await ready(f);
-  await allowSubmit(f);
-  f.controller.leave();
-  f.controller.open();
-  f.gates.at(-1)!.resolve(status());
-  await flush();
-  f.controller.next();
-  f.controller.next();
-  assert.equal(wizardState(f.controller.state).check, null);
-  assert.equal(f.controller.submit(), false);
-  assert.equal(f.calls.filter((operation) => operation === "init").length, 0);
-  await allowSubmit(f);
-  assert.equal(f.controller.submit(), true);
-});
 
 test("construction is inert; explicit operations reserve synchronously, never queue", async () => {
   const f = fixture();
@@ -235,7 +214,6 @@ test("construction is inert; explicit operations reserve synchronously, never qu
   assert.deepEqual(f.calls, ["status"]);
   assert.deepEqual(reservations, [true]);
   assert.equal(f.controller.state.kind, "reading-status");
-  f.controller.check();
   f.controller.recheck();
   assert.equal(f.controller.next(), false);
   assert.equal(f.controller.submit(), false);
@@ -287,13 +265,13 @@ test("status maps configurations and fixed errors; retries are explicit", async 
 test("wizard retains bounded non-secret invalid drafts, clears unsafe URLs and validates without a key", async () => {
   const f = fixture();
   await ready(f, "worker");
-  f.controller.back();
+  assert.equal(wizardState(f.controller.state).step, 2);
   for (const input of [
     { ...draft, worker: "Worker" },
     { ...draft, worker: "a\n" },
     { ...draft, worker: "a".repeat(129) },
   ]) {
-    assert.equal(f.controller.next(input), false);
+    assert.equal(f.controller.draft(input), false);
     assert.equal(wizardState(f.controller.state).step, 2);
     assert.deepEqual(wizardState(f.controller.state).draft, { url: input.url, worker: input.worker.slice(0, 128) });
     assert.equal(wizardState(f.controller.state).error, "请填写有效的中台地址与本机名称。");
@@ -305,63 +283,22 @@ test("wizard retains bounded non-secret invalid drafts, clears unsafe URLs and v
     " https://example.test",
     "https://example.test/#synthetic-secret",
   ]) {
-    assert.equal(f.controller.next({ ...draft, url }), false);
+    assert.equal(f.controller.draft({ ...draft, url }), false);
     assert.equal(wizardState(f.controller.state).draft.url, "");
     assert.equal(JSON.stringify(f.controller.state).includes("synthetic-secret"), false);
   }
   const supplied = { ...draft };
-  assert.equal(f.controller.next(supplied), true);
+  assert.equal(f.controller.draft(supplied), true);
   supplied.url = "https://changed.test";
   assert.deepEqual(wizardState(f.controller.state).draft, draft);
   assert.equal(Object.isFrozen(f.controller.state), true);
   assert.equal(Object.isFrozen(wizardState(f.controller.state).draft), true);
   assert.equal(f.controller.next(), false);
-  f.controller.skipCheck();
-  assert.equal(wizardState(f.controller.state).check, null);
-  assert.equal(f.controller.submit(syntheticKey), false);
-  f.controller.back();
-  f.controller.back();
-  f.controller.chooseRole("hub-worker");
-  assert.equal(f.controller.next(), true);
-  assert.equal(f.controller.next(), true);
-  assert.deepEqual(f.calls, ["status"]);
-});
-
-test("check is truthful installation-only, immutable and single-flight; skip only follows operation-failed", async () => {
-  for (const code of [null, "operation-failed", "busy", "unavailable"] as const) {
-    const f = fixture();
-    await ready(f);
-    if (code !== null) {
-      f.controller.check();
-      assert.equal(f.controller.state.kind, "checking");
-      f.controller.check();
-      f.controller.back();
-      f.controller.skipCheck();
-      assert.equal(f.controller.submit(), false);
-      assert.equal(f.controller.next(), false);
-      assert.equal(f.calls.length, 2);
-      f.gates.at(-1)!.resolve(desktopSetupFailure("check", code));
-      await flush();
-    }
-    f.controller.skipCheck();
-    assert.equal(wizardState(f.controller.state).check, code === "operation-failed" ? "skipped" : null);
-    if (code !== "operation-failed") assert.equal(f.controller.submit(), false);
-    f.controller.check();
-    const supplied = checkResult();
-    f.gates.at(-1)!.resolve(supplied);
-    await flush();
-    const checked = wizardState(f.controller.state).check;
-    if (checked === null || checked === "skipped" || !supplied.ok || supplied.operation !== "check")
-      throw new Error("expected check");
-    assert.deepEqual(checked, supplied.data);
-    assert.notEqual(checked, supplied.data);
-    assert.equal(Object.isFrozen(checked.agents[0]), true);
-    supplied.data.agents[0].installation = "not-found";
-    assert.equal(checked.agents[0].installation, "found");
-    assert.equal(checked.agents[1].login, "unknown");
-    f.controller.skipCheck();
-    assert.equal(wizardState(f.controller.state).check, checked);
-  }
+  assert.equal(f.controller.submit(syntheticKey), true);
+  f.gates.at(-1)!.resolve(written("join"));
+  await flush();
+  assert.deepEqual(f.controller.state, { kind: "prepared", mode: "worker" });
+  assert.deepEqual(f.calls, ["status", "join"]);
 });
 
 test("join validates key at submit; synchronous handoff precedes listener and caller finally; state has no key", async () => {
@@ -372,7 +309,6 @@ test("join validates key at submit; synchronous handoff precedes listener and ca
     if (controller.submitting) handoffs.push(f.joins.map((input) => ({ ...input })));
   });
   await ready(f, "worker");
-  await allowSubmit(f);
   for (const key of [undefined, "", "synthetic\nkey", "a".repeat(4097)]) {
     assert.equal(f.controller.submit(key), false);
     assert.equal(f.joins.length, 0);
@@ -398,7 +334,7 @@ test("join validates key at submit; synchronous handoff precedes listener and ca
   assert.deepEqual(reservations, [true, true, true]);
   assert.ok(handoffs.length > 0);
   for (const handoff of handoffs) assert.deepEqual(handoff, [{ ...draft, key: syntheticKey }]);
-  assert.deepEqual(f.calls, ["status", "check", "join"]);
+  assert.deepEqual(f.calls, ["status", "join"]);
   assert.equal(
     observed.some((value) => value.includes(syntheticKey)),
     false,
@@ -411,7 +347,7 @@ test("join validates key at submit; synchronous handoff precedes listener and ca
   f.controller.leave();
   f.controller.open();
   f.controller.recheck();
-  assert.equal(f.calls.length, 3);
+  assert.equal(f.calls.length, 2);
 });
 
 test("every definite write failure locks mutation, only explicit status may recover", async () => {
@@ -428,7 +364,6 @@ test("every definite write failure locks mutation, only explicit status may reco
     for (const code of codes) {
       const f = fixture();
       await ready(f, role);
-      await allowSubmit(f);
       assert.equal(f.controller.submit(syntheticKey), true);
       const operation = role === "worker" ? "join" : "init";
       f.gates.at(-1)!.resolve(desktopSetupFailure(operation, code));
@@ -440,7 +375,7 @@ test("every definite write failure locks mutation, only explicit status may reco
       assert.equal(f.controller.submit(syntheticKey), false);
       f.controller.leave();
       f.controller.open();
-      assert.equal(f.calls.length, 3);
+      assert.equal(f.calls.length, 2);
       f.controller.recheck();
       f.gates.at(-1)!.resolve(desktopSetupFailure("status", "busy"));
       await flush();
@@ -449,28 +384,25 @@ test("every definite write failure locks mutation, only explicit status may reco
       f.gates.at(-1)!.resolve(status());
       await flush();
       assert.equal(f.controller.state.kind, "wizard");
-      assert.deepEqual(f.calls, ["status", "check", operation, "status", "status"]);
+      assert.deepEqual(f.calls, ["status", operation, "status", "status"]);
     }
   }
 });
 
 test("unknown, rejected, malformed and synchronous throws lock every operation permanently", async () => {
-  for (const operation of ["status", "check", "init", "join"] as const) {
+  for (const operation of ["status", "init", "join"] as const) {
     for (const failure of ["unknown", "reject", "malformed", "throw"] as const) {
       const f = fixture();
       if (operation !== "status") await ready(f, operation === "join" ? "worker" : "hub-worker");
-      if (operation === "init" || operation === "join") await allowSubmit(f);
       if (failure === "throw") {
         const fail = () => {
           throw new Error(syntheticKey);
         };
         if (operation === "status") f.bridge.setupStatus = fail;
-        else if (operation === "check") f.bridge.checkBuiltinAgents = fail;
         else if (operation === "init") f.bridge.initHub = fail;
         else f.bridge.joinWorker = fail;
       }
       if (operation === "status") f.controller.open();
-      else if (operation === "check") f.controller.check();
       else assert.equal(f.controller.submit(syntheticKey), true);
       if (failure === "reject") f.gates.at(-1)!.reject(new Error(syntheticKey));
       else if (failure === "malformed") {
@@ -495,7 +427,6 @@ test("status recovery from mutation handles configured/incomplete/invalid or upg
   for (const configuration of ["configured", "incomplete", "invalid", "unknown"] as const) {
     const f = fixture();
     await ready(f);
-    await allowSubmit(f);
     f.controller.submit();
     f.gates.at(-1)!.resolve(desktopSetupFailure("init", "operation-failed"));
     await flush();
@@ -515,62 +446,47 @@ test("status recovery from mutation handles configured/incomplete/invalid or upg
   }
 });
 
-test("departed read/check keeps flight but ordinary late results never repaint; safety is global", async () => {
-  for (const operation of ["status", "check"] as const) {
-    for (const result of ["success", "operation-failed", "unknown", "reject", "malformed"] as const) {
-      const f = fixture();
-      if (operation === "check") await ready(f);
-      operation === "status" ? f.controller.open() : f.controller.check();
-      const gate = f.gates.at(-1)!;
-      assert.equal(f.controller.leave(), true);
-      assert.equal(f.controller.state.kind, "idle");
-      assert.equal(f.controller.busy, true);
-      const before = f.notifications();
-      if (result === "reject") gate.reject(new Error(syntheticKey));
-      else if (result === "malformed") gate.resolve(written("join"));
-      else
-        gate.resolve(
-          result === "success"
-            ? operation === "status"
-              ? status()
-              : checkResult()
-            : desktopSetupFailure(operation, result),
-        );
-      await flush();
-      const safe = result === "success" || result === "operation-failed";
-      assert.equal(f.controller.state.kind, safe ? "idle" : "unknown-locked");
-      assert.equal(f.controller.busy, false);
-      assert.equal(f.notifications(), safe ? before : before + 1);
-      if (safe) {
-        f.controller.open();
-        assert.equal(f.calls.at(-1), "status");
-      }
+test("a departed read keeps its flight but ordinary late results never repaint; safety is global", async () => {
+  for (const result of ["success", "operation-failed", "unknown", "reject", "malformed"] as const) {
+    const f = fixture();
+    f.controller.open();
+    const gate = f.gates.at(-1)!;
+    assert.equal(f.controller.leave(), true);
+    assert.equal(f.controller.state.kind, "idle");
+    assert.equal(f.controller.busy, true);
+    const before = f.notifications();
+    if (result === "reject") gate.reject(new Error(syntheticKey));
+    else if (result === "malformed") gate.resolve(written("join"));
+    else gate.resolve(result === "success" ? status() : desktopSetupFailure("status", result));
+    await flush();
+    const safe = result === "success" || result === "operation-failed";
+    assert.equal(f.controller.state.kind, safe ? "idle" : "unknown-locked");
+    assert.equal(f.controller.busy, false);
+    assert.equal(f.notifications(), safe ? before : before + 1);
+    if (safe) {
+      f.controller.open();
+      assert.equal(f.calls.at(-1), "status");
     }
   }
 });
 
-test("reopening adopts in-flight read/check visibly without another request; a second leave invalidates it", async () => {
-  for (const operation of ["status", "check"] as const) {
-    for (const leaveAgain of [false, true]) {
-      const f = fixture();
-      if (operation === "check") await ready(f, "worker");
-      operation === "status" ? f.controller.open() : f.controller.check();
-      const gate = f.gates.at(-1)!;
-      const count = f.calls.length;
-      f.controller.leave();
-      f.controller.open();
-      assert.equal(f.controller.state.kind, operation === "status" ? "reading-status" : "checking");
-      if (f.controller.state.kind === "checking") assert.deepEqual(f.controller.state.wizard.draft, draft);
-      assert.equal(f.calls.length, count);
-      if (leaveAgain) f.controller.leave();
-      const before = f.notifications();
-      gate.resolve(operation === "status" ? status() : checkResult());
-      await flush();
-      assert.equal(f.controller.state.kind, leaveAgain ? "idle" : "wizard");
-      assert.equal(f.controller.busy, false);
-      assert.equal(f.notifications(), leaveAgain ? before : before + 1);
-      if (!leaveAgain && operation === "check") assert.notEqual(wizardState(f.controller.state).check, null);
-    }
+test("reopening adopts an in-flight read visibly without another request; a second leave invalidates it", async () => {
+  for (const leaveAgain of [false, true]) {
+    const f = fixture();
+    f.controller.open();
+    const gate = f.gates.at(-1)!;
+    const count = f.calls.length;
+    f.controller.leave();
+    f.controller.open();
+    assert.equal(f.controller.state.kind, "reading-status");
+    assert.equal(f.calls.length, count);
+    if (leaveAgain) f.controller.leave();
+    const before = f.notifications();
+    gate.resolve(status());
+    await flush();
+    assert.equal(f.controller.state.kind, leaveAgain ? "idle" : "wizard");
+    assert.equal(f.controller.busy, false);
+    assert.equal(f.notifications(), leaveAgain ? before : before + 1);
   }
 });
 
@@ -578,7 +494,6 @@ test("mutation recovery leave/reopen adopts explicit status, but leave alone can
   for (const reopen of [false, true]) {
     const f = fixture();
     await ready(f);
-    await allowSubmit(f);
     f.controller.submit();
     f.gates.at(-1)!.resolve(desktopSetupFailure("init", "operation-failed"));
     await flush();
@@ -623,14 +538,11 @@ test("strict parsing rejects extra fields/accessors/arbitrary messages without i
   }
   assert.equal(getterCalls, 0);
   const f = fixture();
-  await ready(f);
-  f.controller.check();
-  const value = checkResult();
-  if (!value.ok || value.operation !== "check") throw new Error("expected check");
-  value.data.agents[0].login = "logged-in" as "unknown";
-  f.gates.at(-1)!.resolve(value);
+  await ready(f, "worker");
+  f.controller.submit(syntheticKey);
+  f.gates.at(-1)!.resolve({ ...written("join"), extra: syntheticKey } as unknown as DesktopSetupResponse);
   await flush();
-  assert.equal(f.controller.state.kind, "unknown-locked");
+  assert.deepEqual(f.controller.state, { kind: "unknown-locked", message: DESKTOP_SETUP_ERROR_MESSAGES.unknown });
 });
 
 test("throwing listeners do not corrupt bridge success; listeners may synchronously re-enter", async () => {
@@ -638,7 +550,6 @@ test("throwing listeners do not corrupt bridge success; listeners may synchronou
     throw new Error("render failed");
   });
   await ready(f);
-  await allowSubmit(f);
   assert.equal(f.controller.submit(), true);
   f.gates.at(-1)!.resolve(written("init"));
   await flush();
@@ -650,7 +561,7 @@ test("throwing listeners do not corrupt bridge success; listeners may synchronou
     if (controller.busy && !reentered) {
       reentered = true;
       controller.open();
-      controller.check();
+      controller.back();
       reservations.push(!controller.submit());
     }
   });

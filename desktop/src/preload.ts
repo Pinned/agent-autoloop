@@ -8,7 +8,6 @@ const bridge = Object.freeze<DesktopBridge>({
   launchStatus: () => ipcRenderer.invoke("desktop:setup:launch-status"),
   completeSetup: () => ipcRenderer.invoke("desktop:setup:complete"),
   setupStatus: () => ipcRenderer.invoke("desktop:setup:status"),
-  checkBuiltinAgents: () => ipcRenderer.invoke("desktop:setup:check"),
   initHub: () => ipcRenderer.invoke("desktop:setup:init"),
   joinWorker: (input) => ipcRenderer.invoke("desktop:setup:join", input),
   runtimeGet: () => ipcRenderer.invoke("desktop:runtime:get"),

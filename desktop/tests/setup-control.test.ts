@@ -14,7 +14,7 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-const request = (operation: "status" | "check" | "init" = "status"): DesktopSetupRequest => ({ version: 1, operation });
+const request = (operation: "status" | "init" = "status"): DesktopSetupRequest => ({ version: 1, operation });
 const success = (): DesktopSetupResponse => ({
   version: 1,
   operation: "status",
@@ -47,19 +47,19 @@ function fixture() {
 test("construction is inert; all four operations reserve synchronously and never queue", async () => {
   for (const first of [
     request("status"),
-    request("check"),
     request("init"),
     {
       version: 1,
       operation: "join",
       input: { url: "https://example.test", worker: "worker-1", key: "synthetic-key" },
     },
+    { version: 1, operation: "launch-status" },
   ] as DesktopSetupRequest[]) {
     const f = fixture();
     assert.equal(f.runs(), 0);
     const accepted = f.control.runSetup(first);
     assert.equal(f.control.busy, true);
-    for (const operation of ["status", "check", "init"] as const)
+    for (const operation of ["status", "init"] as const)
       assert.equal(code(await f.control.runSetup(request(operation))), "busy");
     let started = 0;
     assert.equal(
@@ -99,7 +99,7 @@ test("native start reserves before its first await; running stays blocked throug
   started.resolve("running");
   assert.equal(await start, "running");
   assert.equal(f.control.busy, false);
-  for (const operation of ["status", "check", "init"] as const)
+  for (const operation of ["status", "init"] as const)
     assert.equal(code(await f.control.runSetup(request(operation))), "busy");
   f.idle(true);
   f.gate.resolve(success());
@@ -269,7 +269,7 @@ test("runner rejection and forged response block permanently without exposing pr
       throw new Error("synthetic-secret");
     },
     async () => ({ ...success(), secret: "synthetic-secret" }) as unknown as DesktopSetupResponse,
-    async () => ({ ...success(), operation: "check" }) as DesktopSetupResponse,
+    async () => ({ ...success(), operation: "init" }) as DesktopSetupResponse,
   ]) {
     const control = createSetupControl({ canSetup: () => true, run });
     const response = await control.runSetup(request());
