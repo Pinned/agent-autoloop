@@ -195,13 +195,6 @@ h2 {
   font-size: 15px;
   font-weight: 600;
 }
-.brand small {
-  display: block;
-  margin-top: 4px;
-  font-size: 9px;
-  font-weight: 400;
-  color: var(--faint);
-}
 .logo {
   height: 25px;
   width: 25px;
@@ -220,12 +213,6 @@ h2 {
   border-radius: 3px;
   right: -5px;
   bottom: -4px;
-}
-.nav-label {
-  color: var(--faint);
-  font-size: 10px;
-  letter-spacing: 1.5px;
-  padding: 10px 9px 7px;
 }
 nav {
   display: flex;
