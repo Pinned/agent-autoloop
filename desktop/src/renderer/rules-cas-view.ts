@@ -148,15 +148,20 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
   }
   const nameInput = field("名称", "name");
   const typesInput = field("事件类型（空格或逗号分隔）", "types");
-  const toInput = field("执行体", "to");
-  const agents = document.createElement("datalist");
-  agents.id = "rules-agents";
-  toInput.setAttribute("list", "rules-agents");
-  form.append(agents);
+  const toField = document.createElement("label");
+  toField.className = "setup-field";
+  const toLabel = document.createElement("span");
+  toLabel.textContent = "执行体";
+  // A select of the agents the read offered, the same roster the settings page shows: an entry can
+  // only name an agent the hub actually has, so a typo is a missing option, never a bad save.
+  const toInput = document.createElement("select");
+  toInput.id = "rules-to";
+  toField.append(toLabel, toInput);
+  form.append(toField);
   const cwdInput = field("工作目录", "cwd");
   const promptInput = field("提示词（可选）", "prompt", true);
   const skillInput = field("技能（可选）", "skill");
-  const parallelInput = field("并行数（可选）", "parallel", false);
+  const parallelInput = field("并行数（默认 1，可选）", "parallel", false);
   parallelInput.setAttribute("type", "number");
   parallelInput.setAttribute("min", "1");
   parallelInput.setAttribute("max", "64");
@@ -281,7 +286,14 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
       bindValue<string | undefined>(input, value, value ?? "", (next) => next);
     const name = text(nameInput, source?.name);
     const types = bindValue(typesInput, source?.types ?? [], source?.types.join(" ") ?? "", splitTypes);
-    const to = text(toInput, source?.to);
+    // The executor select holds the agents the read offered; update() adds a one-off option when
+    // the chosen value is not on the roster, so setting the value here is enough. An existing
+    // entry keeps its executor; a fresh entry starts at the first offered agent so an untouched
+    // form is still a valid choice.
+    const roster = controller.getState().snapshot?.agents ?? [];
+    const toChoices = roster.map((agent) => agent.id);
+    const toDefault = source?.to ? source.to : toChoices.length ? toChoices[0] : "";
+    const to = text(toInput, toDefault);
     const cwd = text(cwdInput, source?.cwd);
     const prompt = text(promptInput, source?.prompt);
     const skill = text(skillInput, source?.skill);
@@ -477,14 +489,26 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
     error.textContent = messages.join("\n");
     error.hidden = messages.length === 0;
     list.replaceChildren(...entries.map((entry, index) => entryNode(entry, index, rows[index], baseline[index])));
-    agents.replaceChildren(
-      ...(state.snapshot?.agents ?? []).map((agent) => {
-        const option = document.createElement("option");
-        option.value = agent.id;
-        option.textContent = agent.name;
-        return option;
-      }),
+    // The executor select holds exactly the agents the read offered. The current value survives a
+    // redraw when it is still one of them; a value the roster no longer carries stays as a one-off
+    // option, never silently rewritten — the owner sees what they are saving either way.
+    const roster = state.snapshot?.agents ?? [];
+    const toPrevious = toInput.value;
+    const optionOf = (id: string, text: string) => {
+      const option = document.createElement("option");
+      option.value = id;
+      option.textContent = text;
+      return option;
+    };
+    toInput.replaceChildren(
+      ...roster.map((agent) =>
+        optionOf(agent.id, agent.id === agent.name ? agent.name : `${agent.name}（${agent.id}）`),
+      ),
+      ...(toPrevious && !roster.some((agent) => agent.id === toPrevious)
+        ? [optionOf(toPrevious, `${toPrevious}（不在当前 Agent 列表）`)]
+        : []),
     );
+    toInput.value = toPrevious;
     addButton.disabled = state.saving || state.reloading;
     saveButton.disabled = state.saving || state.needsReview;
     // The draft bar is the failure path only: a save in flight or a save that needs review.
