@@ -73,6 +73,10 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
   root: HTMLElement;
   init(): void;
   update(): void;
+  /** The entry editor subpage: shows the in-page form. */
+  openEditor(): void;
+  /** Hides the entry editor and returns the list page; the caller owns navigation. */
+  closeEditor(): void;
 } {
   const root = document.createElement("section");
   root.className = "rules-panel";
@@ -117,10 +121,14 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
   addButton.textContent = "＋ 添加入口";
   addButton.addEventListener("click", () => openForm(null));
   addRow.append(addButton);
-  root.append(refreshButton, status, error, warning, draftBar, list, addRow);
 
-  const dialog = document.createElement("dialog");
-  dialog.className = "task-dialog rules-dialog";
+  // The editor is an in-page panel, not a modal: it lives inside this view's own root so a page
+  // switch re-attaches it without rebuilding the form, and hiding it never strands focus in a
+  // removed backdrop. The list page and the editor swap by hidden, the same one-root contract
+  // the dispatch-task subpage already uses.
+  const editor = document.createElement("section");
+  editor.className = "panel rules-editor-panel";
+  editor.hidden = true;
   const form = document.createElement("form");
   form.className = "task-form";
   const formTitle = document.createElement("h2");
@@ -200,8 +208,13 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
   formSubmit.textContent = "确定";
   formActions.append(formCancel, formSubmit);
   form.append(formError, formActions);
-  dialog.append(form);
-  document.body.append(dialog);
+  editor.append(form);
+  // The list page and the editor subpage share one root; hidden is the whole switch, so the
+  // app-level view is re-attached on return and the editor never rebuilds what the draft holds.
+  const listPage = document.createElement("section");
+  listPage.className = "rules-list-page";
+  listPage.append(refreshButton, status, error, warning, draftBar, list, addRow);
+  root.append(intro, listPage, editor);
   let editing: {
     index: number | null;
     generation: number;
@@ -231,6 +244,28 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
       state.draft?.generation === editing.generation &&
       state.draft.revision === editing.revision
     );
+  }
+  /** Leaves the editor subpage without a confirmed change: what "cancel" means on a page, not in a dialog. */
+  function dismissEditor() {
+    editor.hidden = true;
+    listPage.hidden = false;
+    editing = null;
+    const state = controller.getState();
+    if (state.draft && !state.saving && !state.needsReview) controller.cancelEdit();
+  }
+  function openEditor() {
+    if (editor.hidden === false) return;
+    editor.hidden = false;
+    listPage.hidden = true;
+  }
+  function closeEditor() {
+    if (editor.hidden) return;
+    editor.hidden = true;
+    listPage.hidden = false;
+    // The submit path lands here after the save (or the no-change cancel) is already settled, so
+    // no live flight's draft can be dropped — but the edit session itself always ends with the
+    // page it belongs to, exactly like the dialog's close event used to end it.
+    editing = null;
   }
   function openForm(index: number | null) {
     if (controller.getState().saving) return;
@@ -290,7 +325,7 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
       },
     };
     formError.hidden = true;
-    dialog.showModal();
+    openEditor();
   }
   saveButton.addEventListener("click", () => {
     if (!controller.getState().saving && !controller.getState().needsReview) controller.save();
@@ -301,20 +336,9 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
     if (controller.getState().needsReview) controller.discardAndReload();
     else controller.cancelEdit();
   });
-  formCancel.addEventListener("click", () => dialog.close());
-  // A dialog dismissed without a confirmed change owns nothing: dropping the draft here is what
-  // makes "cancel" leave the page exactly as it was read. The submit path closes only after the
-  // save (or the no-change cancel), so this dismissal never drops a live flight's draft.
-  dialog.addEventListener("cancel", () => {
-    editing = null;
-    const state = controller.getState();
-    if (state.draft && !state.saving && !state.needsReview) controller.cancelEdit();
-  });
-  dialog.addEventListener("close", () => {
-    editing = null;
-    const state = controller.getState();
-    if (state.draft && !state.saving && !state.needsReview) controller.cancelEdit();
-  });
+  formCancel.addEventListener("click", dismissEditor);
+  // The submit path closes only after the save (or the no-change cancel) settles, so a cancel
+  // never drops a live flight's draft; dismissEditor is the only path that drops an owned draft.
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     if (!validForm() || submitting) return;
@@ -324,7 +348,7 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
       const raw = target.read();
       if (target.index === null) controller.addEntry(raw);
       else controller.updateEntry(target.index, raw);
-      // One confirm is one save, settled before the dialog closes so the dismiss handler
+      // One confirm is one save, settled before the editor page is left so the dismiss path
       // cannot drop the flight's draft. A confirm with no actual change saves nothing.
       const state = controller.getState();
       const draft = state.draft;
@@ -332,7 +356,7 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
         if (draftEqualsBaseline(state.snapshot?.entries ?? [], draft.entries)) controller.cancelEdit();
         else controller.save();
       }
-      dialog.close();
+      closeEditor();
     } catch (failure) {
       formError.textContent = failure instanceof Error ? failure.message : "入口不合规";
       formError.hidden = false;
@@ -476,9 +500,9 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
     // Refresh is visible only when the error path offers a re-read as the recovery.
     const needsRefresh = Boolean(state.loadError) || state.needsReview || state.save.kind === "failed";
     refreshButton.hidden = !needsRefresh;
-    // The submit handler owns the dialog while it saves: the revision bump from updateEntry must
-    // not close the dialog out from under the confirm that is still running.
-    if (editing && !validForm() && !state.saving && !submitting) dialog.close();
+    // The submit handler owns the editor while it saves: the revision bump from updateEntry must
+    // not close the editor out from under the confirm that is still running.
+    if (editing && !validForm() && !state.saving && !submitting) dismissEditor();
   }
   controller.subscribe(update);
   return {
@@ -488,5 +512,7 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
       update();
     },
     update,
+    openEditor,
+    closeEditor,
   };
 }

@@ -147,11 +147,18 @@ function syncNavigation(role: Role) {
   // A role change can strand the current page outside its own view. Leave the page only after this
   // notification returns: a render here would re-enter the setup controller mid-change. With the
   // first-run page on screen there is no current page to strand, so navigation changes nothing.
-  if (shell === "workspace" && !pages.some((page) => page.id === currentPage))
+  // The dispatch-task and automation-entry subpages are not in the role's list by design; they
+  // belong to pages that are, so they are never "stranded" and a runtime push must not kick the
+  // user off an edit in progress.
+  const pseudo = currentPage === "dispatch-task" || currentPage === "automation-entry";
+  if (shell === "workspace" && !pseudo && !pages.some((page) => page.id === currentPage))
     queueMicrotask(() => {
       if (shell !== "workspace") return;
       const current = pagesFor(currentRole());
-      if (!current.some((page) => page.id === currentPage)) render(current[0].id);
+      if (current.some((page) => page.id === currentPage)) return;
+      // A subpage still owns #main here; leaving it is its own back path, not navigation's.
+      if (currentPage === "dispatch-task" || currentPage === "automation-entry") return;
+      render(current[0].id);
     });
   // The tasks page keeps its id across a role change but does not keep its meaning: it is a hub
   // history for an owner and a local summary for a pure worker, and the reading lives on a
@@ -202,6 +209,12 @@ function openTaskPage() {
 }
 function leaveTaskPage() {
   render(previousPage || "today");
+}
+// The automation entry editor is a subpage of the automation page, the same pseudo-page pattern:
+// the view is app-level so the edit survives navigation, and leaving returns to the list.
+function leaveEntryEditor() {
+  rulesPage.closeEditor();
+  render("automation");
 }
 const taskControl = createRendererTask(
   window.desktop,
@@ -414,9 +427,12 @@ function render(id: string, focus = true) {
   const role = currentRole();
   const pages = pagesFor(role);
   const isDispatchTask = id === "dispatch-task" && role !== "worker";
+  // The automation entry editor is a pseudo page too: it only ever renders on a hub-worker's
+  // automation page, so it takes the same exemption from the role's page list.
+  const isAutomationEntry = id === "automation-entry" && role !== "worker";
   // A role change can strand the current page outside its own view; fall back to the first page
   // this machine is allowed to see rather than rendering a page it no longer owns.
-  if (!isDispatchTask && !pages.some((item) => item.id === id)) id = pages[0].id;
+  if (!isDispatchTask && !isAutomationEntry && !pages.some((item) => item.id === id)) id = pages[0].id;
   if (currentPage === "dispatch-task" && id !== "dispatch-task") {
     taskPanel.syncDraft();
   }
@@ -440,7 +456,7 @@ function render(id: string, focus = true) {
   workersView = undefined;
   localReadingView = undefined;
   localSummaryView = undefined;
-  renderedFlavor = isDispatchTask ? "dispatch-task" : pageFlavor(role, id);
+  renderedFlavor = isDispatchTask ? "dispatch-task" : isAutomationEntry ? "automation" : pageFlavor(role, id);
   currentPage = id;
   main.setAttribute("aria-labelledby", "page-title");
   const page = isDispatchTask
@@ -451,7 +467,15 @@ function render(id: string, focus = true) {
         description: "选择一个真实入口，写清目标；提交后会交给本机中台排队推进。",
         icon: "tasks",
       }
-    : pages.find((item) => item.id === id)!;
+    : isAutomationEntry
+      ? {
+          id: "automation-entry",
+          nav: "编辑入口",
+          title: "编辑入口",
+          description: "确认后立即保存；入口只影响本机中台接到的本地事件。",
+          icon: "automation",
+        }
+      : pages.find((item) => item.id === id)!;
   markCurrent();
   main.innerHTML = `<header class="page-head"><div class="page-head-copy"><h1 id="page-title">${page.title}</h1><p>${page.description}</p></div><div class="page-head-actions"></div></header>`;
   if (id === "dispatch-task") {
@@ -489,9 +513,23 @@ function render(id: string, focus = true) {
       () => render("tasks"),
     );
     today.refresh();
-  } else if (id === "automation") {
+  } else if (id === "automation" || id === "automation-entry") {
     // The hub's own entries at their current rules version; no mock rules and no background triggers.
+    // The entry editor is a subpage of this page: same app-level view, the page head says which
+    // page the user is on, and the back button returns to the list.
     main.append(rulesPage.root);
+    if (id === "automation-entry") {
+      const actions = main.querySelector<HTMLElement>(".page-head-actions")!;
+      const backButton = document.createElement("button");
+      backButton.textContent = "← 返回";
+      backButton.type = "button";
+      backButton.className = "task-back-button";
+      backButton.addEventListener("click", leaveEntryEditor);
+      actions.append(backButton);
+      rulesPage.openEditor();
+    } else {
+      rulesPage.closeEditor();
+    }
     rulesPage.update();
     rules.refresh();
   } else if (id === "tasks" && role === "worker") {

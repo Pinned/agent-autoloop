@@ -60,18 +60,10 @@ class Element {
           prevented = true;
         },
       });
-    if (name === "cancel" && !prevented) this.close();
     return prevented;
   }
   click() {
     if (!this.disabled && !this.hidden) this.emit("click");
-  }
-  close() {
-    this.open = false;
-    this.emit("close");
-  }
-  showModal() {
-    this.open = true;
   }
 }
 const all = (node: Element): Element[] => [node, ...node.children.flatMap(all)];
@@ -156,7 +148,9 @@ function fixture(body: Element) {
     find,
     clickRefresh,
     form: () => find((node) => node.tag === "form"),
-    dialog: () => find((node) => node.tag === "dialog"),
+    // The editor is an in-page section now; its visibility replaces the dialog's open flag.
+    editor: () => find((node) => node.tag === "section" && node.className.includes("rules-editor-panel")),
+    editorOpen: () => !find((node) => node.tag === "section" && node.className.includes("rules-editor-panel")).hidden,
     text: () =>
       all(body)
         .map((node) => node.textContent)
@@ -169,7 +163,7 @@ test("production click/submit preserves advanced fields and safely displays host
     f.view.init();
     await flush();
     f.button("编辑").click();
-    assert.equal(f.dialog().open, true);
+    assert.equal(f.editorOpen(), true);
     assert.equal(f.id("group").value, "组");
     assert.equal(f.id("tell").value, "never");
     assert.equal(f.id("emits-source").value, "app");
@@ -177,7 +171,7 @@ test("production click/submit preserves advanced fields and safely displays host
     f.id("name").value = "新名";
     // One confirm is one save: no standing draft bar, the PUT leaves immediately.
     f.form().emit("submit");
-    assert.equal(f.dialog().open, false);
+    assert.equal(f.editorOpen(), false);
     assert.equal(f.inputs.length, 1);
     assert.deepEqual(f.inputs[0], { entries: [{ ...original, name: "新名" }], rulesSeq: 10 });
     assert.ok(f.text().includes("<svg onload=evil>"));
@@ -196,7 +190,7 @@ test("an unchanged confirm saves nothing and leaves no draft behind", () =>
     await flush();
     f.button("编辑").click();
     f.form().emit("submit");
-    assert.equal(f.dialog().open, false);
+    assert.equal(f.editorOpen(), false);
     assert.equal(f.inputs.length, 0);
     assert.equal(f.controller.getState().draft, null);
     assert.equal(f.controller.getState().saving, false);
@@ -224,14 +218,14 @@ test("a confirm mid-save is refused, but the saving PUT keeps the page locked", 
     assert.equal(f.button("编辑").disabled, false);
   }));
 
-test("native dialog cancel does not submit; the reopen reads the saved values", () =>
+test("cancel does not submit; the reopen reads the saved values", () =>
   dom(async (f) => {
     f.view.init();
     await flush();
     f.button("编辑").click();
     f.id("name").value = "未提交";
-    f.dialog().emit("cancel");
-    assert.equal(f.dialog().open, false);
+    f.button("取消").click();
+    assert.equal(f.editorOpen(), false);
     assert.equal(f.inputs.length, 0);
     assert.equal(f.controller.getState().draft, null);
     f.button("编辑").click();
@@ -305,7 +299,7 @@ test("legal multiline fields round trip without text-input newline loss", () =>
     f.form().emit("submit");
     // The pre-seeded edit differs from the baseline, so this confirm saves right away.
     assert.deepEqual(f.inputs[0], { entries: [multiline], rulesSeq: 10 });
-    // The hub answers with the saved value, so the next dialog reads the multiline entry back.
+    // The hub answers with the saved value, so the reopened editor reads the multiline entry back.
     f.answer(ready(19, [multiline]));
     await flush();
     assert.equal(f.controller.getState().draft, null);
@@ -338,7 +332,7 @@ const carriageEntry = {
 };
 
 for (const change of ["none", "other", "restore", "edit"] as const)
-  test(`CR/CRLF semantic values survive dialog submission: ${change}`, () =>
+  test(`CR/CRLF semantic values survive editor submission: ${change}`, () =>
     dom(async (f) => {
       f.view.init();
       await flush();
@@ -367,7 +361,7 @@ for (const change of ["none", "other", "restore", "edit"] as const)
         expected = { ...carriageEntry, prompt: "修改\n后的提示", group: "新\n分组" };
       }
       f.form().emit("submit");
-      assert.equal(f.dialog().open, false);
+      assert.equal(f.editorOpen(), false);
       assert.deepEqual(f.controller.getState().draft?.entries[0], expected);
       // The confirm saves whatever the draft holds against the read baseline: the seeded
       // carriageEntry is already a change, so none/restore send it too; edit sends its own.
@@ -401,12 +395,12 @@ test("CR baseline retains optional absence, explicit group and independent emits
     f.answer(ready(19, [expected]));
     await flush();
     assert.equal(f.controller.getState().draft, null);
-    // A contract-invalid confirm is caught inside the dialog: the form stays open with the error.
+    // A contract-invalid confirm is caught inside the editor: the form stays open with the error.
     f.button("编辑").click();
     f.id("emits-source").value = "";
     const before = f.controller.getState().draft;
     f.form().emit("submit");
-    assert.equal(f.dialog().open, true);
+    assert.equal(f.editorOpen(), true);
     assert.equal(f.controller.getState().draft, before);
     f.id("emits-types").value = "";
     f.id("group").value = "";
@@ -415,7 +409,7 @@ test("CR baseline retains optional absence, explicit group and independent emits
     assert.deepEqual(f.controller.getState().draft?.entries[0], cleared);
   }));
 
-test("CR baseline is isolated across cancelled, expired, reopened and add dialogs", () =>
+test("CR baseline is isolated across cancelled, expired, reopened and add editors", () =>
   dom(async (f) => {
     f.view.init();
     await flush();
@@ -424,7 +418,7 @@ test("CR baseline is isolated across cancelled, expired, reopened and add dialog
     f.button("编辑").click();
     f.id("prompt").value = "未提交";
     // Cancel owns nothing: the whole draft goes, the page stays as it was read.
-    f.dialog().emit("cancel");
+    f.button("取消").click();
     assert.equal(f.controller.getState().draft, null);
     f.button("编辑").click();
     f.controller.cancelEdit();
@@ -440,7 +434,7 @@ test("CR baseline is isolated across cancelled, expired, reopened and add dialog
     f.button("编辑").click();
     f.form().emit("submit");
     assert.deepEqual(f.controller.getState().draft?.entries[0], next);
-    // The confirmed change is a save in flight; the add dialog waits for it to settle.
+    // The confirmed change is a save in flight; a new editor waits for it to settle.
     f.answer(ready(11, [next]));
     await flush();
     f.button("＋ 添加入口").click();
@@ -460,7 +454,7 @@ test("CR baseline is isolated across cancelled, expired, reopened and add dialog
     });
   }));
 
-test("a confirm that fails validation never sends and keeps the draft in the dialog", () =>
+test("a confirm that fails validation never sends and keeps the draft in the editor", () =>
   dom(async (f) => {
     f.view.init();
     await flush();
@@ -472,15 +466,15 @@ test("a confirm that fails validation never sends and keeps the draft in the dia
         throw new Error("private");
       };
       // The confirm parses the entry itself: a failure there never opens a PUT flight,
-      // and the dialog stays open with the draft for the operator to fix or cancel.
+      // and the editor stays open with the draft for the operator to fix or cancel.
       assert.doesNotThrow(() => f.form().emit("submit"));
     } finally {
       TextEncoder.prototype.encode = encode;
     }
     assert.equal(f.inputs.length, 0);
-    assert.equal(f.dialog().open, true);
+    assert.equal(f.editorOpen(), true);
     assert.ok(f.controller.getState().draft);
-    // The dialog names the failure instead of silently swallowing it.
+    // The editor names the failure instead of silently swallowing it.
     const formError = f.find((node) => node.className === "setup-error");
     assert.equal(formError.hidden, false);
     assert.ok(formError.textContent.length > 0);
@@ -511,7 +505,7 @@ test("form validation, add/remove and explicit clearing use the existing full co
     await flush();
     f.button("＋ 添加入口").click();
     f.form().emit("submit");
-    assert.equal(f.dialog().open, true);
+    assert.equal(f.editorOpen(), true);
     for (const [name, value] of [
       ["name", "添加"],
       ["types", "task.one,task.two"],

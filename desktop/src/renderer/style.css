@@ -1381,8 +1381,13 @@ main {
   border-color: var(--blue);
   color: var(--text);
 }
-.rules-dialog .setup-field input[type="number"] {
+/* The entry editor subpage: the same panel language as the dispatch-task form, scoped so the
+   number input keeps its narrow measure inside the wider subpage panel. */
+.rules-editor-panel .setup-field input[type="number"] {
   width: 90px;
+}
+.rules-editor-panel .task-form {
+  padding: 0;
 }
 .run-list {
   list-style: none;
