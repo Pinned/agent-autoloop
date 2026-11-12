@@ -117,6 +117,7 @@ async function withView(
       createdCalls++;
       created();
     });
+    body.append(panel.root as unknown as MemoryElement);
     await callback({
       controller,
       panel,
