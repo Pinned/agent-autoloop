@@ -29,10 +29,11 @@ export type TaskSubmitState =
 export type TaskDraft = Readonly<{ entry: string; pattern: string; concrete: string; summary: string; detail: string }>;
 type TaskOperation = Readonly<{ input: Readonly<DesktopTaskInput>; draft: TaskDraft }>;
 
-/** One bounded operation record. A hidden dialog is not cancellation or evidence of non-ingestion. */
+/** One bounded operation record. A subpage view is not cancellation or evidence of non-ingestion. */
 export function createRendererTask(bridge: TaskBridge, onChange: () => void, gate: () => boolean = () => true) {
   let entries: TaskEntriesState = Object.freeze({ kind: "loading" });
   let submit: TaskSubmitState = Object.freeze({ kind: "idle" });
+  let cachedDraft: TaskDraft | null = null;
   let entriesFlight = false;
   let operation: TaskOperation | null = null;
   let flight: TaskOperation | null = null;
@@ -92,11 +93,28 @@ export function createRendererTask(bridge: TaskBridge, onChange: () => void, gat
         routed: Object.freeze(response.receipt.result.routed),
       }) as unknown as DesktopTaskResult;
       submit = Object.freeze({ kind: "done", result });
+      cachedDraft = null;
     } else if (response) submit = Object.freeze({ kind: response.outcome, message: response.message });
     else submit = Object.freeze({ kind: "uncertain", message: DESKTOP_TASK_MESSAGES.uncertain });
     notify();
   }
   return {
+    get draft(): TaskDraft | null {
+      return cachedDraft;
+    },
+    saveDraft(draft: TaskDraft): void {
+      if (operation !== null) return;
+      cachedDraft = Object.freeze({
+        entry: typeof draft.entry === "string" ? draft.entry : "",
+        pattern: typeof draft.pattern === "string" ? draft.pattern : "",
+        concrete: typeof draft.concrete === "string" ? draft.concrete : "",
+        summary: typeof draft.summary === "string" ? draft.summary : "",
+        detail: typeof draft.detail === "string" ? draft.detail : "",
+      });
+    },
+    clearDraft(): void {
+      cachedDraft = null;
+    },
     get entriesState(): TaskEntriesState {
       return entries;
     },
@@ -194,6 +212,7 @@ export function createRendererTask(bridge: TaskBridge, onChange: () => void, gat
       if (operation !== token || flight || !terminal()) return;
       operation = null;
       submit = Object.freeze({ kind: "idle" });
+      cachedDraft = null;
       notify();
     },
   };

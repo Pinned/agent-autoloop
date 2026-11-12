@@ -20,6 +20,16 @@ class MemoryElement {
   open = false;
   rows = 0;
   children: MemoryElement[] = [];
+  classList = {
+    toggle: (name: string, force?: boolean) => {
+      const classes = this.className.split(" ").filter(Boolean);
+      const has = classes.includes(name);
+      const shouldHave = force !== undefined ? force : !has;
+      if (shouldHave && !has) classes.push(name);
+      else if (!shouldHave && has) classes.splice(classes.indexOf(name), 1);
+      this.className = classes.join(" ");
+    },
+  };
   listeners = new Map<string, ((event: { preventDefault(): void }) => void)[]>();
   constructor(tag: string) {
     this.tag = tag;
@@ -31,6 +41,7 @@ class MemoryElement {
     this.children = children;
     if (this.tag === "select") this.value = children[0]?.value ?? "";
   }
+  setAttribute() {}
   addEventListener(name: string, callback: (event: { preventDefault(): void }) => void) {
     this.listeners.set(name, [...(this.listeners.get(name) ?? []), callback]);
   }
@@ -131,7 +142,7 @@ async function withView(
   }
 }
 
-test("real view pending close/reopen and Escape preserve draft and single bridge call", async () => {
+test("real view pending close/reopen preserves draft and single bridge call", async () => {
   await withView(async (f) => {
     f.panel.open();
     await flush();
@@ -142,27 +153,27 @@ test("real view pending close/reopen and Escape preserve draft and single bridge
     f.body.find((e) => e.tag === "form")!.emit("submit");
     assert.equal(f.calls(), 1);
     assert.equal(summary.disabled, true);
-    const dialog = f.body.find((e) => e.tag === "dialog")!;
-    assert.equal(dialog.emit("cancel"), false);
-    dialog.close();
+    const panel = f.body.find((e) => e.tag === "section")!;
+    panel.close();
     summary.value = "tampered";
     f.panel.open();
     assert.equal(f.calls(), 1);
     assert.equal(summary.value, "冻结目标");
     assert.equal(f.controller.operation?.draft.summary, "冻结目标");
-    assert.equal(f.body.find((e) => e.textContent === "显式另建一条")!.hidden, true);
+    assert.equal(f.body.find((e) => e.textContent === "显式另派一条")!.hidden, true);
     f.answer({ version: 3, outcome: "uncertain", message: DESKTOP_TASK_MESSAGES.uncertain });
     await flush();
-    dialog.close();
+    panel.close();
     f.panel.open();
     f.body.find((e) => e.tag === "form")!.emit("submit");
     assert.equal(f.calls(), 1);
     assert.equal(f.controller.submitState.kind, "uncertain");
     assert.equal(f.createdCalls(), 0);
     assert.equal(summary.disabled, true);
-    assert.equal(f.body.find((e) => e.textContent === "显式另建一条")!.hidden, true);
+    assert.equal(f.body.find((e) => e.textContent === "显式另派一条")!.hidden, true);
   });
 });
+
 test("real view gate disables submission and accepted offers explicit another only when eligible", async () => {
   await withView(async (f) => {
     f.panel.open();
@@ -183,7 +194,7 @@ test("real view gate disables submission and accepted offers explicit another on
       receipt: { version: 2, ok: true, result: { event: 2, duplicate: false, routed: ["入口"] } },
     });
     await flush();
-    const another = f.body.find((e) => e.textContent === "显式另建一条")!;
+    const another = f.body.find((e) => e.textContent === "显式另派一条")!;
     assert.equal(another.hidden, false);
     assert.equal(another.disabled, true);
     another.emit("click");
@@ -195,12 +206,13 @@ test("real view gate disables submission and accepted offers explicit another on
     assert.equal(f.body.find((e) => e.id === "task-summary")!.value, "");
   });
 });
+
 test("accepted refresh is exactly once per result even after close/reopen and another accepted", async () => {
   await withView(async (f) => {
     f.panel.open();
     await flush();
     const form = f.body.find((e) => e.tag === "form")!;
-    const dialog = f.body.find((e) => e.tag === "dialog")!;
+    const panel = f.body.find((e) => e.tag === "section")!;
     const summary = f.body.find((e) => e.id === "task-summary")!;
     summary.value = "第一条";
     form.emit("submit");
@@ -218,13 +230,13 @@ test("accepted refresh is exactly once per result even after close/reopen and an
     assert.equal(f.createdCalls(), 1);
     f.panel.update();
     f.panel.update();
-    dialog.close();
+    panel.close();
     f.panel.open();
     f.panel.update();
     assert.equal(f.createdCalls(), 1);
     assert.equal(f.controller.submitState, first);
     assert.equal(f.calls(), 1);
-    f.body.find((e) => e.textContent === "显式另建一条")!.emit("click");
+    f.body.find((e) => e.textContent === "显式另派一条")!.emit("click");
     await flush();
     summary.value = "第二条";
     form.emit("submit");
@@ -237,11 +249,12 @@ test("accepted refresh is exactly once per result even after close/reopen and an
     await flush();
     assert.equal(f.createdCalls(), 2);
     f.panel.update();
-    dialog.close();
+    panel.close();
     f.panel.open();
     assert.equal(f.createdCalls(), 2);
   });
 });
+
 test("throwing refresh callback cannot rewrite accepted or repeat on later update", async () => {
   await withView(async (f) => {
     f.panel.open();
@@ -261,10 +274,65 @@ test("throwing refresh callback cannot rewrite accepted or repeat on later updat
     assert.equal(receipt.kind, "done");
     assert.equal(f.createdCalls(), 1);
     f.panel.update();
-    f.body.find((e) => e.tag === "dialog")!.close();
+    f.body.find((e) => e.tag === "section")!.close();
     f.panel.open();
     assert.equal(f.controller.submitState, receipt);
     assert.equal(f.createdCalls(), 1);
     assert.equal(f.calls(), 1);
+  });
+});
+
+test("detail Markdown preview toggles and renders formatted content", async () => {
+  await withView(async (f) => {
+    f.panel.open();
+    await flush();
+    const detail = f.body.find((e) => e.id === "task-detail")!;
+    detail.value = "## 任务目标\n\n- [x] 排查完成\n- [ ] 验证修复\n\n```ts\nconst ok = true;\n```";
+    detail.emit("input");
+
+    const previewTab = f.body.find((e) => e.textContent === "预览")!;
+    const editTab = f.body.find((e) => e.textContent === "编辑")!;
+    assert.ok(previewTab);
+    assert.ok(editTab);
+
+    previewTab.emit("click");
+    const previewContainer = f.body.find((e) => e.id === "task-detail-preview")!;
+    assert.equal(previewContainer.hidden, false);
+    assert.equal(detail.hidden, true);
+
+    const h2 = previewContainer.find((e) => e.tag === "h2");
+    assert.ok(h2);
+    const pre = previewContainer.find((e) => e.tag === "pre");
+    assert.ok(pre);
+
+    editTab.emit("click");
+    assert.equal(detail.hidden, false);
+    assert.equal(previewContainer.hidden, true);
+  });
+});
+
+test("unsubmitted task input is cached before dispatch and restored on reopen", async () => {
+  await withView(async (f) => {
+    f.panel.open();
+    await flush();
+    const summary = f.body.find((e) => e.id === "task-summary")!;
+    const detail = f.body.find((e) => e.id === "task-detail")!;
+    summary.value = "未派发的草稿标题";
+    detail.value = "# 详细说明";
+    summary.emit("input");
+    detail.emit("input");
+
+    assert.ok(f.controller.draft);
+    assert.equal(f.controller.draft.summary, "未派发的草稿标题");
+    assert.equal(f.controller.draft.detail, "# 详细说明");
+
+    // Close and reopen without having submitted
+    f.panel.close();
+    summary.value = "";
+    detail.value = "";
+    f.panel.open();
+
+    assert.equal(summary.value, "未派发的草稿标题");
+    assert.equal(detail.value, "# 详细说明");
   });
 });

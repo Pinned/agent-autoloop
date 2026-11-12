@@ -58,6 +58,7 @@ function markCurrent() {
     if (button.dataset.page === active) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   }
+  newTaskButton.classList.toggle("active", pageOwnsMain() && currentPage === "dispatch-task");
 }
 let navigationDisabled = false;
 // Which shell the window may show. The launch record decides; the first frame is "checking", which
@@ -190,17 +191,24 @@ const localReading = createRendererLocalReading(window.desktop, () => {
   if (currentPage === "workers") localReadingView?.update();
   if (currentPage === "tasks") localSummaryView?.update();
 });
-// The new-task dialog is app-level: one <dialog>, one entry list, one submission at a time.
+// The dispatch-task subpage is app-level: one entry list, one submission at a time, with draft caching.
 let taskGate = () => false;
+let previousPage = "today";
+function openTaskPage() {
+  if (currentPage !== "dispatch-task") {
+    previousPage = currentPage;
+  }
+  render("dispatch-task");
+}
+function leaveTaskPage() {
+  render(previousPage || "today");
+}
 const taskControl = createRendererTask(
   window.desktop,
   () => taskPanel.update(),
   () => taskGate(),
 );
-const taskPanel = mountTaskDialog(taskControl, () => today.refresh());
-function openTaskDialog() {
-  taskPanel.open();
-}
+const taskPanel = mountTaskDialog(taskControl, () => today.refresh(), leaveTaskPage);
 const run = createRendererRun(
   window.desktop,
   () => ({ setupLocked: setup.state.kind === "unknown-locked", setupBusy: setup.busy }),
@@ -405,9 +413,13 @@ function render(id: string, focus = true) {
   if (shell !== "workspace") return;
   const role = currentRole();
   const pages = pagesFor(role);
+  const isDispatchTask = id === "dispatch-task" && role !== "worker";
   // A role change can strand the current page outside its own view; fall back to the first page
   // this machine is allowed to see rather than rendering a page it no longer owns.
-  if (!pages.some((item) => item.id === id)) id = pages[0].id;
+  if (!isDispatchTask && !pages.some((item) => item.id === id)) id = pages[0].id;
+  if (currentPage === "dispatch-task" && id !== "dispatch-task") {
+    taskPanel.syncDraft();
+  }
   if (setupView) {
     if (!setup.leave()) return;
     setupView.dispose();
@@ -428,13 +440,31 @@ function render(id: string, focus = true) {
   workersView = undefined;
   localReadingView = undefined;
   localSummaryView = undefined;
-  renderedFlavor = pageFlavor(role, id);
+  renderedFlavor = isDispatchTask ? "dispatch-task" : pageFlavor(role, id);
   currentPage = id;
   main.setAttribute("aria-labelledby", "page-title");
-  const page = pages.find((item) => item.id === id)!;
+  const page = isDispatchTask
+    ? {
+        id: "dispatch-task",
+        nav: "派发任务",
+        title: "派发任务",
+        description: "选择一个真实入口，写清目标；提交后会交给本机中台排队推进。",
+        icon: "tasks",
+      }
+    : pages.find((item) => item.id === id)!;
   markCurrent();
   main.innerHTML = `<header class="page-head"><div class="page-head-copy"><h1 id="page-title">${page.title}</h1><p>${page.description}</p></div><div class="page-head-actions"></div></header>`;
-  if (id === "settings") {
+  if (id === "dispatch-task") {
+    const actions = main.querySelector<HTMLElement>(".page-head-actions")!;
+    const backButton = document.createElement("button");
+    backButton.textContent = "← 返回";
+    backButton.type = "button";
+    backButton.className = "task-back-button";
+    backButton.addEventListener("click", leaveTaskPage);
+    actions.append(backButton);
+    main.append(taskPanel.root);
+    taskPanel.open();
+  } else if (id === "settings") {
     // The hub's own configuration, at the version it was read at; nothing here is stored locally.
     // The view is mounted before the first render() call below, so it is always present here.
     main.append(settingsPage!.root);
@@ -444,9 +474,9 @@ function render(id: string, focus = true) {
     // Today shows real local-hub data or a fixed not-running line; never placeholder numbers.
     const actions = main.querySelector<HTMLElement>(".page-head-actions")!;
     const button = document.createElement("button");
-    button.textContent = "＋ 新建任务";
+    button.textContent = "＋ 派发任务";
     button.type = "button";
-    button.addEventListener("click", openTaskDialog);
+    button.addEventListener("click", openTaskPage);
     actions.append(button);
     const host = document.createElement("div");
     main.append(host);
@@ -499,7 +529,7 @@ function render(id: string, focus = true) {
   }
   if (focus) main.focus();
 }
-newTaskButton.addEventListener("click", openTaskDialog);
+newTaskButton.addEventListener("click", openTaskPage);
 document.querySelector("#view-connection")!.addEventListener("click", () => render("workers"));
 // The one way out of the app is a page that has no workspace behind it; the shell itself offers
 // neither quit nor hide, leaving the window's own menu and tray as the machine-level exits.
