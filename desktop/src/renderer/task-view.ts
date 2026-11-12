@@ -22,6 +22,7 @@ export function mountTaskView(
   const root = document.createElement("section");
   root.className = "panel task-panel task-subpage-panel";
   root.id = "task-subpage";
+  root.hidden = true;
 
   const form = document.createElement("form");
   form.className = "task-form";
@@ -165,10 +166,6 @@ export function mountTaskView(
   actions.append(cancelButton, submitButton, doneButton, anotherButton);
   form.append(title, intro, entryField, typeField, summaryField, detailField, status, error, actions);
   root.append(form);
-
-  if (document.body && !root.parentElement) {
-    document.body.append(root);
-  }
 
   function saveCurrentDraft() {
     if (controller.operation) return;
@@ -381,6 +378,9 @@ export function mountTaskView(
 
   function open() {
     root.hidden = false;
+    if (document.body && !root.parentElement) {
+      document.body.append(root);
+    }
     if (!controller.operation) {
       controller.loadEntries();
       if (controller.draft) {
