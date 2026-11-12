@@ -27,20 +27,29 @@ export function mountTaskView(
   const form = document.createElement("form");
   form.className = "task-form";
 
-  // Section 1: Routing & target configuration
-  const routeSection = document.createElement("div");
+  // Section 1: Compact Routing Bar (Slim & Secondary)
+  const routeSection = document.createElement("details");
   routeSection.className = "task-route-section";
+  routeSection.open = false;
 
-  const routeHead = document.createElement("div");
-  routeHead.className = "task-section-head";
+  const routeSummaryBar = document.createElement("summary");
+  routeSummaryBar.className = "task-route-bar";
+
+  const routeSummaryLeft = document.createElement("div");
+  routeSummaryLeft.className = "task-route-bar-left";
   const routeTitle = document.createElement("span");
   routeTitle.className = "task-section-title";
-  routeTitle.textContent = "分发路由";
+  routeTitle.textContent = "分发入口";
   const routeSummary = document.createElement("span");
   routeSummary.id = "task-route-summary";
   routeSummary.className = "task-route-summary";
   routeSummary.textContent = "正在读取可用入口……";
-  routeHead.append(routeTitle, routeSummary);
+  routeSummaryLeft.append(routeTitle, routeSummary);
+
+  const routeToggleHint = document.createElement("span");
+  routeToggleHint.className = "task-route-toggle-hint";
+  routeToggleHint.textContent = "更改入口与类型 ▾";
+  routeSummaryBar.append(routeSummaryLeft, routeToggleHint);
 
   const routeGrid = document.createElement("div");
   routeGrid.className = "task-route-grid";
@@ -65,7 +74,7 @@ export function mountTaskView(
   typeField.append(typeLabel, typeSelect, concreteInput);
 
   routeGrid.append(entryField, typeField);
-  routeSection.append(routeHead, routeGrid);
+  routeSection.append(routeSummaryBar, routeGrid);
 
   const needsConcrete = () => typeSelect.value.includes("*");
   function updateRouteSummary() {
@@ -122,6 +131,47 @@ export function mountTaskView(
 
   const mdTabs = document.createElement("div");
   mdTabs.className = "markdown-tabs";
+
+  // Shortcut helpers for Typora-like typing
+  const toolsGroup = document.createElement("div");
+  toolsGroup.className = "task-md-tools";
+
+  function createToolBtn(label: string, title: string, wrapStart: string, wrapEnd: string = wrapStart) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "task-md-tool-btn";
+    btn.textContent = label;
+    btn.title = title;
+    btn.addEventListener("click", () => {
+      if (currentTab !== "edit") switchTab("edit");
+      const start = detailInput.selectionStart ?? detailInput.value.length;
+      const end = detailInput.selectionEnd ?? detailInput.value.length;
+      const sel = detailInput.value.slice(start, end) || "文本";
+      const before = detailInput.value.slice(0, start);
+      const after = detailInput.value.slice(end);
+      detailInput.value = `${before}${wrapStart}${sel}${wrapEnd}${after}`;
+      const newCursorStart = start + wrapStart.length;
+      const newCursorEnd = newCursorStart + sel.length;
+      detailInput.focus?.();
+      detailInput.setSelectionRange?.(newCursorStart, newCursorEnd);
+      saveCurrentDraft();
+    });
+    return btn;
+  }
+
+  toolsGroup.append(
+    createToolBtn("B", "粗体 (Ctrl+B / Cmd+B)", "**"),
+    createToolBtn("I", "斜体 (Ctrl+I / Cmd+I)", "*"),
+    createToolBtn("H", "标题 (Ctrl+H)", "### ", ""),
+    createToolBtn("`", "行内代码", "`"),
+    createToolBtn("```", "代码块", "\n```\n", "\n```\n"),
+    createToolBtn("-", "无序列表", "- ", ""),
+    createToolBtn("1.", "有序列表", "1. ", ""),
+    createToolBtn("[ ]", "任务清单", "- [ ] ", ""),
+  );
+
+  const tabButtons = document.createElement("div");
+  tabButtons.className = "task-tab-buttons";
   const editTab = document.createElement("button");
   editTab.type = "button";
   editTab.className = "markdown-tab active";
@@ -130,13 +180,104 @@ export function mountTaskView(
   previewTab.type = "button";
   previewTab.className = "markdown-tab";
   previewTab.textContent = "预览";
-  mdTabs.append(editTab, previewTab);
+  tabButtons.append(editTab, previewTab);
+  mdTabs.append(toolsGroup, tabButtons);
   detailHeader.append(detailLabelGroup, mdTabs);
 
   const detailInput = document.createElement("textarea");
   detailInput.id = "task-detail";
-  detailInput.rows = 8;
-  detailInput.placeholder = "描述背景上下文、验收标准或参考资料，支持 Markdown 语法……";
+  detailInput.rows = 10;
+  detailInput.placeholder =
+    "描述背景上下文、验收标准或参考资料，支持 Markdown 语法……\n\n- 支持快捷键：Tab 缩进、Shift+Tab 反缩进、回车自动延续列表项\n- 点击顶部快捷工具或输入 Markdown 标记，随时切换预览查看排版";
+
+  // Keyboard shortcut enhancements for Typora-like editing
+  detailInput.addEventListener("keydown", (e: KeyboardEvent) => {
+    // 1. Tab / Shift+Tab indentation
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const start = detailInput.selectionStart ?? 0;
+      const end = detailInput.selectionEnd ?? 0;
+      const val = detailInput.value;
+      if (e.shiftKey) {
+        // Unindent
+        if (val.slice(start - 2, start) === "  ") {
+          detailInput.value = val.slice(0, start - 2) + val.slice(start);
+          detailInput.setSelectionRange?.(start - 2, end - 2);
+        }
+      } else {
+        // Indent
+        detailInput.value = val.slice(0, start) + "  " + val.slice(end);
+        detailInput.setSelectionRange?.(start + 2, start + 2);
+      }
+      saveCurrentDraft();
+      return;
+    }
+
+    // 2. Auto-continue list markers on Enter
+    if (e.key === "Enter" && !e.shiftKey) {
+      const cursor = detailInput.selectionStart ?? 0;
+      const textBefore = detailInput.value.slice(0, cursor);
+      const lastLine = textBefore.split("\n").pop() ?? "";
+      const match = lastLine.match(/^(\s*)([-*] \[[ xX]\] |[-*] |\d+\. )/);
+      if (match) {
+        // If current list line is empty (just the marker), pressing Enter clears the marker
+        if (lastLine.trim() === match[2].trim()) {
+          e.preventDefault();
+          const lineStart = cursor - lastLine.length;
+          detailInput.value = detailInput.value.slice(0, lineStart) + detailInput.value.slice(cursor);
+          detailInput.setSelectionRange?.(lineStart, lineStart);
+          saveCurrentDraft();
+          return;
+        }
+        e.preventDefault();
+        let nextMarker = match[2];
+        const numMatch = match[2].match(/^(\d+)\. /);
+        if (numMatch) {
+          nextMarker = `${parseInt(numMatch[1], 10) + 1}. `;
+        } else if (match[2].includes("[")) {
+          nextMarker = "- [ ] ";
+        }
+        const insert = `\n${match[1]}${nextMarker}`;
+        detailInput.value = detailInput.value.slice(0, cursor) + insert + detailInput.value.slice(cursor);
+        const newPos = cursor + insert.length;
+        detailInput.setSelectionRange?.(newPos, newPos);
+        saveCurrentDraft();
+        return;
+      }
+    }
+
+    // 3. Bold/Italic shortcuts (Cmd/Ctrl + B, Cmd/Ctrl + I)
+    const isMod = e.metaKey || e.ctrlKey;
+    if (isMod && (e.key === "b" || e.key === "B")) {
+      e.preventDefault();
+      wrapSelection("**");
+      return;
+    }
+    if (isMod && (e.key === "i" || e.key === "I")) {
+      e.preventDefault();
+      wrapSelection("*");
+      return;
+    }
+    if (isMod && (e.key === "h" || e.key === "H")) {
+      e.preventDefault();
+      wrapSelection("### ", "");
+      return;
+    }
+  });
+
+  function wrapSelection(wrapStart: string, wrapEnd: string = wrapStart) {
+    const start = detailInput.selectionStart ?? detailInput.value.length;
+    const end = detailInput.selectionEnd ?? detailInput.value.length;
+    const sel = detailInput.value.slice(start, end) || "文本";
+    const before = detailInput.value.slice(0, start);
+    const after = detailInput.value.slice(end);
+    detailInput.value = `${before}${wrapStart}${sel}${wrapEnd}${after}`;
+    const newCursorStart = start + wrapStart.length;
+    const newCursorEnd = newCursorStart + sel.length;
+    detailInput.focus?.();
+    detailInput.setSelectionRange?.(newCursorStart, newCursorEnd);
+    saveCurrentDraft();
+  }
 
   const previewContainer = document.createElement("div");
   previewContainer.id = "task-detail-preview";
