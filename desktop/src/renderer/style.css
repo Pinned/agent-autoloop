@@ -1262,14 +1262,16 @@ main {
   border-bottom: 0;
   background: var(--panel);
 }
-.entry-list li:first-child .entry-item {
+/* The class sits on the `li` itself, so the end-cap rules address it directly: a descendant
+   selector here never matched, which cost the last row its border and every row its radius. */
+.entry-list > .entry-item:first-child {
   border-radius: 8px 8px 0 0;
 }
-.entry-list li:last-child .entry-item {
+.entry-list > .entry-item:last-child {
   border-bottom: 1px solid var(--border);
   border-radius: 0 0 8px 8px;
 }
-.entry-list li:only-child .entry-item {
+.entry-list > .entry-item:only-child {
   border-radius: 8px;
 }
 .entry-copy {
