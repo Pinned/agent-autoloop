@@ -108,10 +108,12 @@ function fixture(body: Element) {
   let answer!: (value: unknown) => void;
   let version = 10;
   let gets = 0;
+  // Tests may swap the list the read serves (the empty state needs a hub with no entries).
+  let served: readonly DesktopRuleEntry[] = [original];
   const controller = createRendererRulesCas({
     rulesGet() {
       gets++;
-      return Promise.resolve(ready(version));
+      return Promise.resolve(ready(version, served));
     },
     rulesPut(input) {
       inputs.push(input);
@@ -143,6 +145,9 @@ function fixture(body: Element) {
     answer: (value: unknown) => answer(value),
     version: (value: number) => {
       version = value;
+    },
+    entries: (value: readonly DesktopRuleEntry[]) => {
+      served = value;
     },
     gets: () => gets,
     button,
@@ -542,8 +547,21 @@ test("the page names what it does not own before any edit starts", () =>
   dom(async (f) => {
     f.view.init();
     await flush();
-    // The boundary is visible without opening a draft: this list is the local slots only.
-    assert.ok(f.text().includes("只编辑本机入口；其他规则在中台网页控制台修改"));
+    // The boundary lives in the page head (app.ts renders it), not repeated inside the view; the
+    // list body itself carries no standing instruction line — that was the demo feel this page shed.
+    assert.ok(!f.text().includes("只编辑本机入口"));
+  }));
+
+test("an empty list shows an empty-state card with a way in, not a bare status sentence", () =>
+  dom(async (f) => {
+    f.entries([]);
+    f.view.init();
+    await flush();
+    const empty = f.find((node) => /\brules-empty\b/.test(node.className));
+    assert.ok(!empty.hidden);
+    // The card's own subtree carries the title and the line (the fixture keeps text on leaves).
+    assert.ok(all(empty).some((node) => node.textContent.includes("还没有入口")));
+    assert.ok(f.button("＋ 添加入口") !== undefined);
   }));
 
 test("the preview states only what the save hands over for the local slots", () =>

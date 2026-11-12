@@ -27,6 +27,9 @@ test("an empty parallel field still sends nothing; the default is stated, not se
   // a time) applies on the hub side, so a form that never touched parallel cannot alter a rule's
   // concurrency story by saving.
   assert.match(view, /parallel.*undefined/s);
-  // The stated default lives in the field's label or placeholder, the way the form states facts.
-  assert.match(view, /并行数（默认 1，可选）|并行数（可选，默认 1）|placeholder.*默认/s);
+  // The stated default lives in the field's placeholder, so the label stays short — a bracketed
+  // essay on every label was part of the demo feel this page shed. The fact still reaches the
+  // owner exactly when the field is empty and the fact matters.
+  assert.match(view, /placeholder.*默认 1/s);
+  assert.doesNotMatch(view, /并行数（/);
 });

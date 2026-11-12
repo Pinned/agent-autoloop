@@ -1240,6 +1240,11 @@ main {
 .rules-panel > .rules-intro {
   margin: 0;
 }
+/* The empty state borrows the today page's dashed card; this page's card adds the way in, so its
+   button needs the seat the today variants never had. */
+.rules-empty button {
+  margin-top: 14px;
+}
 .rules-actions {
   display: flex;
   flex-wrap: wrap;

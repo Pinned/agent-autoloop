@@ -1,4 +1,4 @@
-import { DESKTOP_RULES_MESSAGES, type DesktopRuleEntry } from "../../../host/desktop-rules-contract.ts";
+import { type DesktopRuleEntry } from "../../../host/desktop-rules-contract.ts";
 import type { createRendererRulesCas } from "./rules-cas-controller.ts";
 
 /**
@@ -81,10 +81,8 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
 } {
   const root = document.createElement("section");
   root.className = "rules-panel";
-  const intro = document.createElement("p");
-  intro.className = "muted rules-intro";
-  intro.textContent = "只编辑本机入口；其他规则在中台网页控制台修改。";
-  root.append(intro);
+  // The page head (app.ts) already states the boundary — local entries only — so the view itself
+  // carries no standing instruction line; repeated hints were what made the page read as a demo.
   const status = document.createElement("p");
   status.className = "rules-status";
   // The refresh button exists but stays hidden in the calm state: conflict and failed reads are
@@ -167,8 +165,10 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
   }
   triggerField.append(triggerLabel, triggerInput);
   form.append(triggerField);
-  const typesInput = field("事件类型（空格或逗号分隔）", "types");
-  const cronInput = field("时间表（cron，比如 0 9 * * *）", "cron", false);
+  const typesInput = field("事件类型", "types");
+  typesInput.setAttribute("placeholder", "空格或逗号分隔，可用 x.* 通配");
+  const cronInput = field("时间表", "cron", false);
+  cronInput.setAttribute("placeholder", "cron，比如 0 9 * * *");
   const toField = document.createElement("label");
   toField.className = "setup-field";
   const toLabel = document.createElement("span");
@@ -180,13 +180,17 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
   toField.append(toLabel, toInput);
   form.append(toField);
   const cwdInput = field("工作目录", "cwd");
-  const promptInput = field("提示词（可选）", "prompt", true);
-  const skillInput = field("技能（可选）", "skill");
-  const parallelInput = field("并行数（默认 1，可选）", "parallel", false);
+  const promptInput = field("提示词", "prompt", true);
+  promptInput.setAttribute("placeholder", "可选");
+  const skillInput = field("技能", "skill");
+  skillInput.setAttribute("placeholder", "可选");
+  const parallelInput = field("并行数", "parallel", false);
+  parallelInput.setAttribute("placeholder", "默认 1");
   parallelInput.setAttribute("type", "number");
   parallelInput.setAttribute("min", "1");
   parallelInput.setAttribute("max", "64");
-  const groupInput = field("分组（可选，留空随规则名）", "group");
+  const groupInput = field("分组", "group");
+  groupInput.setAttribute("placeholder", "可选，留空随规则名");
   const tellField = document.createElement("label");
   tellField.className = "setup-field";
   const tellLabel = document.createElement("span");
@@ -206,8 +210,10 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
   }
   tellField.append(tellLabel, tellInput);
   form.append(tellField);
-  const emitsSourceInput = field("输出事件来源（可选）", "emits-source");
-  const emitsTypesInput = field("输出事件类型（可选，空格或逗号分隔）", "emits-types");
+  const emitsSourceInput = field("输出事件来源", "emits-source");
+  emitsSourceInput.setAttribute("placeholder", "可选");
+  const emitsTypesInput = field("输出事件类型", "emits-types");
+  emitsTypesInput.setAttribute("placeholder", "可选，空格或逗号分隔");
   const fields = [
     nameInput,
     typesInput,
@@ -246,10 +252,24 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
   editor.append(form);
   // The list page and the editor subpage share one root; hidden is the whole switch, so the
   // app-level view is re-attached on return and the editor never rebuilds what the draft holds.
+  // The empty state is the same dashed card the today page uses: a title, one line, and the way
+  // in — shown when the hub serves no entries, hidden the moment one exists (or a draft adds one).
+  const emptyCard = document.createElement("div");
+  emptyCard.className = "today-empty rules-empty";
+  const emptyTitle = document.createElement("h3");
+  emptyTitle.textContent = "还没有入口";
+  const emptyLine = document.createElement("p");
+  emptyLine.textContent = "添加入口后，匹配的事件或到点的定时会交给执行体推进。";
+  const emptyButton = document.createElement("button");
+  emptyButton.type = "button";
+  emptyButton.textContent = "＋ 添加入口";
+  emptyButton.addEventListener("click", () => openForm(null));
+  emptyCard.append(emptyTitle, emptyLine, emptyButton);
+  emptyCard.hidden = true;
   const listPage = document.createElement("section");
   listPage.className = "rules-list-page";
-  listPage.append(refreshButton, status, error, warning, draftBar, list, addRow);
-  root.append(intro, listPage, editor);
+  listPage.append(refreshButton, status, error, warning, draftBar, emptyCard, list, addRow);
+  root.append(listPage, editor);
   let editing: {
     index: number | null;
     generation: number;
@@ -526,9 +546,10 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
         ? "正在保存……"
         : state.save.kind === "confirmed"
           ? "已确认保存到本机中台。"
-          : !entries.length
-            ? DESKTOP_RULES_MESSAGES.noEntry
-            : "";
+          : "";
+    // The empty card replaces the old bare noEntry sentence: the loading and saving states keep it
+    // out of the way, and a draft that adds an entry shows the row instead of the card.
+    emptyCard.hidden = !!entries.length || state.loading || state.saving;
     const messages: string[] = [];
     if (state.loadError) messages.push(state.loadError.message);
     if (state.save.kind === "failed") messages.push(state.save.message);

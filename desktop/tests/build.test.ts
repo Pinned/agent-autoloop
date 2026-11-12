@@ -393,8 +393,13 @@ test("the automation page edits the hub's own entries through the versioned rule
   // the save hands over, never that the hub accepted a save or that a rule will route.
   assert.match(view, /本次保存将提交/);
   assert.doesNotMatch(view, /已接受|路由结果/);
-  // The page states its own ownership: other sources' rules are not editable here.
-  assert.match(view, /只编辑本机入口；其他规则在中台网页控制台修改/);
+  // The page states its own ownership where every page already states it — the page head — and the
+  // list body itself stays free of standing instructions: repeated hints read as a demo, not a tool.
+  assert.match(read("../src/renderer/navigation.ts"), /本机入口；其他规则在中台网页控制台修改/);
+  assert.match(view, /rules-empty/);
+  assert.doesNotMatch(view, /只编辑本机入口；其他规则在中台网页控制台修改/);
+  // The editor subpage's head states the save semantics in one short line, not a lecture.
+  assert.match(app, /确认即保存到本机中台。/);
   assert.doesNotMatch(view, /\bfetch\(|WebSocket|ipcRenderer/);
   // The save carries the version it started from; the hub refuses a stale one, and the review
   // barrier routes the discard button through discardAndReload.
@@ -607,9 +612,12 @@ test("every page's scope note gets its own spacing, not only the rules panel's",
   assert.match(css, /\.panel > \.rules-intro\s*\{/);
   // Two notes in a row are separate facts, so they must not collapse into one block.
   assert.match(css, /\.rules-intro \+ \.rules-intro\s*\{[^}]*margin-top:\s*\d+px/);
-  // The views that pair a title with a note really do use these containers.
+  // The views that pair a title with a note really do use these containers. The automation page
+  // left this pattern when it shed its standing instruction line; its boundary moved to the page
+  // head, so it must not quietly grow a second note again either.
   for (const view of ["tasks-view", "settings-view", "workers-view", "local-reading-view", "local-summary-view"])
     assert.match(read(`../src/renderer/${view}.ts`), /rules-intro/);
+  assert.doesNotMatch(read("../src/renderer/rules-cas-view.ts"), /rules-intro/);
 });
 
 test("first-run reads answer from files before the runtime exists", () => {
