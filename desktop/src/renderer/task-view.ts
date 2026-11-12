@@ -27,15 +27,26 @@ export function mountTaskView(
   const form = document.createElement("form");
   form.className = "task-form";
 
-  const title = document.createElement("h2");
-  title.textContent = "派发任务";
+  // Section 1: Routing & target configuration
+  const routeSection = document.createElement("div");
+  routeSection.className = "task-route-section";
 
-  const intro = document.createElement("p");
-  intro.className = "muted task-intro";
-  intro.textContent = "选择一个真实入口，写清目标；提交后会交给本机中台排队推进。";
+  const routeHead = document.createElement("div");
+  routeHead.className = "task-section-head";
+  const routeTitle = document.createElement("span");
+  routeTitle.className = "task-section-title";
+  routeTitle.textContent = "分发路由";
+  const routeSummary = document.createElement("span");
+  routeSummary.id = "task-route-summary";
+  routeSummary.className = "task-route-summary";
+  routeSummary.textContent = "正在读取可用入口……";
+  routeHead.append(routeTitle, routeSummary);
+
+  const routeGrid = document.createElement("div");
+  routeGrid.className = "task-route-grid";
 
   const entryField = document.createElement("label");
-  entryField.className = "setup-field";
+  entryField.className = "setup-field task-route-field";
   const entryLabel = document.createElement("span");
   entryLabel.textContent = "任务入口";
   const entrySelect = document.createElement("select");
@@ -43,41 +54,71 @@ export function mountTaskView(
   entryField.append(entryLabel, entrySelect);
 
   const typeField = document.createElement("label");
-  typeField.className = "setup-field";
+  typeField.className = "setup-field task-route-field";
   const typeLabel = document.createElement("span");
   typeLabel.textContent = "事件类型";
   const typeSelect = document.createElement("select");
   typeSelect.id = "task-type";
-  typeField.append(typeLabel, typeSelect);
   const concreteInput = document.createElement("input");
   concreteInput.id = "task-concrete-type";
   concreteInput.placeholder = "填写具体类型，例如 task.release；不自动推测后缀";
-  typeField.append(concreteInput);
+  typeField.append(typeLabel, typeSelect, concreteInput);
+
+  routeGrid.append(entryField, typeField);
+  routeSection.append(routeHead, routeGrid);
 
   const needsConcrete = () => typeSelect.value.includes("*");
+  function updateRouteSummary() {
+    const state = controller.entriesState;
+    if (state.kind !== "ready" || state.entries.length === 0) {
+      routeSummary.textContent = state.kind === "loading" ? "正在读取可用入口……" : "暂无可用入口";
+      return;
+    }
+    const currentEntry = state.entries.find((item) => item.name === entrySelect.value) ?? state.entries[0];
+    const activeType = needsConcrete()
+      ? concreteInput.value.trim() || typeSelect.value
+      : typeSelect.value || currentEntry.types[0] || "";
+    routeSummary.textContent = `${currentEntry.name} → ${currentEntry.to}${activeType ? ` · ${activeType}` : ""}`;
+  }
+
   function updateConcrete() {
     concreteInput.hidden = !needsConcrete();
     concreteInput.required = needsConcrete();
+    updateRouteSummary();
   }
-  typeSelect.addEventListener("change", updateConcrete);
+
+  // Section 2: Task content composer
+  const composeSection = document.createElement("div");
+  composeSection.className = "task-compose-section";
 
   const summaryField = document.createElement("label");
-  summaryField.className = "setup-field";
+  summaryField.className = "setup-field task-summary-field";
   const summaryLabel = document.createElement("span");
-  summaryLabel.textContent = "标题";
+  summaryLabel.textContent = "任务标题";
   const summaryInput = document.createElement("input");
   summaryInput.id = "task-summary";
+  summaryInput.placeholder = "一句话概括任务目标，例如：排查线上支付超时并输出修复方案";
   summaryInput.required = true;
   summaryField.append(summaryLabel, summaryInput);
 
-  // Detail field with Markdown edit / preview tabs
+  // Detail field with integrated Markdown edit / preview workbench
   const detailField = document.createElement("div");
   detailField.className = "setup-field task-detail-field";
 
+  const editorBox = document.createElement("div");
+  editorBox.className = "task-editor-box";
+
   const detailHeader = document.createElement("div");
   detailHeader.className = "task-detail-header";
+  const detailLabelGroup = document.createElement("div");
+  detailLabelGroup.className = "task-detail-label-group";
   const detailLabel = document.createElement("span");
-  detailLabel.textContent = "详情 (Markdown)";
+  detailLabel.className = "task-detail-label";
+  detailLabel.textContent = "任务详情";
+  const detailBadge = document.createElement("span");
+  detailBadge.className = "task-md-badge";
+  detailBadge.textContent = "Markdown";
+  detailLabelGroup.append(detailLabel, detailBadge);
 
   const mdTabs = document.createElement("div");
   mdTabs.className = "markdown-tabs";
@@ -90,12 +131,12 @@ export function mountTaskView(
   previewTab.className = "markdown-tab";
   previewTab.textContent = "预览";
   mdTabs.append(editTab, previewTab);
-  detailHeader.append(detailLabel, mdTabs);
+  detailHeader.append(detailLabelGroup, mdTabs);
 
   const detailInput = document.createElement("textarea");
   detailInput.id = "task-detail";
-  detailInput.rows = 6;
-  detailInput.placeholder = "描述目标、背景和希望交付的结果，支持 Markdown 语法";
+  detailInput.rows = 8;
+  detailInput.placeholder = "描述背景上下文、验收标准或参考资料，支持 Markdown 语法……";
 
   const previewContainer = document.createElement("div");
   previewContainer.id = "task-detail-preview";
@@ -106,7 +147,9 @@ export function mountTaskView(
   mdHint.className = "muted task-detail-hint";
   mdHint.textContent = "支持 Markdown 格式：标题 (#)、列表 (- / 1.)、代码块 (```)、粗体 (**) 等";
 
-  detailField.append(detailHeader, detailInput, previewContainer, mdHint);
+  editorBox.append(detailHeader, detailInput, previewContainer, mdHint);
+  detailField.append(editorBox);
+  composeSection.append(summaryField, detailField);
 
   let currentTab: "edit" | "preview" = "edit";
   function switchTab(tab: "edit" | "preview") {
@@ -128,6 +171,10 @@ export function mountTaskView(
   editTab.addEventListener("click", () => switchTab("edit"));
   previewTab.addEventListener("click", () => switchTab("preview"));
 
+  // Section 3: Status feedback & action footer
+  const footer = document.createElement("div");
+  footer.className = "task-footer";
+
   const status = document.createElement("p");
   status.className = "task-dialog-status";
   status.id = "task-dialog-status";
@@ -138,33 +185,39 @@ export function mountTaskView(
   error.hidden = true;
 
   const actions = document.createElement("div");
-  actions.className = "setup-actions";
+  actions.className = "setup-actions task-actions";
 
   let renderedEntries: unknown;
   let notifiedResult: unknown;
 
   const cancelButton = document.createElement("button");
   cancelButton.type = "button";
-  cancelButton.textContent = "返回";
+  cancelButton.className = "task-cancel-button";
+  cancelButton.textContent = "取消并返回";
 
-  const submitButton = document.createElement("button");
-  submitButton.type = "submit";
-  submitButton.className = "setup-primary";
-  submitButton.textContent = "派发并入队";
-
-  const doneButton = document.createElement("button");
-  doneButton.type = "button";
-  doneButton.className = "setup-primary";
-  doneButton.textContent = "完成";
-  doneButton.hidden = true;
+  const primaryGroup = document.createElement("div");
+  primaryGroup.className = "task-primary-actions";
 
   const anotherButton = document.createElement("button");
   anotherButton.type = "button";
   anotherButton.textContent = "显式另派一条";
   anotherButton.hidden = true;
 
-  actions.append(cancelButton, submitButton, doneButton, anotherButton);
-  form.append(title, intro, entryField, typeField, summaryField, detailField, status, error, actions);
+  const submitButton = document.createElement("button");
+  submitButton.type = "submit";
+  submitButton.className = "setup-primary task-submit-button";
+  submitButton.textContent = "派发并入队";
+
+  const doneButton = document.createElement("button");
+  doneButton.type = "button";
+  doneButton.className = "setup-primary task-submit-button";
+  doneButton.textContent = "完成";
+  doneButton.hidden = true;
+
+  primaryGroup.append(anotherButton, submitButton, doneButton);
+  actions.append(cancelButton, primaryGroup);
+  footer.append(status, error, actions);
+  form.append(routeSection, composeSection, footer);
   root.append(form);
 
   function saveCurrentDraft() {
@@ -185,9 +238,14 @@ export function mountTaskView(
       previewContainer.replaceChildren(renderMarkdown(detailInput.value));
     }
   });
-  concreteInput.addEventListener("input", saveCurrentDraft);
-  entrySelect.addEventListener("change", saveCurrentDraft);
-  typeSelect.addEventListener("change", saveCurrentDraft);
+  concreteInput.addEventListener("input", () => {
+    updateRouteSummary();
+    saveCurrentDraft();
+  });
+  typeSelect.addEventListener("change", () => {
+    updateConcrete();
+    saveCurrentDraft();
+  });
 
   function fillEntries() {
     const state = controller.entriesState;
@@ -231,7 +289,10 @@ export function mountTaskView(
     updateConcrete();
   }
 
-  entrySelect.addEventListener("change", fillTypes);
+  entrySelect.addEventListener("change", () => {
+    fillTypes();
+    saveCurrentDraft();
+  });
 
   function update() {
     const state = controller.entriesState;
@@ -268,6 +329,8 @@ export function mountTaskView(
         detailInput.value = draft.detail;
       }
       updateConcrete();
+    } else {
+      updateRouteSummary();
     }
 
     if (currentTab === "preview") {
@@ -285,6 +348,7 @@ export function mountTaskView(
     status.hidden = state.kind === "ready" && state.entries.length > 0;
 
     const submission = controller.submitState;
+    status.classList.toggle("is-done", submission.kind === "done");
     if (submission.kind === "idle") {
       error.hidden = true;
       submitButton.hidden = false;

@@ -31,6 +31,7 @@ test("product shell has no development banners and keeps real runtime navigation
   assert.match(html, /class="titlebar"[^>]*aria-hidden="true"/);
   assert.match(app, /page-head-copy/);
   assert.match(app, /page-head-actions/);
+  assert.match(app, /copy\.prepend\(backButton\)/);
   assert.match(app, /if \(id === "settings"\) \{/);
 });
 
