@@ -1,10 +1,11 @@
-// The settings page's DOM. It renders one tab at a time from the controller's snapshot and only
-// ever sends whole sections, so a half-typed row never becomes a partial write. Which fields exist
-// is decided by the contract: the page cannot invent a field the hub would reject.
+// The settings page's DOM. It renders one tab at a time from the controller's snapshot. Editing is
+// per row: one row turns into a form while the others stay read-only, and the controller always
+// receives the whole section — the untouched rows travel at their draft values, so a save never
+// becomes a partial write. Which fields exist is decided by the contract: the page cannot invent
+// a field the hub would reject.
 import type { Theme } from "../policy.ts";
 import {
   DESKTOP_SETTINGS_ACCESS,
-  DESKTOP_SETTINGS_MESSAGES,
   type DesktopSettingsAgent,
   type DesktopSettingsChannel,
   type DesktopSettingsSection,
@@ -37,16 +38,15 @@ const TABS: readonly { id: Tab; title: string }[] = [
 const WORKER_TABS: readonly Tab[] = ["agents", "connection", "general"];
 const tabsFor = (role: "hub-worker" | "worker" | null) =>
   role === "worker" ? TABS.filter((item) => WORKER_TABS.includes(item.id)) : TABS;
-const editableSection = (tab: Tab): DesktopSettingsSection | null =>
-  tab === "agents"
-    ? "agents"
-    : tab === "sources"
-      ? "sources"
-      : tab === "channels"
-        ? "channels"
-        : tab === "general"
-          ? "settings"
-          : null;
+type ListSection = "agents" | "sources" | "channels";
+
+// One row of raw form values; composed and checked only when the owner asks to save.
+type Row = Record<string, string | boolean>;
+/** The single edit session the page allows: one row of one section, or the global form. */
+type Editing =
+  | { section: "settings"; global: { timezone: string; askFirst: string } }
+  | { section: ListSection; rowIndex: number; row: Row; fresh: boolean };
+type RowEditing = Extract<Editing, { section: ListSection }>;
 
 function field(labelText: string, control: HTMLElement, hint?: string): HTMLLabelElement {
   const wrap = document.createElement("label");
@@ -94,6 +94,7 @@ function select(id: string, values: readonly string[], value: string): HTMLSelec
   return node;
 }
 const wordsOf = (text: string) => text.split(/[\s,，]+/).filter(Boolean);
+const titleOf = (section: ListSection) => TABS.find((item) => item.id === section)?.title ?? "";
 
 export function mountSettingsView(
   controller: Settings,
@@ -105,24 +106,25 @@ export function mountSettingsView(
   dispose(): void;
 } {
   let tab: Tab = "agents";
-  // One row of raw form values per entry; composed and checked only when the owner asks to save.
-  type Row = Record<string, string | boolean>;
-  let editing: {
-    section: DesktopSettingsSection;
-    rows: Row[];
-    global: { timezone: string; askFirst: string } | null;
-  } | null = null;
+  let editing: Editing | null = null;
+  // The current tab's interactive buttons, so a state change (a save in flight, a review barrier)
+  // can lock them without rebuilding the form and losing the typed values. Three kinds: a list
+  // entry point (locked while any session is open), a form action (locked only by real work, not
+  // by the very draft it exists to save) and a cancel (locked exactly when it would strand a result).
+  let buttons: { node: HTMLButtonElement; kind: "list" | "act" | "cancel" }[] = [];
+  // Whether the body was last drawn from a snapshot. A first read settling (or a reload clearing
+  // it) has to redraw the tab: the status line can say "done", but the list is the page's content.
+  let hadSnapshot = false;
 
   const root = document.createElement("section");
   root.className = "panel settings-panel";
   const head = document.createElement("div");
   head.className = "rules-head";
   const title = document.createElement("h2");
-  title.textContent = "高级配置";
+  title.textContent = "设置";
   const intro = document.createElement("p");
   intro.className = "muted rules-intro";
-  intro.textContent =
-    "所有修改都写回本机中台，并基于开始编辑时的配置版本；配置被其他人改动时会拒绝本次保存，而不是覆盖。";
+  intro.textContent = "修改都保存到本机中台；配置在别处被改动时，保存会被拒绝而不是覆盖。";
   head.append(title, intro);
   const tabs = document.createElement("nav");
   tabs.className = "settings-tabs";
@@ -191,98 +193,87 @@ export function mountSettingsView(
     if (primary) node.className = "setup-primary";
     return node;
   }
-  function rowShell(label: string) {
-    const details = document.createElement("details");
-    details.className = "entry-item settings-item";
-    const summary = document.createElement("summary");
-    summary.textContent = label;
-    details.append(summary);
-    return details;
-  }
   function actionBar(controls: HTMLElement[]) {
     const bar = document.createElement("div");
     bar.className = "setup-actions";
     bar.append(...controls);
     return bar;
   }
+  function emptyState(text: string): HTMLElement {
+    const node = document.createElement("p");
+    node.className = "muted";
+    node.textContent = text;
+    return node;
+  }
+  function register(node: HTMLButtonElement, kind: "list" | "act" | "cancel") {
+    buttons.push({ node, kind });
+  }
 
-  function startEdit(section: DesktopSettingsSection) {
-    if (controller.getState().saving || controller.getState().reloading) return;
-    controller.beginEdit(section);
-    const draft = controller.getState().draft;
-    if (!draft || draft.section !== section) return;
-    if (section === "settings") {
-      const value = draft.value as { timezone: string; askFirst: readonly string[] };
-      editing = { section, rows: [], global: { timezone: value.timezone, askFirst: value.askFirst.join(" ") } };
-    } else {
-      const entries = draft.value as unknown as readonly (Record<string, unknown> & { id: string })[];
-      editing = {
-        section,
-        rows: entries.map((entry) => {
-          const row: Row = { id: entry.id };
-          for (const [key, value] of Object.entries(entry)) {
-            if (key === "id") continue;
-            row[key] = Array.isArray(value) ? value.join(" ") : value === undefined ? "" : String(value);
-          }
-          return row;
-        }),
-        global: null,
-      };
+  function rowOf(entry: Record<string, unknown>): Row {
+    const row: Row = {};
+    for (const [key, value] of Object.entries(entry)) {
+      row[key] = Array.isArray(value) ? value.join(" ") : value === undefined ? "" : String(value);
     }
-    renderTab();
+    return row;
   }
-  function stopEdit() {
-    editing = null;
-    controller.cancelEdit();
-    renderTab();
-  }
-  /** Compose the raw rows into the section value the contract accepts. Throws with the field's own words. */
-  function compose(section: DesktopSettingsSection): unknown {
-    const current = editing!;
-    if (section === "settings")
-      return {
-        timezone: current.global!.timezone.trim(),
-        askFirst: wordsOf(current.global!.askFirst),
+  /** Compose one raw row into the entry shape the contract accepts. Throws with the field's own words. */
+  function entryOf(
+    section: ListSection,
+    row: Row,
+  ): DesktopSettingsAgent | DesktopSettingsSource | DesktopSettingsChannel {
+    const text = (key: string) => String(row[key] ?? "").trim();
+    const optional = (key: string) => (text(key) ? text(key) : undefined);
+    if (section === "agents") {
+      const agent: DesktopSettingsAgent = {
+        id: text("id"),
+        name: text("name"),
+        worker: text("worker"),
+        use: text("use"),
+        access: (text("access") || "edit") as DesktopSettingsAgent["access"],
       };
-    const text = (row: Row, key: string) => String(row[key] ?? "").trim();
-    const optional = (row: Row, key: string) => (text(row, key) ? text(row, key) : undefined);
-    if (section === "agents")
-      return current.rows.map((row) => {
-        const command = wordsOf(text(row, "command"));
-        const timeout = text(row, "timeout");
-        const agent: DesktopSettingsAgent = {
-          id: text(row, "id"),
-          name: text(row, "name"),
-          worker: text(row, "worker"),
-          use: text(row, "use"),
-          access: (text(row, "access") || "edit") as DesktopSettingsAgent["access"],
-        };
-        const model = optional(row, "model");
-        const effort = optional(row, "effort");
-        if (model !== undefined) agent.model = model;
-        if (effort !== undefined) agent.effort = effort;
-        if (command.length) agent.command = command;
-        if (timeout) agent.timeout = Number(timeout);
-        return agent;
-      });
-    if (section === "sources")
-      return current.rows.map((row) => {
-        const source: DesktopSettingsSource = { id: text(row, "id"), name: text(row, "name") };
-        const adapter = optional(row, "adapter");
-        if (adapter !== undefined) source.adapter = adapter;
-        return source;
-      });
-    return current.rows.map((row) => {
-      const channel: DesktopSettingsChannel = { id: text(row, "id"), name: text(row, "name") };
-      const answerers = wordsOf(text(row, "answerers"));
-      if (answerers.length) channel.answerers = answerers;
-      if (row.links === true) channel.links = true;
-      return channel;
-    });
+      const model = optional("model");
+      const effort = optional("effort");
+      const command = wordsOf(text("command"));
+      const timeout = text("timeout");
+      if (model !== undefined) agent.model = model;
+      if (effort !== undefined) agent.effort = effort;
+      if (command.length) agent.command = command;
+      if (timeout) agent.timeout = Number(timeout);
+      return agent;
+    }
+    if (section === "sources") {
+      const source: DesktopSettingsSource = { id: text("id"), name: text("name") };
+      const adapter = optional("adapter");
+      if (adapter !== undefined) source.adapter = adapter;
+      return source;
+    }
+    const channel: DesktopSettingsChannel = { id: text("id"), name: text("name") };
+    const answerers = wordsOf(text("answerers"));
+    if (answerers.length) channel.answerers = answerers;
+    if (row.links === true) channel.links = true;
+    return channel;
   }
-  function commit(errorHost: HTMLElement) {
+  function draftEntries(): Record<string, unknown>[] {
+    const value = controller.getState().draft!.value as unknown as readonly Record<string, unknown>[];
+    return value.map((entry) => ({ ...entry }));
+  }
+  /** The whole section value: this row's raw form values on top of the draft's current entries. */
+  function compose(): unknown {
+    const session = editing!;
+    if (session.section === "settings")
+      return { timezone: session.global.timezone.trim(), askFirst: wordsOf(session.global.askFirst) };
+    const entries = draftEntries();
+    entries[session.rowIndex] = entryOf(session.section, session.row);
+    return entries;
+  }
+  function composeRemoval(session: RowEditing): unknown {
+    const entries = draftEntries();
+    entries.splice(session.rowIndex, 1);
+    return entries;
+  }
+  function commit(errorHost: HTMLElement, value: () => unknown): boolean {
     try {
-      controller.update(compose(editing!.section));
+      controller.update(value());
     } catch (failure) {
       errorHost.textContent = failure instanceof Error ? failure.message : "设置内容无效";
       errorHost.hidden = false;
@@ -292,112 +283,191 @@ export function mountSettingsView(
     return true;
   }
 
-  function editorFor(section: DesktopSettingsSection): HTMLElement {
+  function startRowEdit(section: ListSection, rowIndex: number | null) {
+    const state = controller.getState();
+    if (state.saving || state.reloading || state.needsReview || state.draft) return;
+    controller.beginEdit(section);
+    const draft = controller.getState().draft;
+    if (!draft || draft.section !== section) return;
+    const entries = draft.value as unknown as readonly Record<string, unknown>[];
+    const fresh = rowIndex === null || rowIndex >= entries.length;
+    const row = fresh
+      ? section === "agents"
+        ? { id: "", name: "", worker: "", use: "", access: "edit" }
+        : { id: "", name: "" }
+      : rowOf(entries[rowIndex]);
+    editing = { section, rowIndex: fresh ? entries.length : rowIndex!, row, fresh };
+    renderTab();
+  }
+  function startGlobalEdit() {
+    const state = controller.getState();
+    if (state.saving || state.reloading || state.needsReview || state.draft) return;
+    controller.beginEdit("settings");
+    const draft = controller.getState().draft;
+    if (!draft || draft.section !== "settings") return;
+    const value = draft.value as { timezone: string; askFirst: readonly string[] };
+    editing = { section: "settings", global: { timezone: value.timezone, askFirst: value.askFirst.join(" ") } };
+    renderTab();
+  }
+  function stopEdit() {
+    editing = null;
+    controller.cancelEdit();
+    renderTab();
+  }
+
+  function rowFields(session: RowEditing): HTMLElement[] {
+    const row = session.row;
+    const set = (key: string) => (event: Event) => {
+      row[key] = (event.target as HTMLInputElement).value;
+    };
+    const prefix = `settings-${session.section}-${session.rowIndex}`;
+    const idInput = input(`${prefix}-id`, String(row.id ?? ""));
+    idInput.addEventListener("input", set("id"));
+    const nameInput = input(`${prefix}-name`, String(row.name ?? ""));
+    nameInput.addEventListener("input", set("name"));
+    const nodes = [field("标识（小写字母开头，可含数字与连字符）", idInput), field("名称", nameInput)];
+    if (session.section === "agents") {
+      const workerInput = input(`${prefix}-worker`, String(row.worker ?? ""));
+      workerInput.setAttribute("list", "settings-workers");
+      workerInput.addEventListener("input", set("worker"));
+      const useInput = input(`${prefix}-use`, String(row.use ?? ""));
+      useInput.addEventListener("input", set("use"));
+      const access = select(`${prefix}-access`, DESKTOP_SETTINGS_ACCESS, String(row.access || "edit"));
+      access.addEventListener("change", () => (row.access = access.value));
+      const modelInput = input(`${prefix}-model`, String(row.model ?? ""));
+      modelInput.addEventListener("input", set("model"));
+      const effortInput = input(`${prefix}-effort`, String(row.effort ?? ""));
+      effortInput.addEventListener("input", set("effort"));
+      const commandInput = textarea(`${prefix}-command`, String(row.command ?? ""));
+      commandInput.addEventListener("input", set("command"));
+      const timeoutInput = input(`${prefix}-timeout`, String(row.timeout ?? ""));
+      timeoutInput.type = "number";
+      timeoutInput.addEventListener("input", set("timeout"));
+      nodes.push(
+        field("执行机标识", workerInput),
+        field("用法（use）", useInput, "例如 claude、codex；使用 command 时必须填写命令。"),
+        field("权限（access）", access),
+        field("模型（可选）", modelInput),
+        field("推理强度（可选）", effortInput),
+        field("命令（可选，空格分隔）", commandInput),
+        field("超时秒数（可选）", timeoutInput),
+      );
+    } else if (session.section === "sources") {
+      const adapterInput = input(`${prefix}-adapter`, String(row.adapter ?? ""));
+      adapterInput.addEventListener("input", set("adapter"));
+      nodes.push(field("适配器（可选）", adapterInput));
+    } else {
+      const answerers = input(`${prefix}-answerers`, String(row.answerers ?? ""));
+      answerers.addEventListener("input", set("answerers"));
+      const links = checkbox(`${prefix}-links`, row.links === true);
+      links.addEventListener("change", () => (row.links = links.checked));
+      nodes.push(field("应答人（空格或逗号分隔，可选）", answerers), field("发送链接", links));
+    }
+    return nodes;
+  }
+
+  function rowForm(session: RowEditing): HTMLElement {
+    const details = document.createElement("details");
+    details.className = "entry-item settings-item";
+    details.open = true;
+    const summary = document.createElement("summary");
+    summary.textContent =
+      String(session.row.name || "") ||
+      String(session.row.id || "") ||
+      (session.fresh ? `新增${titleOf(session.section)}` : `${titleOf(session.section)} ${session.rowIndex + 1}`);
+    details.append(summary, ...rowFields(session));
+    const error = document.createElement("p");
+    error.className = "setup-error";
+    error.hidden = true;
+    const save = button("保存", true);
+    const cancel = button("取消");
+    save.addEventListener("click", () => {
+      if (!commit(error, compose)) return;
+      controller.save();
+    });
+    cancel.addEventListener("click", stopEdit);
+    const actions: HTMLButtonElement[] = [save, cancel];
+    if (!session.fresh) {
+      const remove = button("删除此条");
+      remove.addEventListener("click", () => {
+        if (!commit(error, () => composeRemoval(session))) return;
+        controller.save();
+      });
+      actions.push(remove);
+    }
+    register(save, "act");
+    register(cancel, "cancel");
+    if (actions.length > 2) register(actions[2], "act");
+    details.append(error, actionBar(actions));
+    return details;
+  }
+
+  function globalForm(): HTMLElement {
+    const session = editing as Extract<Editing, { section: "settings" }>;
     const wrap = document.createElement("div");
     wrap.className = "settings-editor";
     const error = document.createElement("p");
     error.className = "setup-error";
     error.hidden = true;
-    const save = button("保存到本机中台", true);
-    const saveDraft = button("保存草稿");
-    const cancel = button("放弃本地修改");
+    const timezone = input("settings-timezone", session.global.timezone);
+    timezone.addEventListener("input", () => (session.global.timezone = timezone.value));
+    const askFirst = textarea("settings-ask-first", session.global.askFirst);
+    askFirst.addEventListener("input", () => (session.global.askFirst = askFirst.value));
+    const save = button("保存", true);
+    const cancel = button("取消");
     save.addEventListener("click", () => {
-      if (!commit(error)) return;
+      if (!commit(error, compose)) return;
       controller.save();
     });
-    saveDraft.addEventListener("click", () => commit(error));
     cancel.addEventListener("click", stopEdit);
+    register(save, "act");
+    register(cancel, "cancel");
+    wrap.append(
+      field("时区", timezone, "IANA 时区名称，例如 Asia/Shanghai。"),
+      field("确认事项（空格或逗号分隔，可留空）", askFirst, "需要先问过你再执行的事项。"),
+      error,
+      actionBar([save, cancel]),
+    );
+    return wrap;
+  }
 
-    if (section === "settings") {
-      const timezone = input("settings-timezone", editing!.global!.timezone);
-      timezone.addEventListener("input", () => (editing!.global!.timezone = timezone.value));
-      const askFirst = textarea("settings-ask-first", editing!.global!.askFirst);
-      askFirst.addEventListener("input", () => (editing!.global!.askFirst = askFirst.value));
-      wrap.append(
-        field("时区", timezone, "IANA 时区名称，例如 Asia/Shanghai。"),
-        field("确认事项（空格或逗号分隔，可留空）", askFirst, "需要先问过你再执行的事项。"),
-        error,
-        actionBar([save, saveDraft, cancel]),
-      );
-      return wrap;
-    }
+  function readOnlyRow(
+    section: ListSection,
+    entry: Record<string, unknown>,
+    index: number,
+    busy: boolean,
+  ): HTMLElement {
+    const item = document.createElement("li");
+    item.className = "entry-item";
+    const head = document.createElement("div");
+    head.className = "entry-head";
+    const name = document.createElement("strong");
+    name.textContent = String(entry.name ?? "");
+    const id = document.createElement("span");
+    id.className = "entry-to";
+    id.textContent = String(entry.id ?? "");
+    head.append(name, id);
+    const meta = document.createElement("div");
+    meta.className = "entry-meta muted";
+    const parts: string[] = [];
+    if ("worker" in entry) parts.push(`执行机 ${entry.worker}`, `用法 ${entry.use}`, `权限 ${entry.access}`);
+    if ("adapter" in entry && entry.adapter) parts.push(`适配器 ${entry.adapter}`);
+    if ("answerers" in entry && Array.isArray(entry.answerers) && entry.answerers.length)
+      parts.push(`应答人 ${entry.answerers.join("、")}`);
+    if ("links" in entry && entry.links) parts.push("发送链接");
+    meta.textContent = parts.join(" · ");
+    const actions = document.createElement("div");
+    actions.className = "entry-actions";
+    const edit = button("编辑");
+    edit.disabled = busy;
+    edit.addEventListener("click", () => startRowEdit(section, index));
+    register(edit, "list");
+    actions.append(edit);
+    item.append(head, meta, actions);
+    return item;
+  }
 
-    const list = document.createElement("div");
-    const renderRows = () => {
-      const nodes = editing!.rows.map((row, index) => {
-        const label =
-          String(row.name || "") ||
-          String(row.id || "") ||
-          `${TABS.find((item) => item.id === tab)?.title} ${index + 1}`;
-        const details = rowShell(label);
-        const set = (key: string) => (event: Event) => {
-          row[key] = (event.target as HTMLInputElement).value;
-        };
-        const idInput = input(`settings-${section}-${index}-id`, String(row.id ?? ""));
-        idInput.addEventListener("input", set("id"));
-        const nameInput = input(`settings-${section}-${index}-name`, String(row.name ?? ""));
-        nameInput.addEventListener("input", set("name"));
-        details.append(field("标识（小写字母开头，可含数字与连字符）", idInput), field("名称", nameInput));
-        if (section === "agents") {
-          const workerInput = input(`settings-${section}-${index}-worker`, String(row.worker ?? ""));
-          workerInput.setAttribute("list", "settings-workers");
-          workerInput.addEventListener("input", set("worker"));
-          const useInput = input(`settings-${section}-${index}-use`, String(row.use ?? ""));
-          useInput.addEventListener("input", set("use"));
-          const access = select(
-            `settings-${section}-${index}-access`,
-            DESKTOP_SETTINGS_ACCESS,
-            String(row.access || "edit"),
-          );
-          access.addEventListener("change", () => (row.access = access.value));
-          const modelInput = input(`settings-${section}-${index}-model`, String(row.model ?? ""));
-          modelInput.addEventListener("input", set("model"));
-          const effortInput = input(`settings-${section}-${index}-effort`, String(row.effort ?? ""));
-          effortInput.addEventListener("input", set("effort"));
-          const commandInput = textarea(`settings-${section}-${index}-command`, String(row.command ?? ""));
-          commandInput.addEventListener("input", set("command"));
-          const timeoutInput = input(`settings-${section}-${index}-timeout`, String(row.timeout ?? ""));
-          timeoutInput.type = "number";
-          timeoutInput.addEventListener("input", set("timeout"));
-          details.append(
-            field("执行机标识", workerInput),
-            field("用法（use）", useInput, "例如 claude、codex；使用 command 时必须填写命令。"),
-            field("权限（access）", access),
-            field("模型（可选）", modelInput),
-            field("推理强度（可选）", effortInput),
-            field("命令（可选，空格分隔）", commandInput),
-            field("超时秒数（可选）", timeoutInput),
-          );
-        } else if (section === "sources") {
-          const adapterInput = input(`settings-${section}-${index}-adapter`, String(row.adapter ?? ""));
-          adapterInput.addEventListener("input", set("adapter"));
-          details.append(field("适配器（可选）", adapterInput));
-        } else {
-          const answerers = input(`settings-${section}-${index}-answerers`, String(row.answerers ?? ""));
-          answerers.addEventListener("input", set("answerers"));
-          const links = checkbox(`settings-${section}-${index}-links`, row.links === true);
-          links.addEventListener("change", () => (row.links = links.checked));
-          details.append(field("应答人（空格或逗号分隔，可选）", answerers), field("发送链接", links));
-        }
-        const remove = button("移除此项");
-        remove.addEventListener("click", () => {
-          editing!.rows.splice(index, 1);
-          renderRows();
-        });
-        details.append(actionBar([remove]));
-        return details;
-      });
-      list.replaceChildren(...nodes);
-    };
-    renderRows();
-    const add = button("添加一项");
-    add.addEventListener("click", () => {
-      // An empty row is allowed in the form; the contract refuses it at save time with its own words.
-      editing!.rows.push(
-        section === "agents" ? { id: "", name: "", worker: "", use: "", access: "edit" } : { id: "", name: "" },
-      );
-      renderRows();
-    });
+  function workersList(): HTMLElement {
     const workers = document.createElement("datalist");
     workers.id = "settings-workers";
     workers.replaceChildren(
@@ -407,60 +477,35 @@ export function mountSettingsView(
         return option;
       }),
     );
-    wrap.append(list, workers, actionBar([add]), error, actionBar([save, saveDraft, cancel]));
-    return wrap;
+    return workers;
   }
 
-  function emptyState(text: string): HTMLElement {
-    const node = document.createElement("p");
-    node.className = "muted";
-    node.textContent = text;
-    return node;
-  }
-
-  function listTab(section: "agents" | "sources" | "channels"): HTMLElement {
+  function listTab(section: ListSection): HTMLElement {
     const wrap = document.createElement("div");
     const state = controller.getState();
-    if (editing && editing.section === section) return editorFor(section);
     if (!state.snapshot) {
       wrap.append(emptyState(state.loading ? "正在读取本机配置……" : "尚未读取到本机配置。"));
       return wrap;
     }
-    const entries = state.snapshot[section];
+    // A live draft belongs to the one row being edited: every other row waits until it is saved or dropped.
+    const busy = state.saving || state.reloading || state.needsReview || state.draft !== null;
+    const session = editing && editing.section === section ? editing : null;
+    const entries = state.snapshot[section] as unknown as readonly Record<string, unknown>[];
     const list = document.createElement("ul");
     list.className = "entry-list";
-    list.replaceChildren(
-      ...entries.map((entry) => {
-        const item = document.createElement("li");
-        item.className = "entry-item";
-        const head = document.createElement("div");
-        head.className = "entry-head";
-        const name = document.createElement("strong");
-        name.textContent = entry.name;
-        const id = document.createElement("span");
-        id.className = "entry-to";
-        id.textContent = entry.id;
-        head.append(name, id);
-        const meta = document.createElement("div");
-        meta.className = "entry-meta muted";
-        const parts: string[] = [];
-        if ("worker" in entry) parts.push(`执行机 ${entry.worker}`, `用法 ${entry.use}`, `权限 ${entry.access}`);
-        if ("adapter" in entry && entry.adapter) parts.push(`适配器 ${entry.adapter}`);
-        if ("answerers" in entry && entry.answerers?.length) parts.push(`应答人 ${entry.answerers.join("、")}`);
-        if ("links" in entry && entry.links) parts.push("发送链接");
-        meta.textContent = parts.join(" · ");
-        item.append(head, meta);
-        list.append(item);
-        return item;
-      }),
+    const nodes: HTMLElement[] = entries.map((entry, index) =>
+      session && !session.fresh && session.rowIndex === index
+        ? rowForm(session)
+        : readOnlyRow(section, entry, index, busy),
     );
-    const edit = button("编辑本组配置", true);
-    edit.disabled = state.saving || state.reloading;
-    edit.addEventListener("click", () => startEdit(section));
-    wrap.append(
-      entries.length ? list : emptyState(section === "agents" ? "还没有配置 Agent。" : "还没有配置条目。"),
-      actionBar([edit]),
-    );
+    if (session?.fresh) nodes.push(rowForm(session));
+    list.replaceChildren(...nodes);
+    const add = button("添加一项");
+    add.disabled = busy;
+    add.addEventListener("click", () => startRowEdit(section, null));
+    register(add, "list");
+    wrap.append(list, actionBar([add]));
+    if (section === "agents") wrap.append(workersList());
     return wrap;
   }
 
@@ -509,7 +554,7 @@ export function mountSettingsView(
     themeRow.append(field("主题", themeSelect, "跟随系统，或固定为浅色、深色。"));
     wrap.append(themeRow);
     if (editing && editing.section === "settings") {
-      wrap.append(editorFor("settings"));
+      wrap.append(globalForm());
       return wrap;
     }
     const state = controller.getState();
@@ -519,27 +564,33 @@ export function mountSettingsView(
     }
     const summary = document.createElement("div");
     summary.className = "entry-meta muted";
-    summary.textContent = `时区 ${state.snapshot.timezone} · 确认事项 ${state.snapshot.askFirst.length ? state.snapshot.askFirst.join("、") : "无"}`;
-    const edit = button("编辑本机配置", true);
-    edit.disabled = state.saving || state.reloading;
-    edit.addEventListener("click", () => startEdit("settings"));
+    summary.textContent = `时区 ${state.snapshot.timezone} · 确认事项 ${
+      state.snapshot.askFirst.length ? state.snapshot.askFirst.join("、") : "无"
+    }`;
+    const edit = button("编辑", true);
+    edit.disabled = state.saving || state.reloading || state.needsReview || state.draft !== null;
+    edit.addEventListener("click", startGlobalEdit);
+    register(edit, "list");
     wrap.append(summary, actionBar([edit]));
     return wrap;
   }
 
   function renderTab() {
+    buttons = [];
     syncTabs();
+    const state = controller.getState();
+    hadSnapshot = state.snapshot !== null;
     for (const button of tabButtons) {
       const active = button.dataset.tab === tab;
       button.classList.toggle("active", active);
       button.setAttribute("aria-pressed", String(active));
-      // Switching away from an unsaved draft would hide it; the row stays until it is saved or dropped.
-      button.disabled = editing !== null && button.dataset.tab !== tab;
+      // The row being edited is the page's one commitment; every other group waits for it.
+      button.disabled =
+        button.dataset.tab !== tab && (editing !== null || state.saving || state.reloading || state.needsReview);
     }
-    const section = editableSection(tab);
     const content =
-      section === "agents" || section === "sources" || section === "channels"
-        ? listTab(section)
+      tab === "agents" || tab === "sources" || tab === "channels"
+        ? listTab(tab)
         : tab === "connection"
           ? connectionTab()
           : generalTab();
@@ -555,14 +606,31 @@ export function mountSettingsView(
       return;
     }
     const state = controller.getState();
-    const versions = state.snapshot ? `配置版本 R${state.snapshot.rulesSeq}` : "尚未读取本机配置";
-    status.textContent = `${versions}${state.draft ? ` · 草稿基线 R${state.draft.rulesSeq}` : ""}${state.loading ? " · 正在读取……" : ""}${state.saving ? " · 正在保存……" : ""}${state.save.kind === "confirmed" ? " · 已确认保存到本机中台。" : ""}`;
+    // A read settling (or being cleared by a reload) changes what the tab should show, not just
+    // what the status line says; the body follows the snapshot, never a stale loading state.
+    if ((state.snapshot !== null) !== hadSnapshot) {
+      renderTab();
+      return;
+    }
+    const parts: string[] = [];
+    if (state.loading) parts.push("正在读取本机配置……");
+    if (state.saving) parts.push("正在保存……");
+    if (state.save.kind === "confirmed") parts.push("已保存。");
+    status.textContent = parts.join(" ");
     const lines: string[] = [];
     if (state.loadError) lines.push(state.loadError.message);
     if (state.save.kind === "failed") lines.push(state.save.message);
     if (state.reviewMessage && !lines.includes(state.reviewMessage)) lines.push(state.reviewMessage);
     messages.textContent = lines.join("\n");
     messages.hidden = lines.length === 0;
+    // A save in flight, a refused save or a pending reload locks the page's actions. An open
+    // session locks only the list entry points — the form's own save exists to end that session.
+    for (const { node, kind } of buttons) {
+      node.disabled =
+        kind === "cancel"
+          ? state.saving || state.needsReview
+          : state.saving || state.needsReview || state.reloading || (kind === "list" && state.draft !== null);
+    }
     // A refused or unconfirmed save is a barrier: offer exactly the one action that can clear it.
     if ((state.needsReview || state.reloading) && !document.querySelector("#settings-discard")) {
       const discard = button("丢弃草稿并重新读取");
