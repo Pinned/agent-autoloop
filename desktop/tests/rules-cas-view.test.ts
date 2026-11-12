@@ -2,6 +2,7 @@
 // Text inputs strip CR/LF; textareas preserve LF and normalize CR, matching relevant HTML value semantics.
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { DESKTOP_RULES_MESSAGES, type DesktopRuleEntry } from "../../host/desktop-rules-contract.ts";
 import { DESKTOP_RULES_CAS_MESSAGES, desktopRulesCasPutFailure } from "../../host/desktop-rules-cas-contract.ts";
 import { createRendererRulesCas } from "../src/renderer/rules-cas-controller.ts";
 import { mountRulesCasView } from "../src/renderer/rules-cas-view.ts";
@@ -89,10 +90,10 @@ const original = {
   tell: "never" as const,
   emits: { source: "app", types: ["done.*"] },
 };
-const ready = (rulesSeq = 10) => ({
+const ready = (rulesSeq = 10, entries: readonly DesktopRuleEntry[] = [original]) => ({
   version: 3,
   ok: true,
-  data: { entries: [original], agents: [{ id: "a", name: "<svg onload=evil>", use: "edit" }], seq: 50, rulesSeq },
+  data: { entries, agents: [{ id: "a", name: "<svg onload=evil>", use: "edit" }], seq: 50, rulesSeq },
 });
 async function dom(run: (f: ReturnType<typeof fixture>) => Promise<void>) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
@@ -134,6 +135,12 @@ function fixture(body: Element) {
   };
   const button = (text: string) => find((node) => node.tag === "button" && node.textContent === text);
   const id = (name: string) => find((node) => node.id === `rules-${name}`);
+  // The refresh button is created only when the error path needs it, so tests reach it lazily.
+  const refresh = () => find((node) => node.tag === "button" && node.className === "rules-refresh");
+  const clickRefresh = () => {
+    refresh().hidden = false;
+    refresh().click();
+  };
   return {
     body,
     controller,
@@ -147,6 +154,7 @@ function fixture(body: Element) {
     button,
     id,
     find,
+    clickRefresh,
     form: () => find((node) => node.tag === "form"),
     dialog: () => find((node) => node.tag === "dialog"),
     text: () =>
@@ -167,9 +175,10 @@ test("production click/submit preserves advanced fields and safely displays host
     assert.equal(f.id("emits-source").value, "app");
     assert.equal(f.id("emits-types").value, "done.*");
     f.id("name").value = "新名";
+    // One confirm is one save: no standing draft bar, the PUT leaves immediately.
     f.form().emit("submit");
     assert.equal(f.dialog().open, false);
-    f.button("保存到本机中台").click();
+    assert.equal(f.inputs.length, 1);
     assert.deepEqual(f.inputs[0], { entries: [{ ...original, name: "新名" }], rulesSeq: 10 });
     assert.ok(f.text().includes("<svg onload=evil>"));
     assert.equal(
@@ -181,49 +190,52 @@ test("production click/submit preserves advanced fields and safely displays host
     assert.ok(f.text().includes("已确认保存到本机中台"));
   }));
 
-test("saving locks edit/remove/save handlers but cancel keeps the physical PUT occupied", () =>
+test("an unchanged confirm saves nothing and leaves no draft behind", () =>
   dom(async (f) => {
     f.view.init();
     await flush();
     f.button("编辑").click();
     f.form().emit("submit");
-    const edit = f.button("编辑");
-    const remove = f.button("移除");
-    const save = f.button("保存到本机中台");
-    save.click();
-    assert.equal(f.inputs.length, 1);
-    assert.equal(f.button("编辑").disabled, true);
-    assert.equal(f.button("移除").disabled, true);
-    edit.emit("click");
-    remove.emit("click");
-    save.emit("click");
-    f.form().emit("submit");
-    assert.equal(f.inputs.length, 1);
-    assert.equal(f.controller.getState().draft?.entries.length, 1);
-    assert.ok(f.text().includes("放弃本地修改不会撤回已发出的请求"));
-    f.button("放弃本地修改").click();
+    assert.equal(f.dialog().open, false);
+    assert.equal(f.inputs.length, 0);
     assert.equal(f.controller.getState().draft, null);
-    assert.equal(f.controller.getState().saving, true);
-    f.button("刷新数据").click();
-    f.button("刷新数据").click();
-    assert.equal(f.gets(), 1);
-    f.answer(ready(20));
-    await flush();
-    assert.equal(f.gets(), 2);
-    assert.equal(f.controller.getState().save.kind, "idle");
+    assert.equal(f.controller.getState().saving, false);
+    assert.ok(!f.text().includes("放弃本地修改"));
   }));
 
-test("native dialog cancel does not submit; expired dialog cannot update a new draft", () =>
+test("a confirm mid-save is refused, but the saving PUT keeps the page locked", () =>
   dom(async (f) => {
     f.view.init();
     await flush();
     f.button("编辑").click();
-    const before = f.controller.getState().draft;
+    f.id("name").value = "第一笔";
+    f.form().emit("submit");
+    assert.equal(f.inputs.length, 1);
+    assert.equal(f.button("编辑").disabled, true);
+    // A second confirm during the flight neither sends nor mutates anything.
+    f.button("编辑").emit("click");
+    f.form().emit("submit");
+    assert.equal(f.inputs.length, 1);
+    assert.equal(f.controller.getState().saving, true);
+    f.answer(ready(19));
+    await flush();
+    assert.equal(f.controller.getState().save.kind, "confirmed");
+    assert.equal(f.controller.getState().saving, false);
+    assert.equal(f.button("编辑").disabled, false);
+  }));
+
+test("native dialog cancel does not submit; the reopen reads the saved values", () =>
+  dom(async (f) => {
+    f.view.init();
+    await flush();
+    f.button("编辑").click();
     f.id("name").value = "未提交";
     f.dialog().emit("cancel");
     assert.equal(f.dialog().open, false);
-    assert.deepEqual(f.controller.getState().draft, before);
+    assert.equal(f.inputs.length, 0);
+    assert.equal(f.controller.getState().draft, null);
     f.button("编辑").click();
+    assert.equal(f.id("name").value, original.name);
     f.id("name").value = "过期";
     f.controller.cancelEdit();
     f.controller.beginEdit();
@@ -237,24 +249,24 @@ for (const code of ["conflict", "uncertain"] as const)
       f.view.init();
       await flush();
       f.button("编辑").click();
+      f.id("name").value = "改动";
       f.form().emit("submit");
-      f.button("保存到本机中台").click();
       f.answer(desktopRulesCasPutFailure(code, code === "conflict" ? "rejected" : "uncertain"));
       await flush();
       assert.ok(f.text().includes(DESKTOP_RULES_CAS_MESSAGES[code]));
       f.version(22);
-      f.button("刷新数据").click();
+      f.clickRefresh();
       await flush();
-      assert.ok(f.text().includes("服务器规则版本 R22"));
-      assert.ok(f.text().includes("草稿基线 R10"));
       assert.ok(f.text().includes(DESKTOP_RULES_CAS_MESSAGES[code]));
+      // The failed save keeps its draft as the review barrier; the save button stays disabled.
+      assert.ok(f.controller.getState().draft);
       assert.equal(f.button("保存到本机中台").disabled, true);
       f.button("编辑").click();
       f.id("name").value = "仍需核对";
       f.form().emit("submit");
-      f.button("保存到本机中台").emit("click");
       assert.equal(f.inputs.length, 1);
-      f.button("丢弃草稿并重新读取").click();
+      // The review barrier routes the same discard button to discard-and-reload.
+      f.button("放弃本地修改").click();
       await flush();
       assert.equal(f.controller.getState().draft, null);
       f.button("编辑").click();
@@ -291,13 +303,18 @@ test("legal multiline fields round trip without text-input newline loss", () =>
     ])
       assert.equal(f.id(field).value, value);
     f.form().emit("submit");
-    assert.deepEqual(f.controller.getState().draft?.entries[0], multiline);
+    // The pre-seeded edit differs from the baseline, so this confirm saves right away.
+    assert.deepEqual(f.inputs[0], { entries: [multiline], rulesSeq: 10 });
+    // The hub answers with the saved value, so the next dialog reads the multiline entry back.
+    f.answer(ready(19, [multiline]));
+    await flush();
+    assert.equal(f.controller.getState().draft, null);
     f.button("编辑").click();
     f.id("types").value = "task.one\ntask.two";
     f.id("emits-types").value = "done.one\ndone.two";
+    // One confirm sends the PUT directly.
     f.form().emit("submit");
-    f.button("保存到本机中台").click();
-    assert.deepEqual(f.inputs[0], {
+    assert.deepEqual(f.inputs[1], {
       entries: [
         {
           ...multiline,
@@ -305,7 +322,7 @@ test("legal multiline fields round trip without text-input newline loss", () =>
           emits: { ...multiline.emits, types: ["done.one", "done.two"] },
         },
       ],
-      rulesSeq: 10,
+      rulesSeq: 19,
     });
   }));
 
@@ -352,7 +369,9 @@ for (const change of ["none", "other", "restore", "edit"] as const)
       f.form().emit("submit");
       assert.equal(f.dialog().open, false);
       assert.deepEqual(f.controller.getState().draft?.entries[0], expected);
-      f.button("保存到本机中台").click();
+      // The confirm saves whatever the draft holds against the read baseline: the seeded
+      // carriageEntry is already a change, so none/restore send it too; edit sends its own.
+      assert.equal(f.inputs.length, 1);
       assert.deepEqual(f.inputs[0], { entries: [expected], rulesSeq: 10 });
     }));
 
@@ -367,7 +386,7 @@ test("CR baseline retains optional absence, explicit group and independent emits
     f.id("emits-types").value = "done.new,done.last";
     for (const field of ["prompt", "skill", "parallel", "tell"]) f.id(field).value = "";
     f.form().emit("submit");
-    const expected = {
+    const expected: DesktopRuleEntry = {
       name: carriageEntry.name,
       types: ["task.one", "task.two"],
       to: carriageEntry.to,
@@ -376,9 +395,13 @@ test("CR baseline retains optional absence, explicit group and independent emits
       emits: { source: carriageEntry.emits.source, types: ["done.new", "done.last"] },
     };
     assert.deepEqual(f.controller.getState().draft?.entries[0], expected);
-    f.button("编辑").click();
-    f.form().emit("submit");
-    assert.deepEqual(f.controller.getState().draft?.entries[0], expected);
+    // The changed confirm sent its PUT; re-confirming the same values sends nothing new.
+    assert.equal(f.inputs.length, 1);
+    assert.deepEqual(f.inputs[0], { entries: [expected], rulesSeq: 10 });
+    f.answer(ready(19, [expected]));
+    await flush();
+    assert.equal(f.controller.getState().draft, null);
+    // A contract-invalid confirm is caught inside the dialog: the form stays open with the error.
     f.button("编辑").click();
     f.id("emits-source").value = "";
     const before = f.controller.getState().draft;
@@ -388,7 +411,7 @@ test("CR baseline retains optional absence, explicit group and independent emits
     f.id("emits-types").value = "";
     f.id("group").value = "";
     f.form().emit("submit");
-    const { group: _group, emits: _emits, ...cleared } = expected;
+    const { group: _group, emits: _emits, ...cleared } = expected as typeof original;
     assert.deepEqual(f.controller.getState().draft?.entries[0], cleared);
   }));
 
@@ -400,19 +423,27 @@ test("CR baseline is isolated across cancelled, expired, reopened and add dialog
     f.controller.updateEntry(0, carriageEntry);
     f.button("编辑").click();
     f.id("prompt").value = "未提交";
+    // Cancel owns nothing: the whole draft goes, the page stays as it was read.
     f.dialog().emit("cancel");
-    assert.deepEqual(f.controller.getState().draft?.entries[0], carriageEntry);
+    assert.equal(f.controller.getState().draft, null);
     f.button("编辑").click();
     f.controller.cancelEdit();
     f.controller.beginEdit();
+    f.button("编辑").click();
     f.form().emit("submit");
-    assert.deepEqual(f.controller.getState().draft?.entries[0], original);
+    // An unchanged confirm leaves the page as read: no PUT, no draft.
+    assert.equal(f.controller.getState().draft, null);
+    assert.equal(f.inputs.length, 0);
     const next = { ...carriageEntry, name: "另\r入口", prompt: "不同\r\n提示", group: "不同\r组" };
+    f.controller.beginEdit();
     f.controller.updateEntry(0, next);
     f.button("编辑").click();
     f.form().emit("submit");
     assert.deepEqual(f.controller.getState().draft?.entries[0], next);
-    f.button("添加入口").click();
+    // The confirmed change is a save in flight; the add dialog waits for it to settle.
+    f.answer(ready(11, [next]));
+    await flush();
+    f.button("＋ 添加入口").click();
     for (const [field, value] of [
       ["name", "新增"],
       ["types", "task.new"],
@@ -429,24 +460,30 @@ test("CR baseline is isolated across cancelled, expired, reopened and add dialog
     });
   }));
 
-test("save click contains validation failure and shows fixed text without sending", () =>
+test("a confirm that fails validation never sends and keeps the draft in the dialog", () =>
   dom(async (f) => {
     f.view.init();
     await flush();
     f.button("编辑").click();
-    f.form().emit("submit");
+    f.id("name").value = "改动";
     const encode = TextEncoder.prototype.encode;
     try {
       TextEncoder.prototype.encode = function () {
         throw new Error("private");
       };
-      assert.doesNotThrow(() => f.button("保存到本机中台").click());
+      // The confirm parses the entry itself: a failure there never opens a PUT flight,
+      // and the dialog stays open with the draft for the operator to fix or cancel.
+      assert.doesNotThrow(() => f.form().emit("submit"));
     } finally {
       TextEncoder.prototype.encode = encode;
     }
     assert.equal(f.inputs.length, 0);
-    assert.ok(f.text().includes(DESKTOP_RULES_CAS_MESSAGES.invalid));
+    assert.equal(f.dialog().open, true);
     assert.ok(f.controller.getState().draft);
+    // The dialog names the failure instead of silently swallowing it.
+    const formError = f.find((node) => node.className === "setup-error");
+    assert.equal(formError.hidden, false);
+    assert.ok(formError.textContent.length > 0);
   }));
 
 test("obsolete uncertain PUT disables a new draft save without labelling its outcome", () =>
@@ -454,8 +491,8 @@ test("obsolete uncertain PUT disables a new draft save without labelling its out
     f.view.init();
     await flush();
     f.button("编辑").click();
+    f.id("name").value = "改动";
     f.form().emit("submit");
-    f.button("保存到本机中台").click();
     f.controller.cancelEdit();
     f.controller.beginEdit();
     f.answer(desktopRulesCasPutFailure("uncertain", "uncertain"));
@@ -463,7 +500,7 @@ test("obsolete uncertain PUT disables a new draft save without labelling its out
     assert.equal(f.controller.getState().save.kind, "idle");
     assert.equal(f.button("保存到本机中台").disabled, true);
     assert.ok(f.text().includes(DESKTOP_RULES_CAS_MESSAGES.uncertain));
-    f.button("丢弃草稿并重新读取").click();
+    f.button("放弃本地修改").click();
     await flush();
     assert.equal(f.controller.getState().needsReview, false);
   }));
@@ -472,7 +509,7 @@ test("form validation, add/remove and explicit clearing use the existing full co
   dom(async (f) => {
     f.view.init();
     await flush();
-    f.button("添加入口").click();
+    f.button("＋ 添加入口").click();
     f.form().emit("submit");
     assert.equal(f.dialog().open, true);
     for (const [name, value] of [
@@ -482,16 +519,22 @@ test("form validation, add/remove and explicit clearing use the existing full co
       ["cwd", "~/x"],
     ])
       f.id(name).value = value;
+    // A confirmed add is a save in flight: the draft holds both entries until the PUT settles.
     f.form().emit("submit");
+    assert.equal(f.inputs.length, 1);
     assert.equal(f.controller.getState().draft?.entries.length, 2);
-    f.button("移除").click();
-    assert.equal(f.controller.getState().draft?.entries.length, 1);
-    f.controller.cancelEdit();
+    f.answer(ready(19));
+    await flush();
+    assert.equal(f.controller.getState().draft, null);
     f.button("编辑").click();
     for (const name of ["prompt", "skill", "parallel", "group", "tell", "emits-source", "emits-types"])
       f.id(name).value = "";
     f.form().emit("submit");
-    assert.deepEqual(f.controller.getState().draft?.entries[0], {
+    const { group: _g, emits: _e, prompt: _p, skill: _s, tell: _t, ...clearedEntry } = original;
+    const landed: DesktopRuleEntry = { ...clearedEntry, parallel: undefined };
+    f.answer(ready(20, [landed]));
+    await flush();
+    assert.deepEqual(f.controller.getState().snapshot?.entries[0], {
       name: original.name,
       types: original.types,
       to: original.to,
@@ -499,17 +542,12 @@ test("form validation, add/remove and explicit clearing use the existing full co
     });
   }));
 
-const COUNTED = "仅描述将提交的本机入口；不代表中台已接受，也不代表路由结果；非 local 规则不会被改动。";
-const second = { ...original, name: "第二个", types: ["task.other"], to: "a", cwd: "~/y" };
-
 test("the page names what it does not own before any edit starts", () =>
   dom(async (f) => {
     f.view.init();
     await flush();
     // The boundary is visible without opening a draft: this list is the local slots only.
-    assert.ok(f.text().includes("这里只编辑本机入口；其他来源的规则与定时任务请在中台网页控制台修改"));
-    // And it is not a claim about the save; the preview's own line stays the only save statement.
-    assert.equal(f.text().includes(COUNTED), false);
+    assert.ok(f.text().includes("只编辑本机入口；其他规则在中台网页控制台修改"));
   }));
 
 test("the preview states only what the save hands over for the local slots", () =>
@@ -517,24 +555,15 @@ test("the preview states only what the save hands over for the local slots", () 
     f.view.init();
     await flush();
     const preview = f.find((node) => /\brules-preview\b/.test(node.className));
+    // No draft without a dialog: the preview only appears while a confirmed change is unsaved.
     assert.equal(preview.hidden, true);
     f.button("编辑").click();
-    assert.equal(preview.hidden, false);
-    assert.equal(preview.textContent, `本次保存将提交的本机入口与当前一致（共 1 条）。 ${COUNTED}`);
-    // A new entry is appended after the last local slot by the hub's own merge; the count says so.
-    f.controller.addEntry(second);
-    assert.equal(preview.textContent, `本次保存将提交 2 条本机入口：新增 1 条。 ${COUNTED}`);
-    // Changing any displayed field counts as a modification of that slot.
-    f.controller.updateEntry(0, { ...original, prompt: "改了" });
-    assert.equal(preview.textContent, `本次保存将提交 2 条本机入口：新增 1 条、修改 1 条。 ${COUNTED}`);
-    f.controller.removeEntry(1);
-    assert.equal(preview.textContent, `本次保存将提交 1 条本机入口：修改 1 条。 ${COUNTED}`);
-    // Removing every entry is the door's "clear all local entries" case, stated plainly.
-    f.controller.removeEntry(0);
-    assert.equal(preview.textContent, `本次保存将提交 0 条本机入口：删除全部 1 条。 ${COUNTED}`);
-    // Discarding the draft hides it; the preview never outlives the draft it describes.
-    f.button("放弃本地修改").click();
     assert.equal(preview.hidden, true);
+    f.id("name").value = "改动";
+    f.form().emit("submit");
+    // The confirm sent the PUT; until it settles the preview says what is being handed over.
+    assert.equal(preview.hidden, false);
+    assert.equal(preview.textContent, `本次保存将提交 1 条本机入口：修改 1 条。`);
   }));
 
 test("the preview compares every entry field, so an unchanged draft reports no change", () =>
@@ -542,21 +571,13 @@ test("the preview compares every entry field, so an unchanged draft reports no c
     f.view.init();
     await flush();
     const preview = f.find((node) => /\brules-preview\b/.test(node.className));
-    f.controller.beginEdit();
-    for (const field of ["name", "to", "cwd", "prompt", "skill", "group", "tell", "parallel"] as const)
-      f.controller.updateEntry(0, { ...original, [field]: original[field] });
-    f.controller.updateEntry(0, { ...original, types: [...original.types] });
-    f.controller.updateEntry(0, { ...original, emits: { ...original.emits, types: [...original.emits.types] } });
-    assert.equal(preview.textContent, `本次保存将提交的本机入口与当前一致（共 1 条）。 ${COUNTED}`);
-    for (const changed of [
-      { types: ["task.new"] },
-      { emits: { source: "app", types: ["done.other"] } },
-      { parallel: 3 },
-      { tell: "always" as const },
-      { group: "另一组" },
-    ])
-      f.controller.updateEntry(0, { ...original, ...changed });
-    assert.equal(preview.textContent, `本次保存将提交 1 条本机入口：修改 1 条。 ${COUNTED}`);
-    f.controller.updateEntry(0, original);
-    assert.equal(preview.textContent, `本次保存将提交的本机入口与当前一致（共 1 条）。 ${COUNTED}`);
+    // A confirmed change is a save in flight: the preview names exactly what the PUT hands over.
+    f.button("编辑").click();
+    f.id("name").value = "改动";
+    f.form().emit("submit");
+    assert.equal(preview.hidden, false);
+    assert.equal(preview.textContent, `本次保存将提交 1 条本机入口：修改 1 条。`);
+    f.answer(ready(19, [{ ...original, name: "改动" }]));
+    await flush();
+    assert.equal(preview.hidden, true);
   }));

@@ -1,7 +1,11 @@
 import { DESKTOP_RULES_MESSAGES, type DesktopRuleEntry } from "../../../host/desktop-rules-contract.ts";
 import type { createRendererRulesCas } from "./rules-cas-controller.ts";
 
-/** The editor already validated every entry, so two entries can be compared as plain data. */
+/**
+ * The editor already validated every entry, so two entries can be compared as plain data.
+ * Same comparison as the save preview: a draft entry that differs from its baseline slot is
+ * "changed", a missing baseline slot is "removed", a draft slot without a baseline is "added".
+ */
 function sameEntry(left: DesktopRuleEntry, right: DesktopRuleEntry): boolean {
   if (
     left.name !== right.name ||
@@ -25,22 +29,37 @@ function sameEntry(left: DesktopRuleEntry, right: DesktopRuleEntry): boolean {
   );
 }
 
+/** How a draft row differs from the baseline: the badge and the row actions both follow this. */
+type RowKind = "added" | "changed" | "removed" | "same";
+
 /**
- * The save replaces the local slots of rules.json position by position, keeping every non-local
- * rule where it is. This is that same comparison, never a routing prediction: the hub decides
- * whether the merged file is valid and which rules actually fire.
+ * Aligns draft entries against the baseline by position, the same order the save hands over.
+ * Removals stay in place as tombstones so the list keeps one row per slot while editing.
  */
-function previewOf(baseline: readonly DesktopRuleEntry[], draft: readonly DesktopRuleEntry[]) {
+function alignRows(baseline: readonly DesktopRuleEntry[], draft: readonly DesktopRuleEntry[]): RowKind[] {
+  const rows: RowKind[] = [];
   const shared = Math.min(baseline.length, draft.length);
-  let changed = 0;
-  for (let index = 0; index < shared; index++) if (!sameEntry(baseline[index], draft[index])) changed++;
-  return {
-    added: Math.max(0, draft.length - baseline.length),
-    changed,
-    removed: Math.max(0, baseline.length - draft.length),
-  };
+  for (let index = 0; index < shared; index++) rows.push(sameEntry(baseline[index], draft[index]) ? "same" : "changed");
+  for (let index = shared; index < draft.length; index++) rows.push("added");
+  for (let index = shared; index < baseline.length; index++) rows.push("removed");
+  return rows;
 }
-function previewText({ added, changed, removed }: ReturnType<typeof previewOf>, total: number): string {
+
+/** A confirm with no actual change saves nothing: the page must stay exactly as it was read. */
+function draftEqualsBaseline(baseline: readonly DesktopRuleEntry[], draft: readonly DesktopRuleEntry[]): boolean {
+  return baseline.length === draft.length && alignRows(baseline, draft).every((kind) => kind === "same");
+}
+
+function previewText(rows: readonly RowKind[]): string {
+  let added = 0;
+  let changed = 0;
+  let removed = 0;
+  for (const row of rows) {
+    if (row === "added") added++;
+    else if (row === "changed") changed++;
+    else if (row === "removed") removed++;
+  }
+  const total = rows.length - removed;
   const parts: string[] = [];
   if (added) parts.push(`新增 ${added} 条`);
   if (changed) parts.push(`修改 ${changed} 条`);
@@ -56,46 +75,49 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
   update(): void;
 } {
   const root = document.createElement("section");
-  root.className = "panel rules-panel";
-  const head = document.createElement("div");
-  head.className = "rules-head";
-  const title = document.createElement("h2");
-  title.textContent = "任务入口";
+  root.className = "rules-panel";
   const intro = document.createElement("p");
   intro.className = "muted rules-intro";
-  intro.textContent =
-    "修改基于开始编辑时的规则版本；规则变化时，请核对服务器数据与保留的草稿。这里只编辑本机入口；其他来源的规则与定时任务请在中台网页控制台修改。";
-  head.append(title, intro);
+  intro.textContent = "只编辑本机入口；其他规则在中台网页控制台修改。";
+  root.append(intro);
   const status = document.createElement("p");
   status.className = "rules-status";
+  // The refresh button exists but stays hidden in the calm state: conflict and failed reads are
+  // the cases where a re-read is the recovery, and the controller queues it behind physical flights.
+  const refreshButton = document.createElement("button");
+  refreshButton.type = "button";
+  refreshButton.className = "rules-refresh";
+  refreshButton.textContent = "刷新";
+  refreshButton.hidden = true;
+  refreshButton.addEventListener("click", () => controller.refresh());
   const error = document.createElement("p");
   error.className = "setup-error rules-error";
-  const actions = document.createElement("div");
-  actions.className = "rules-actions";
-  function button(text: string, primary = false) {
-    const node = document.createElement("button");
-    node.type = "button";
-    node.textContent = text;
-    if (primary) node.className = "setup-primary";
-    return node;
-  }
-  const refreshButton = button("刷新数据");
-  const addButton = button("添加入口", true);
-  const saveButton = button("保存到本机中台", true);
-  const cancelButton = button("放弃本地修改");
-  const discardButton = button("丢弃草稿并重新读取");
   const warning = document.createElement("p");
-  warning.className = "muted rules-intro";
-  warning.textContent = "放弃本地修改不会撤回已发出的请求";
+  warning.className = "muted rules-warning";
+  const draftBar = document.createElement("div");
+  draftBar.className = "draft-bar";
   const preview = document.createElement("p");
   preview.className = "muted rules-preview";
   preview.setAttribute("role", "status");
   preview.setAttribute("aria-live", "polite");
-  preview.hidden = true;
-  actions.append(refreshButton, addButton, saveButton, cancelButton, discardButton);
+  const discardButton = document.createElement("button");
+  discardButton.type = "button";
+  const saveButton = document.createElement("button");
+  saveButton.type = "button";
+  saveButton.className = "rules-save";
+  saveButton.textContent = "保存到本机中台";
+  draftBar.append(preview, discardButton, saveButton);
   const list = document.createElement("ul");
   list.className = "entry-list";
-  root.append(head, status, error, actions, warning, preview, list);
+  const addRow = document.createElement("li");
+  addRow.className = "entry-add";
+  const addButton = document.createElement("button");
+  addButton.type = "button";
+  addButton.className = "rules-add";
+  addButton.textContent = "＋ 添加入口";
+  addButton.addEventListener("click", () => openForm(null));
+  addRow.append(addButton);
+  root.append(refreshButton, status, error, warning, draftBar, list, addRow);
 
   const dialog = document.createElement("dialog");
   dialog.className = "task-dialog rules-dialog";
@@ -170,9 +192,12 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
   formError.hidden = true;
   const formActions = document.createElement("div");
   formActions.className = "setup-actions";
-  const formCancel = button("取消");
-  const formSubmit = button("确定", true);
+  const formCancel = document.createElement("button");
+  formCancel.type = "button";
+  formCancel.textContent = "取消";
+  const formSubmit = document.createElement("button");
   formSubmit.type = "submit";
+  formSubmit.textContent = "确定";
   formActions.append(formCancel, formSubmit);
   form.append(formError, formActions);
   dialog.append(form);
@@ -183,6 +208,7 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
     revision: number;
     read(): Record<string, unknown>;
   } | null = null;
+  let submitting = false;
 
   function bindValue<T>(
     input: (typeof fields)[number],
@@ -266,36 +292,56 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
     formError.hidden = true;
     dialog.showModal();
   }
-  refreshButton.addEventListener("click", () => controller.refresh());
-  addButton.addEventListener("click", () => openForm(null));
   saveButton.addEventListener("click", () => {
     if (!controller.getState().saving && !controller.getState().needsReview) controller.save();
   });
-  cancelButton.addEventListener("click", () => controller.cancelEdit());
-  discardButton.addEventListener("click", () => controller.discardAndReload());
+  // An ordinary discard is a cancelEdit; after a conflict or an uncertain save the same button is
+  // the recovery door: only discardAndReload clears the review barrier with a fresh read.
+  discardButton.addEventListener("click", () => {
+    if (controller.getState().needsReview) controller.discardAndReload();
+    else controller.cancelEdit();
+  });
   formCancel.addEventListener("click", () => dialog.close());
+  // A dialog dismissed without a confirmed change owns nothing: dropping the draft here is what
+  // makes "cancel" leave the page exactly as it was read. The submit path closes only after the
+  // save (or the no-change cancel), so this dismissal never drops a live flight's draft.
   dialog.addEventListener("cancel", () => {
     editing = null;
+    const state = controller.getState();
+    if (state.draft && !state.saving && !state.needsReview) controller.cancelEdit();
   });
   dialog.addEventListener("close", () => {
     editing = null;
+    const state = controller.getState();
+    if (state.draft && !state.saving && !state.needsReview) controller.cancelEdit();
   });
   form.addEventListener("submit", (event) => {
     event.preventDefault();
-    if (!validForm()) return;
+    if (!validForm() || submitting) return;
     const target = editing!;
+    submitting = true;
     try {
       const raw = target.read();
       if (target.index === null) controller.addEntry(raw);
       else controller.updateEntry(target.index, raw);
+      // One confirm is one save, settled before the dialog closes so the dismiss handler
+      // cannot drop the flight's draft. A confirm with no actual change saves nothing.
+      const state = controller.getState();
+      const draft = state.draft;
+      if (draft && !state.saving && !state.needsReview) {
+        if (draftEqualsBaseline(state.snapshot?.entries ?? [], draft.entries)) controller.cancelEdit();
+        else controller.save();
+      }
       dialog.close();
     } catch (failure) {
       formError.textContent = failure instanceof Error ? failure.message : "入口不合规";
       formError.hidden = false;
+    } finally {
+      submitting = false;
     }
   });
 
-  function entryNode(entry: DesktopRuleEntry, index: number) {
+  function entryNode(entry: DesktopRuleEntry, index: number, kind: RowKind, baseline: DesktopRuleEntry | undefined) {
     const state = controller.getState();
     const identity = state.draft ? { generation: state.draft.generation, revision: state.draft.revision } : null;
     function currentRow() {
@@ -305,9 +351,17 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
       return now.draft === null && now.snapshot === state.snapshot;
     }
     const item = document.createElement("li");
-    item.className = "entry-item";
+    item.className = kind === "same" ? "entry-item" : `entry-item ${kind}`;
+    const copy = document.createElement("div");
+    copy.className = "entry-copy";
     const head = document.createElement("div");
     head.className = "entry-head";
+    if (kind !== "same") {
+      const badge = document.createElement("span");
+      badge.className = `entry-badge ${kind}`;
+      badge.textContent = kind === "added" ? "新增" : kind === "changed" ? "修改" : "删除";
+      head.append(badge);
+    }
     const name = document.createElement("strong");
     name.textContent = entry.name;
     const to = document.createElement("span");
@@ -322,7 +376,7 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
       types.append(chip);
     }
     const meta = document.createElement("div");
-    meta.className = "entry-meta muted";
+    meta.className = "entry-meta";
     const parts = [entry.cwd];
     if (entry.prompt) parts.push(`提示词 ${[...entry.prompt].length} 字`);
     if (entry.skill) parts.push(`技能 ${entry.skill}`);
@@ -331,38 +385,74 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
     if (entry.tell !== undefined) parts.push(`通知 ${entry.tell}`);
     if (entry.emits) parts.push(`输出 ${entry.emits.source}: ${entry.emits.types.join("、")}`);
     meta.textContent = parts.join(" · ");
+    copy.append(head, types, meta);
     const row = document.createElement("div");
     row.className = "entry-actions";
-    const edit = button("编辑");
-    edit.disabled = state.saving || state.reloading;
-    edit.addEventListener("click", () => {
-      if (currentRow()) openForm(index);
-    });
-    row.append(edit);
-    if (state.draft) {
-      const remove = button("移除");
-      remove.disabled = state.saving;
-      remove.addEventListener("click", () => {
-        if (currentRow()) controller.removeEntry(index);
+    if (kind === "removed") {
+      const restore = document.createElement("button");
+      restore.type = "button";
+      restore.textContent = "撤销删除";
+      restore.disabled = state.saving;
+      restore.addEventListener("click", () => {
+        if (currentRow() && baseline) controller.restoreEntry(index, baseline);
       });
-      row.append(remove);
+      row.append(restore);
+    } else {
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.textContent = "编辑";
+      edit.disabled = state.saving || state.reloading;
+      edit.addEventListener("click", () => {
+        if (currentRow()) openForm(index);
+      });
+      row.append(edit);
+      if (state.draft) {
+        if (kind === "changed") {
+          const revert = document.createElement("button");
+          revert.type = "button";
+          revert.textContent = "还原";
+          revert.disabled = state.saving;
+          revert.addEventListener("click", () => {
+            if (currentRow() && baseline) controller.updateEntry(index, baseline);
+          });
+          row.append(revert);
+        } else {
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.textContent = "移除";
+          remove.disabled = state.saving;
+          remove.addEventListener("click", () => {
+            if (currentRow()) controller.removeEntry(index);
+          });
+          row.append(remove);
+        }
+      }
     }
-    item.append(head, types, meta, row);
+    item.append(copy, row);
     return item;
   }
   function update() {
     const state = controller.getState();
-    const entries = state.draft?.entries ?? state.snapshot?.entries ?? [];
-    const versions = state.snapshot ? `服务器规则版本 R${state.snapshot.rulesSeq}` : "尚未读取服务器规则";
-    status.textContent = `${versions}${state.draft ? ` · 草稿基线 R${state.draft.rulesSeq}` : ""}${state.loading ? " · 正在读取任务入口。" : ""}${state.saving ? " · 正在保存……" : ""}${state.save.kind === "confirmed" ? " · 已确认保存到本机中台。" : ""}${!entries.length ? ` · ${DESKTOP_RULES_MESSAGES.noEntry}` : ""}`;
+    const draft = state.draft;
+    const baseline = state.snapshot?.entries ?? [];
+    const entries = draft?.entries ?? baseline;
+    const rows = draft ? alignRows(baseline, entries) : entries.map(() => "same" as const);
+    status.textContent = state.loading
+      ? "正在读取任务入口。"
+      : state.saving
+        ? "正在保存……"
+        : state.save.kind === "confirmed"
+          ? "已确认保存到本机中台。"
+          : !entries.length
+            ? DESKTOP_RULES_MESSAGES.noEntry
+            : "";
     const messages: string[] = [];
     if (state.loadError) messages.push(state.loadError.message);
     if (state.save.kind === "failed") messages.push(state.save.message);
     if (state.reviewMessage && !messages.includes(state.reviewMessage)) messages.push(state.reviewMessage);
     error.textContent = messages.join("\n");
     error.hidden = messages.length === 0;
-    list.replaceChildren(...entries.map(entryNode));
-    list.classList.toggle("editing", state.draft !== null);
+    list.replaceChildren(...entries.map((entry, index) => entryNode(entry, index, rows[index], baseline[index])));
     agents.replaceChildren(
       ...(state.snapshot?.agents ?? []).map((agent) => {
         const option = document.createElement("option");
@@ -371,23 +461,24 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
         return option;
       }),
     );
-    addButton.hidden = !state.snapshot;
     addButton.disabled = state.saving || state.reloading;
-    saveButton.hidden = !state.draft;
     saveButton.disabled = state.saving || state.needsReview;
-    cancelButton.hidden = !state.draft;
-    discardButton.hidden = !state.draft && !state.needsReview;
-    warning.hidden = !state.draft && !state.saving;
-    // A local diff of the draft against the read baseline. It describes only what will be handed
-    // over for the local slots; it cannot know whether the hub accepts it or which rules fire.
-    preview.hidden = !state.draft || !state.snapshot;
-    if (!preview.hidden)
-      preview.textContent = `${previewText(previewOf(state.snapshot!.entries, state.draft!.entries), state.draft!.entries.length)} 仅描述将提交的本机入口；不代表中台已接受，也不代表路由结果；非 local 规则不会被改动。`;
-    // Refresh is always available: the controller queues it safely behind physical flights.
-    refreshButton.disabled = false;
-    for (const input of fields) input.disabled = state.saving;
-    formSubmit.disabled = state.saving;
-    if (editing && !validForm() && !state.saving) dialog.close();
+    // The draft bar is the failure path only: a save in flight or a save that needs review.
+    // A calm page shows no bar, no warning, no preview — the confirm already did everything.
+    const draftVisible = Boolean(draft) && (state.saving || state.needsReview || state.save.kind === "failed");
+    warning.hidden = !draftVisible;
+    if (!draftVisible) warning.textContent = "";
+    else warning.textContent = "放弃本地修改不会撤回已发出的请求。";
+    draftBar.hidden = !draftVisible;
+    discardButton.textContent = draftVisible ? "放弃本地修改" : "";
+    preview.hidden = !draftVisible;
+    preview.textContent = draftVisible && draft ? previewText(alignRows(baseline, draft.entries)) : "";
+    // Refresh is visible only when the error path offers a re-read as the recovery.
+    const needsRefresh = Boolean(state.loadError) || state.needsReview || state.save.kind === "failed";
+    refreshButton.hidden = !needsRefresh;
+    // The submit handler owns the dialog while it saves: the revision bump from updateEntry must
+    // not close the dialog out from under the confirm that is still running.
+    if (editing && !validForm() && !state.saving && !submitting) dialog.close();
   }
   controller.subscribe(update);
   return {

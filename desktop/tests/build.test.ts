@@ -386,15 +386,16 @@ test("the automation page edits the hub's own entries through the versioned rule
   assert.doesNotMatch(controller, /node:|from ["'].*host\/(?:config|runtime|setup)\.ts/);
   assert.match(controller, /from ["'].*host\/desktop-rules-cas-contract\.ts/);
   assert.match(view, /showModal\(\)/);
-  // The preview is a local diff of the draft, and it says so: it never claims the hub accepted a
-  // save or that a rule will route, because the hub alone decides both.
-  assert.match(view, /不代表中台已接受，也不代表路由结果；非 local 规则不会被改动/);
-  // The page states its own ownership: other sources' rules and scheduled tasks are not editable here.
-  assert.match(view, /这里只编辑本机入口；其他来源的规则与定时任务请在中台网页控制台修改/);
+  // The preview is a local diff of the draft against the read baseline: it states only the counts
+  // the save hands over, never that the hub accepted a save or that a rule will route.
+  assert.match(view, /本次保存将提交/);
+  assert.doesNotMatch(view, /已接受|路由结果/);
+  // The page states its own ownership: other sources' rules are not editable here.
+  assert.match(view, /只编辑本机入口；其他规则在中台网页控制台修改/);
   assert.doesNotMatch(view, /\bfetch\(|WebSocket|ipcRenderer/);
-  // The save carries the version it started from; the hub refuses a stale one, and main hands the
-  // parsed input to the same single-flight unit the page talks to.
-  assert.match(view, /needsReview|丢弃草稿并重新读取/);
+  // The save carries the version it started from; the hub refuses a stale one, and the review
+  // barrier routes the discard button through discardAndReload.
+  assert.match(view, /needsReview/);
   assert.match(
     main,
     /createRulesCasSource\(\{\s*home: runtimeHome,\s*getState: \(\) => presentation\.snapshot\(\),\s*readConfig,?\s*\}\)/,

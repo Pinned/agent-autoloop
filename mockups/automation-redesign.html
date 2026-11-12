@@ -1,0 +1,332 @@
+<!doctype html>
+<!-- 自动化页改版原型 v2：去掉标题行与常态刷新，草稿条目混排进同一列表，仅用于确认设计。 -->
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>自动化 · 改版原型 v2</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4f6fa;
+        --panel: #fff;
+        --panel2: #eef2f8;
+        --border: #cad3e2;
+        --soft: #dfe5ef;
+        --text: #1b2639;
+        --muted: #526079;
+        --faint: #596780;
+        --blue: #255bb7;
+        --accent: #2869d7;
+        --accent-bg: #e2ecff;
+        --amber: #865309;
+        --green: #197543;
+        --red: #b3342c;
+        --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --bg: #0b0e14;
+        --panel: #11151d;
+        --panel2: #151a24;
+        --border: #283143;
+        --soft: #1c2432;
+        --text: #e7eaf2;
+        --muted: #a0a9bc;
+        --faint: #8994aa;
+        --blue: #78a7ff;
+        --accent: #4c8dff;
+        --accent-bg: #18263e;
+        --amber: #f5be6c;
+        --green: #6cdaa0;
+        --red: #ff8b84;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        background: var(--bg);
+        color: var(--text);
+        font-size: 13px;
+        line-height: 1.6;
+        padding: 26px 30px;
+        transition: background 0.15s, color 0.15s;
+      }
+      button {
+        font: inherit;
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 7px 12px;
+        background: var(--panel2);
+        cursor: pointer;
+      }
+      button:hover { background: var(--accent-bg); }
+      button.primary { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+      button.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+      button.ghost:hover { border-color: var(--blue); color: var(--text); }
+      .theme-toggle {
+        position: fixed;
+        top: 14px;
+        right: 16px;
+        font-size: 12px;
+        padding: 4px 10px;
+        z-index: 10;
+      }
+      .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+      .page-head h1 { margin: 0; font-size: 20px; }
+      .page-head p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+      .page-head-actions { display: flex; gap: 8px; flex-shrink: 0; padding-top: 4px; }
+
+      /* 卡片列表：与今天页 run 行一致的分体式圆角 */
+      .entry-list { list-style: none; margin: 20px 0 0; padding: 0; }
+      .entry-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 12px;
+        padding: 13px 15px;
+        border: 1px solid var(--border);
+        border-bottom: 0;
+        background: var(--panel);
+      }
+      .entry-row:first-child { border-radius: 8px 8px 0 0; }
+      .entry-row:last-child { border-bottom: 1px solid var(--border); border-radius: 0 0 8px 8px; }
+      .entry-row:only-child { border-radius: 8px; }
+      .entry-row.draft { border-style: dashed; }
+      .entry-copy { min-width: 0; overflow-wrap: anywhere; }
+      .entry-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 7px; font-size: 13px; }
+      .entry-title strong { font-weight: 550; }
+      .entry-to { color: var(--faint); font-size: 12px; }
+      .badge {
+        flex-shrink: 0;
+        padding: 1px 7px;
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: 600;
+        border: 1px solid var(--border);
+        color: var(--muted);
+      }
+      .badge.added { color: var(--green); border-color: var(--green); background: color-mix(in srgb, var(--green) 8%, transparent); }
+      .badge.changed { color: var(--amber); border-color: var(--amber); background: color-mix(in srgb, var(--amber) 8%, transparent); }
+      .badge.removed { color: var(--red); border-color: var(--red); background: color-mix(in srgb, var(--red) 8%, transparent); }
+      .entry-meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
+      .entry-types { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+      .entry-types code {
+        font-size: 11px;
+        padding: 1px 7px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--panel2);
+      }
+      .entry-actions { display: flex; gap: 8px; }
+      .entry-actions button { font-size: 12px; padding: 4px 9px; }
+
+      /* 列表底部：添加入口 */
+      .entry-add { margin-top: 10px; }
+      .entry-add button { font-size: 12px; padding: 5px 9px; }
+
+      /* 草稿操作条 */
+      .draft-bar {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 14px;
+      }
+      .draft-bar .preview { font-size: 12px; color: var(--muted); margin-right: auto; }
+      .line-warn { font-size: 11px; color: var(--muted); margin: 8px 0 0; }
+      .line-status { font-size: 12px; color: var(--muted); margin: 10px 0 0; }
+      .line-error {
+        padding: 12px;
+        margin: 14px 0 0;
+        border: 1px solid var(--border);
+        border-left: 3px solid var(--red);
+        background: var(--panel);
+        font-size: 12px;
+      }
+
+      .empty {
+        margin-top: 20px;
+        padding: 48px 22px;
+        text-align: center;
+        background: var(--panel);
+        border: 1px dashed var(--border);
+        border-radius: 9px;
+      }
+      .empty h3 { margin: 0; font-size: 13px; }
+      .empty p { margin: 7px 0 0; font-size: 12px; color: var(--muted); }
+      .empty button { margin-top: 12px; }
+
+      .switcher {
+        position: fixed;
+        bottom: 14px;
+        right: 16px;
+        display: flex;
+        gap: 6px;
+        z-index: 10;
+      }
+      .switcher button.active { outline: 2px solid var(--accent); }
+      .note { font-size: 11px; color: var(--faint); margin-top: 30px; }
+      [hidden] { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <button class="theme-toggle" id="theme" type="button">切换深浅色</button>
+
+    <header class="page-head">
+      <div>
+        <h1>自动化</h1>
+        <p>只编辑本机入口；其他规则在中台网页控制台修改。</p>
+      </div>
+      <div class="page-head-actions">
+        <button type="button">＋ 新建任务</button>
+      </div>
+    </header>
+
+    <!-- ===== 状态 1：正常浏览（无草稿） ===== -->
+    <div id="view-idle">
+      <ul class="entry-list">
+        <li class="entry-row">
+          <div class="entry-copy">
+            <div class="entry-title"><strong>每日站会纪要</strong><span class="entry-to">→ codex</span></div>
+            <div class="entry-types"><code>calendar.meeting.*</code><code>task.daily</code></div>
+            <div class="entry-meta">~/work/notes · 提示词 128 字 · 并行 2 · 分组 站会 · 通知 always</div>
+          </div>
+          <div class="entry-actions"><button type="button">编辑</button></div>
+        </li>
+        <li class="entry-row">
+          <div class="entry-copy">
+            <div class="entry-title"><strong>仓库健康巡检</strong><span class="entry-to">→ claude</span></div>
+            <div class="entry-types"><code>github.push.*</code></div>
+            <div class="entry-meta">~/repos/agent-autoloop · 技能 review-forge · 输出 ci: build.done</div>
+          </div>
+          <div class="entry-actions"><button type="button">编辑</button></div>
+        </li>
+        <li class="entry-row">
+          <div class="entry-copy">
+            <div class="entry-title"><strong>周报汇总</strong><span class="entry-to">→ codex</span></div>
+            <div class="entry-types"><code>schedule.friday</code></div>
+            <div class="entry-meta">~/work/reports</div>
+          </div>
+          <div class="entry-actions"><button type="button">编辑</button></div>
+        </li>
+      </ul>
+      <div class="entry-add"><button type="button" class="ghost">＋ 添加入口</button></div>
+    </div>
+
+    <!-- ===== 状态 2：编辑中（草稿混排同一列表，带状态徽章） ===== -->
+    <div id="view-draft" hidden>
+      <ul class="entry-list">
+        <li class="entry-row draft">
+          <div class="entry-copy">
+            <div class="entry-title"><span class="badge changed">修改</span><strong>每日站会纪要</strong><span class="entry-to">→ codex</span></div>
+            <div class="entry-types"><code>calendar.meeting.*</code><code>task.daily</code></div>
+            <div class="entry-meta">~/work/notes · 提示词 130 字 · 并行 2 · 分组 站会 · 通知 always</div>
+          </div>
+          <div class="entry-actions">
+            <button type="button">编辑</button>
+            <button type="button">还原</button>
+          </div>
+        </li>
+        <li class="entry-row draft">
+          <div class="entry-copy">
+            <div class="entry-title"><span class="badge added">新增</span><strong>错误日志汇总</strong><span class="entry-to">→ claude</span></div>
+            <div class="entry-types"><code>app.error.*</code></div>
+            <div class="entry-meta">~/work/logs · 提示词 42 字</div>
+          </div>
+          <div class="entry-actions">
+            <button type="button">编辑</button>
+            <button type="button">移除</button>
+          </div>
+        </li>
+        <li class="entry-row draft">
+          <div class="entry-copy">
+            <div class="entry-title"><span class="badge removed">删除</span><s style="color: var(--muted)"><strong>周报汇总</strong></s><span class="entry-to">→ codex</span></div>
+            <div class="entry-types"><code>schedule.friday</code></div>
+            <div class="entry-meta">~/work/reports</div>
+          </div>
+          <div class="entry-actions">
+            <button type="button">撤销删除</button>
+          </div>
+        </li>
+        <li class="entry-row">
+          <div class="entry-copy">
+            <div class="entry-title"><strong>仓库健康巡检</strong><span class="entry-to">→ claude</span></div>
+            <div class="entry-types"><code>github.push.*</code></div>
+            <div class="entry-meta">~/repos/agent-autoloop · 技能 review-forge · 输出 ci: build.done</div>
+          </div>
+          <div class="entry-actions">
+            <button type="button">编辑</button>
+            <button type="button">移除</button>
+          </div>
+        </li>
+      </ul>
+      <div class="entry-add"><button type="button" class="ghost">＋ 添加入口</button></div>
+
+      <div class="draft-bar">
+        <span class="preview">本次保存将提交 3 条本机入口：新增 1 条、修改 1 条、删除 1 条。</span>
+        <button type="button">放弃本地修改</button>
+        <button type="button" class="primary">保存到本机中台</button>
+      </div>
+      <p class="line-warn">放弃本地修改不会撤回已发出的请求。</p>
+    </div>
+
+    <!-- ===== 状态 3：空列表 ===== -->
+    <div id="view-empty" hidden>
+      <div class="empty">
+        <h3>还没有本机入口</h3>
+        <p>添加入口后，匹配的事件会交给执行体推进。</p>
+        <button type="button" class="primary">＋ 添加入口</button>
+      </div>
+    </div>
+
+    <!-- ===== 状态 4：保存冲突（错误时才出现刷新） ===== -->
+    <div id="view-error" hidden>
+      <div class="line-error">规则已变化，本次保存被拒绝；请保留草稿，重新读取后核对再保存。</div>
+      <div class="draft-bar">
+        <span class="preview" style="margin-right: auto"></span>
+        <button type="button">放弃本地修改</button>
+        <button type="button" class="ghost">刷新（重新读取）</button>
+      </div>
+      <p class="line-warn">放弃本地修改不会撤回已发出的请求。</p>
+      <ul class="entry-list" style="margin-top: 12px">
+        <li class="entry-row draft">
+          <div class="entry-copy">
+            <div class="entry-title"><span class="badge changed">修改</span><strong>每日站会纪要</strong><span class="entry-to">→ codex</span></div>
+            <div class="entry-types"><code>calendar.meeting.*</code></div>
+            <div class="entry-meta">~/work/notes</div>
+          </div>
+          <div class="entry-actions">
+            <button type="button">编辑</button>
+            <button type="button">还原</button>
+          </div>
+        </li>
+      </ul>
+    </div>
+
+    <p class="note">原型 v2 · 假数据 · 右下角切换四个状态，右上角切换深浅色。确认后按此实现。</p>
+
+    <div class="switcher">
+      <button type="button" data-view="view-idle" class="active">正常</button>
+      <button type="button" data-view="view-draft">编辑中</button>
+      <button type="button" data-view="view-empty">空列表</button>
+      <button type="button" data-view="view-error">保存冲突</button>
+    </div>
+
+    <script>
+      for (const b of document.querySelectorAll(".switcher button"))
+        b.addEventListener("click", () => {
+          for (const id of ["view-idle", "view-draft", "view-empty", "view-error"])
+            document.getElementById(id).hidden = b.dataset.view !== id;
+          for (const x of document.querySelectorAll(".switcher button")) x.classList.toggle("active", x === b);
+        });
+      document.getElementById("theme").addEventListener("click", () => {
+        const root = document.documentElement;
+        root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
+      });
+    </script>
+  </body>
+</html>
