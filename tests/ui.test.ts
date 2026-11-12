@@ -61,6 +61,41 @@ test("the rules door shows the local entries, the agents, and where the log is",
   assert.equal(typeof shown.seq, "number");
 });
 
+test("a timed entry saves as a local-marked cron rule and reads back with its cron", async () => {
+  const original = readFileSync(rulesFile, "utf8");
+  try {
+    const saved = await call("/v1/ui/rules", {
+      method: "PUT",
+      body: [
+        { name: "本机报告", types: ["daily.report"], to: "a1", cwd: "~/x", prompt: "写报告。" },
+        { name: "早晚各一次", cron: "0 9,21 * * *", to: "a3", cwd: "~/z", skill: "巡检" },
+      ],
+    });
+    assert.equal(saved.status, 200);
+    assert.deepEqual((await saved.json()).entries[1], {
+      name: "早晚各一次",
+      cron: "0 9,21 * * *",
+      to: "a3",
+      cwd: "~/z",
+      skill: "巡检",
+    });
+    assert.deepEqual(onDisk().rules.find((rule: { name: string }) => rule.name === "早晚各一次").when, {
+      cron: "0 9,21 * * *",
+      local: true,
+    });
+    // Mixing the two triggers is refused before the disk: a rule with both runs by surprise.
+    const mixed = await call("/v1/ui/rules", {
+      method: "PUT",
+      body: [{ name: "双触发", types: ["task.*"], cron: "0 9 * * *", to: "a3", cwd: "~/z" }],
+    });
+    assert.equal(mixed.status, 400);
+    assert.match((await mixed.json()).error, /只能选一个/);
+  } finally {
+    writeFileSync(rulesFile, original);
+    hub.tick();
+  }
+});
+
 test("a save replaces only the local rules and applies them at once", async () => {
   const saved = await call("/v1/ui/rules", {
     method: "PUT",
@@ -307,6 +342,19 @@ test("a rule with a cron is saved as a cron rule, and the reserved source is ref
   assert.equal(saved.status, 200);
   const added = onDisk().rules.find((rule: { name: string }) => rule.name === "每晚清理");
   assert.deepEqual(added.when, { cron: "0 23 * * *" });
+
+  // A local-marked cron rule keeps its mark through a console edit: the section save writes what
+  // the page read, and the page read the mark — losing it would orphan the desktop's timed entry.
+  const withMark = [
+    ...shown.rules.filter((rule: any) => rule.name !== "每晚清理"),
+    { name: "每晚清理", when: { cron: "0 23 * * *", local: true }, to: "a1", cwd: "~/x", prompt: "清理。" },
+  ];
+  const kept = await call("/v1/ui/config/rules", { method: "PUT", body: withMark });
+  assert.equal(kept.status, 200);
+  assert.deepEqual(onDisk().rules.find((rule: { name: string }) => rule.name === "每晚清理").when, {
+    cron: "0 23 * * *",
+    local: true,
+  });
 
   const reserved = await call("/v1/ui/config/rules", {
     method: "PUT",

@@ -16,8 +16,9 @@ function sameEntry(left: DesktopRuleEntry, right: DesktopRuleEntry): boolean {
     left.parallel !== right.parallel ||
     left.group !== right.group ||
     left.tell !== right.tell ||
-    left.types.length !== right.types.length ||
-    left.types.some((type, index) => type !== right.types[index])
+    left.cron !== right.cron ||
+    (left.types?.length ?? 0) !== (right.types?.length ?? 0) ||
+    left.types?.some((type, index) => type !== right.types?.[index])
   )
     return false;
   if (left.emits === undefined || right.emits === undefined)
@@ -147,7 +148,27 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
     return input;
   }
   const nameInput = field("名称", "name");
+  // The trigger kind decides what the form asks for: an event entry lists types, a timed one
+  // names a cron. The two field sets swap by hidden, the same one-root language as the page swap.
+  const triggerField = document.createElement("label");
+  triggerField.className = "setup-field";
+  const triggerLabel = document.createElement("span");
+  triggerLabel.textContent = "触发方式";
+  const triggerInput = document.createElement("select");
+  triggerInput.id = "rules-trigger";
+  for (const [value, text] of [
+    ["event", "事件触发"],
+    ["cron", "定时触发"],
+  ]) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = text;
+    triggerInput.append(option);
+  }
+  triggerField.append(triggerLabel, triggerInput);
+  form.append(triggerField);
   const typesInput = field("事件类型（空格或逗号分隔）", "types");
+  const cronInput = field("时间表（cron，比如 0 9 * * *）", "cron", false);
   const toField = document.createElement("label");
   toField.className = "setup-field";
   const toLabel = document.createElement("span");
@@ -190,6 +211,7 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
   const fields = [
     nameInput,
     typesInput,
+    cronInput,
     toInput,
     cwdInput,
     promptInput,
@@ -200,6 +222,14 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
     emitsSourceInput,
     emitsTypesInput,
   ];
+  // Only the field set the chosen trigger asks for is visible; the other stays mounted (so its
+  // bound value survives a switch back) but asks nothing.
+  const syncTrigger = () => {
+    const timed = triggerInput.value === "cron";
+    typesInput.parentElement!.hidden = timed;
+    cronInput.parentElement!.hidden = !timed;
+  };
+  triggerInput.addEventListener("change", syncTrigger);
   const formError = document.createElement("p");
   formError.className = "setup-error";
   formError.hidden = true;
@@ -285,7 +315,11 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
     const text = (input: (typeof fields)[number], value: string | undefined) =>
       bindValue<string | undefined>(input, value, value ?? "", (next) => next);
     const name = text(nameInput, source?.name);
-    const types = bindValue(typesInput, source?.types ?? [], source?.types.join(" ") ?? "", splitTypes);
+    const timed = source?.cron !== undefined;
+    triggerInput.value = timed ? "cron" : "event";
+    syncTrigger();
+    const types = bindValue(typesInput, source?.types ?? [], source?.types?.join(" ") ?? "", splitTypes);
+    const cron = text(cronInput, source?.cron);
     // The executor select holds the agents the read offered; update() adds a one-off option when
     // the chosen value is not on the roster, so setting the value here is enough. An existing
     // entry keeps its executor; a fresh entry starts at the first offered agent so an untouched
@@ -320,9 +354,14 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
       read() {
         const outputSource = emitsSource();
         const outputTypes = emitsTypes();
+        // The read sends exactly the trigger the form shows: cron for a timed entry, types for
+        // an event one. Carrying both (or the hidden one's leftovers) is what the door refuses.
+        const asTimed = triggerInput.value === "cron";
+        const asCron = cron();
+        const asTypes = types();
         return {
           name: name(),
-          types: types(),
+          ...(asTimed ? { cron: asCron ?? "" } : { types: asTypes }),
           to: to(),
           cwd: cwd(),
           prompt: prompt(),
@@ -406,10 +445,18 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
     head.append(name, to);
     const types = document.createElement("div");
     types.className = "entry-types";
-    for (const type of entry.types) {
+    // An event row shows its type chips; a timed row shows the schedule where the chips would go,
+    // so the trigger is always in plain view — never an empty strip that reads as "no trigger".
+    if (entry.cron !== undefined) {
       const chip = document.createElement("code");
-      chip.textContent = type;
+      chip.textContent = entry.cron;
       types.append(chip);
+    } else {
+      for (const type of entry.types ?? []) {
+        const chip = document.createElement("code");
+        chip.textContent = type;
+        types.append(chip);
+      }
     }
     const meta = document.createElement("div");
     meta.className = "entry-meta";

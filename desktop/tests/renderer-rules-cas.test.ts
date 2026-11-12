@@ -127,7 +127,7 @@ test("server, draft, submitted references and subscribed state are deeply isolat
   for (const mutate of [
     () => (state.snapshot!.agents[0].name = "poison"),
     () => state.snapshot!.entries[0].emits!.types.push("poison"),
-    () => state.draft!.entries[0].types.push("poison"),
+    () => state.draft!.entries[0].types!.push("poison"),
     () => (state.draft!.rulesSeq = 9),
   ])
     assert.throws(mutate, TypeError);

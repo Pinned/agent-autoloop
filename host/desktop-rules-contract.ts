@@ -10,6 +10,9 @@ const OBJECT = Object.prototype;
 // TextEncoder, not Buffer.byteLength: this contract also runs inside the sandboxed renderer.
 const ENCODER = new TextEncoder();
 const bytesOf = (value: string) => ENCODER.encode(value).byteLength;
+// The kernel's own cron parser, imported not copied: a schedule the hub would refuse is caught
+// here first, and the two sides can never disagree about what a valid cron looks like.
+import { parseCron } from "../kernel/cron.ts";
 
 /** Same shape the kernel's rule types allow, wildcards included, so a typo is caught before the hub. */
 export const DESKTOP_RULES_TYPE_PATTERN = /^(\*|[a-z][a-z0-9_.-]{0,63}(\.\*)?)$/;
@@ -22,11 +25,13 @@ export const DESKTOP_RULES_AGENTS_MAX = 64 as const;
 export const DESKTOP_RULES_RESPONSE_MAX_BYTES = 128 * 1024;
 export const DESKTOP_RULES_VERSION = 2 as const;
 
-const ENTRY_FIELDS = ["name", "types", "to", "cwd", "prompt", "skill", "parallel", "group", "tell", "emits"];
+const ENTRY_FIELDS = ["name", "types", "cron", "to", "cwd", "prompt", "skill", "parallel", "group", "tell", "emits"];
 
 export type DesktopRuleEntry = {
   name: string;
-  types: string[];
+  /** An event entry lists the types it takes; a timed entry names a cron instead. Exactly one. */
+  types?: string[];
+  cron?: string;
   to: string;
   cwd: string;
   prompt?: string;
@@ -51,7 +56,7 @@ export const DESKTOP_RULES_MESSAGES = Object.freeze({
   "no-hub": "此电脑以纯 worker 运行，不能编辑入口；请在中台所在设备上修改。",
   error: "保存入口失败，请稍后重试。",
   loadFailed: "读取任务入口失败，请稍后重试。",
-  noEntry: "本机还没有事件入口，先加一个再保存。",
+  noEntry: "本机还没有入口，先加一个再保存。",
 } satisfies Record<string, string>);
 
 function within(value: string, max: number) {
@@ -119,11 +124,19 @@ export function parseDesktopRuleEntry(value: unknown): DesktopRuleEntry {
     return trimmed;
   };
   const name = text("name")!;
-  let checkedTypes: string[];
-  try {
-    checkedTypes = words(entry.types, DESKTOP_RULES_TYPES_MAX);
-  } catch {
-    throw new Error(`入口「${name}」的 types 要是事件类型的列表，只能用小写字母、数字和 . _ -，可用 x.* 通配`);
+  // Exactly one trigger, the same exclusivity the hub's door keeps: an event entry lists types, a
+  // timed one names a cron the kernel's parser accepts.
+  const cron = text("cron", true);
+  let checkedTypes: string[] | undefined;
+  if (cron !== undefined) {
+    if (entry.types !== undefined) throw new Error(`入口「${name}」的 types 和 cron 只能选一个`);
+    if (parseCron(cron) === null) throw new Error(`入口「${name}」的 cron 不是有效的写法，比如 0 9 * * *`);
+  } else {
+    try {
+      checkedTypes = words(entry.types, DESKTOP_RULES_TYPES_MAX);
+    } catch {
+      throw new Error(`入口「${name}」的 types 要是事件类型的列表，只能用小写字母、数字和 . _ -，可用 x.* 通配`);
+    }
   }
   const parallel = entry.parallel;
   if (
@@ -144,7 +157,7 @@ export function parseDesktopRuleEntry(value: unknown): DesktopRuleEntry {
   }
   return {
     name,
-    types: checkedTypes,
+    ...(cron !== undefined ? { cron } : { types: checkedTypes! }),
     ...(group !== undefined && { group }),
     ...(tell !== undefined && { tell: tell as DesktopRuleEntry["tell"] }),
     ...(emits !== undefined && { emits }),

@@ -28,6 +28,7 @@ class Element {
   }
   open = false;
   children: Element[] = [];
+  parentElement: Element | null = null;
   listeners = new Map<string, ((event: { preventDefault(): void }) => void)[]>();
   classList = { toggle() {} };
   readonly tag: string;
@@ -38,6 +39,7 @@ class Element {
     throw new Error("unsafe markup");
   }
   append(...nodes: Element[]) {
+    for (const node of nodes) node.parentElement = this;
     this.children.push(...nodes);
   }
   replaceChildren(...nodes: Element[]) {
