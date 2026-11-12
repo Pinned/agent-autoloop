@@ -144,7 +144,7 @@ function checkedRule(given: unknown): Entry {
   );
   const name = textOf(rule.name);
   if (!name) throw new InputError("规则的 name 不能为空");
-  const when = fields(rule.when, `规则「${name}」的 when `, ["source", "types", "cron"], []);
+  const when = fields(rule.when, `规则「${name}」的 when `, ["source", "types", "cron", "local"], []);
   let builtWhen: Entry;
   if ("source" in when || "types" in when) {
     const source = textOf(when.source);
@@ -161,7 +161,11 @@ function checkedRule(given: unknown): Entry {
   } else {
     const cron = textOf(when.cron);
     if (!cron || !parseCron(cron)) throw new InputError(`规则「${name}」的 cron 不是有效的写法`);
-    builtWhen = { cron };
+    // The local mark names the desktop's timed entries, the way source "local" names its event ones.
+    // The page read it from GET /v1/ui/config, so a section save keeps it rather than orphaning the slot.
+    if (when.local !== undefined && when.local !== true)
+      throw new InputError(`规则「${name}」的 when.local 只能是 true`);
+    builtWhen = when.local === true ? { cron, local: true } : { cron };
   }
   const cwd = textOf(rule.cwd);
   if (!/^(~\/|\/)/.test(cwd)) throw new InputError(`规则「${name}」的 cwd 要是以 ~/ 或 / 开头的目录`);
@@ -386,8 +390,11 @@ async function api(request: Request): Promise<Response> {
     if (!summary.trim()) throw new InputError("缺少 summary");
     if ([...summary].length > 200) throw new InputError("summary 最多 200 个字");
     if ([...detail].length > 4000) throw new InputError("detail 最多 4000 个字");
-    // A hand-written rule may use wildcards (bug.*), so match the way the kernel routes.
-    const takes = localEntries().entries.some((entry) => hub.typeMatches(entry.types, type));
+    // A hand-written rule may use wildcards (bug.*), so match the way the kernel routes. A timed
+    // entry (cron) takes no events by hand — it has no types to match — so only its event slots count.
+    const takes = localEntries().entries.some(
+      (entry) => Array.isArray(entry.types) && hub.typeMatches(entry.types as string[], type),
+    );
     if (!takes) throw new InputError(`没有任务入口接 ${type}，先在入口设置里加一个`);
     const ack = hub.ingest("local", { id: `ui-${randomUUID()}`, type, summary, detail });
     return Response.json(ack, { headers: HEADERS });

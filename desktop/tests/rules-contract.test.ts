@@ -102,10 +102,11 @@ test("a well-formed entry round-trips with optional fields and wildcards", () =>
   const expected = roundTrip();
   assert.deepEqual(parseDesktopRuleEntry({ ...expected }), expected);
   // Optional fields left out come back undefined, not empty strings.
-  const minimal = parseDesktopRuleEntry(entry());
-  assert.deepEqual(minimal, { name: "值班规则", types: ["task.ops"], to: "claude", cwd: "~/work" });
+  const minimal: DesktopRuleEntry = parseDesktopRuleEntry(entry());
   assert.equal(minimal.prompt, undefined);
   assert.equal(minimal.parallel, undefined);
+  assert.equal(minimal.cron, undefined);
+  assert.deepEqual(minimal, { name: "值班规则", types: ["task.ops"], to: "claude", cwd: "~/work" });
 });
 
 test("entry text is trimmed and empty optionals are dropped, not kept as blanks", () => {

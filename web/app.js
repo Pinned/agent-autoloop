@@ -514,7 +514,8 @@ function ruleNode(rule) {
     if (kind === "cron") {
       delete read.source;
       delete read.types;
-      read.when = { cron: read.cron ?? "" };
+      // The local mark names a rule the desktop's timed entries own; editing keeps it, never drops it.
+      read.when = when.local === true ? { cron: read.cron ?? "", local: true } : { cron: read.cron ?? "" };
       delete read.cron;
     } else {
       delete read.cron;

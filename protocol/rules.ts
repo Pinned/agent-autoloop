@@ -88,7 +88,12 @@ function checkRule(issues: string[], rules: Rules, rule: Rule, names: Set<string
     if (isCron(when.cron) && nextRun(parseCron(when.cron as string)!, now, rules.timezone) === null) {
       issues.push(`${where}的定时永远不会到来：${when.cron}`);
     }
-    checkFields(issues, `${where}的 when `, when, [["cron", isCron, "不是有效的 cron"]]);
+    // `local` marks a cron rule the desktop wrote, so its timed entries can be read back and replaced;
+    // it is a mark, never a trigger — the cron itself is the whole story. See docs/protocol.md.
+    checkFields(issues, `${where}的 when `, when, [
+      ["cron", isCron, "不是有效的 cron"],
+      ["local", (value) => value === true, "只能是 true", true],
+    ]);
   }
   if (!isObject(rule)) return;
   // A plain command needs no words: a script that polls something is an agent too.

@@ -37,7 +37,7 @@ export const DESKTOP_TASK_MESSAGES = Object.freeze({
   unavailable: "本机运行服务未运行，不能新建任务。可前往执行机页启动后再试。",
   "no-hub": "此电脑以纯 worker 运行，不能新建全局任务；请在执行机所在设备上创建。",
   error: "新建任务失败，请稍后重试。",
-  noEntry: "本机还没有能接住任务的事件入口，先在入口设置里加一个。",
+  noEntry: "本机还没有能接住任务的入口，先在入口设置里加一个。",
   entryLoadFailed: "读取任务入口失败，请稍后重试。",
   "not-sent": "这次任务未发送。请确认本机运行状态后，显式另建一条。",
   rejected: "这次任务已明确被拒绝。请检查后，显式另建一条。",
@@ -123,21 +123,27 @@ export function projectDesktopTaskResult(value: unknown): DesktopTaskResult {
 /** The entry list the new-task panel offers; only the fields a chooser needs survive the bridge. */
 export function projectDesktopTaskEntries(value: unknown): DesktopTaskEntries {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("不是对象");
-  const entries = list((value as Record<string, unknown>).entries, DESKTOP_TASK_ENTRIES_MAX);
+  const given = value as Record<string, unknown>;
+  const raw = list(given.entries, DESKTOP_TASK_ENTRIES_MAX);
+  // A timed entry (the automation page's cron slots) takes no hand-made events — it has no types
+  // to offer — so the chooser simply skips it; it must not break the whole read.
+  const offered = raw.filter((entry) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) throw new Error("入口不对");
+    return (entry as Record<string, unknown>).types !== undefined;
+  });
   return {
-    entries: entries.map((entry) => {
-      if (typeof entry !== "object" || entry === null || Array.isArray(entry)) throw new Error("入口不对");
-      const given = entry as Record<string, unknown>;
-      const types = list(given.types, DESKTOP_TASK_TYPES_MAX);
+    entries: offered.map((entry) => {
+      const item = entry as Record<string, unknown>;
+      const types = list(item.types, DESKTOP_TASK_TYPES_MAX);
       if (!types.length) throw new Error("入口类型不对");
       return {
-        name: text(given.name, 200),
+        name: text(item.name, 200),
         types: types.map((type) => {
           if (typeof type !== "string" || !DESKTOP_TASK_ENTRY_TYPE_PATTERN.test(type))
             throw new Error("不是事件类型模式");
           return type;
         }),
-        to: text(given.to, 200),
+        to: text(item.to, 200),
       };
     }),
   };

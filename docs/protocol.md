@@ -87,7 +87,7 @@ GET /v1/credentials/worker       Authorization: Bearer <接单程序密钥>
   "rules": [
     {
       "name": "处理告警",
-      "when": { "source": "shop", "types": ["alert.*"] }, // 或 { "cron": "0 9 * * *" }
+      "when": { "source": "shop", "types": ["alert.*"] }, // 或 { "cron": "0 9 * * *" }；桌面定时入口会再加 "local": true
       "to": "claude",
       "cwd": "~/code/shop",
       "skill": "run-ops",
@@ -277,7 +277,11 @@ POST /v1/runs/12/cancel     {}
 
 `GET /v1/ui/rules` 仍返回 `entries`、`agents`、全局日志 `seq`，新增 `rulesSeq`（已生效配置的 `config.version`）。入口原始声明、Agent 清单和 `rulesSeq` 来自同一已生效基线；全局 `seq` 可因事件、密钥等变化而增长，不是规则版本。
 
+本机入口有两种形状，两种都属于同一份入口列表：事件入口带 `types`（磁盘声明为 `when: { "source": "local", "types": [...] }`），定时入口带 `cron`（磁盘声明为 `when: { "cron": "...", "local": true }`）。`local: true` 只是一个标记，说明这条 cron 规则的插槽归桌面入口列表管理，与事件规则的 `source: "local"` 对应；它不改变定时何时跑。一个入口只能有一种触发：同时带 `types` 和 `cron` 的入口在保存前就被拒绝。手工派发（`POST /v1/ui/tasks`）只看事件入口的类型；定时入口不接手工事件，也不影响派发页读取其他入口。
+
 `PUT /v1/ui/rules` 继续接受旧数组请求（不提供条件保存），也接受严格对象 `{ "entries": [...], "rulesSeq": 42 }`。对象必须恰好包含这两个字段，版本是正安全整数；缺少或无效版本不能降级成旧数组行为。正文读完后，同步检查入口与当前版本、一次读取磁盘原文、核验原声明 hash 和完整解析后的 effective 配置，再在同一次读取上合并本机入口、完整验证、写临时文件并 rename、强制加载、tick 和响应，中间不等待其他异步操作。冲突返回 `409 {"error":"规则已变化，请重新读取后再保存"}`，不写文件、不 rename、不 reload、不 tick，不代替请求者应用外部合法修改。其他错误仍遵循原来的输入错误约定。
+
+中台网页控制台的整段 `rules` 读写（`GET/PUT /v1/ui/config/rules`）保留定时入口的 `local` 标记：页面读到什么 when 就写回什么 when，编辑一条带标记的 cron 规则不会把桌面定时入口变成中台私有规则。
 
 外壳在完整 `parseRules` 成功后，用 `SHA-256(JSON.stringify(JSON.parse(text)))` 标记原始 JSON 声明：空白不影响 hash，对象键顺序仍有影响；显式 `group` 与省略后取默认值即使 effective 相同，也有不同声明 hash。规则 fact 新增可选 `meta.declarationHash`，是 64 位小写十六进制 SHA-256；保留已有 meta 字段。外壳在同一 `commit` 的 produce 内调用原 `decide` 后装饰 rules fact，日志追加与投影演进仍在同一 SQLite 事务内，内核不认识本机产品。旧 fact 无 hash 仍合法，不回写旧日志；正常 loader 遇到合法磁盘声明且当前版本无 hash 时，提交一个新 rules 版本。公共 `execute("rules")` 产生的无 hash fact 不能冒充原始声明基线。
 

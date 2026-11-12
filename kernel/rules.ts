@@ -7,7 +7,9 @@ export type Agent = AgentOptions & { name: string; worker: string; use: string; 
 export type Channel = { name: string; answerers?: string[]; links?: boolean };
 export type Tell = "always" | "needed" | "never";
 type EventFilter = { source: string; types: string[] };
-type When = EventFilter | { cron: string };
+// `local: true` marks a cron rule the desktop's timed entries own, the way `source: "local"` marks
+// its event entries; the mark decides which slots an entry-list save replaces, never when it runs.
+type When = EventFilter | { cron: string; local?: true };
 type RuleOptions = { skill?: string; prompt?: string; parallel?: number; emits?: EventFilter };
 /** Without parallel a rule's group runs one at a time; with it, each subject is its own thread, that many at once. */
 export type Rule = RuleOptions & { name: string; when: When; to: string; cwd: string; group: string; tell: Tell };

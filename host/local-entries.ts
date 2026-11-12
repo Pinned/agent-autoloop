@@ -1,4 +1,5 @@
 // Pure production logic. Filesystem paths, runtime state and side effects belong to adapters.
+import { parseCron } from "../kernel/cron.ts";
 import { InputError } from "../kernel/errors.ts";
 import { TYPE_PATTERN } from "../protocol/rules.ts";
 import {
@@ -13,7 +14,12 @@ import {
 export type Entry = Record<string, unknown>;
 const isObject = (value: unknown): value is Entry =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-export const takesLocal = (rule: unknown) => isObject(rule) && isObject(rule.when) && rule.when.source === "local";
+// The two shapes a local slot may take: an event entry carries when.source === "local", a timed one
+// carries when.cron plus the local mark. Both belong to the desktop's entry list; neither is a trigger.
+export const takesLocal = (rule: unknown) =>
+  isObject(rule) &&
+  isObject(rule.when) &&
+  (rule.when.source === "local" || (typeof rule.when.cron === "string" && rule.when.local === true));
 
 export type LocalEntriesReaderOptions = {
   read(): string;
@@ -46,10 +52,10 @@ export function createLocalEntriesReader(options: LocalEntriesReaderOptions) {
     if (!snapshot || !sameRulesBaseline(snapshot.baseline, applied) || (options.baseline && !applied.declarationHash))
       throw new InputError("无法读取已生效规则的原始声明，请先修复 rules.json");
     return snapshot.rules.filter(takesLocal).map((rule) => {
-      const when = rule.when as { types: string[] };
-      const entry: Entry & { types: string[] } = {
+      const when = rule.when as { types?: string[]; cron?: string };
+      const entry: Entry = {
         name: rule.name,
-        types: [...when.types],
+        ...(when.cron !== undefined ? { cron: when.cron } : { types: [...((when.types ?? []) as string[])] }),
         to: rule.to,
         cwd: rule.cwd,
       };
@@ -67,7 +73,7 @@ export function checkedLocalEntry(given: unknown): Entry {
   if (!isObject(given)) throw new InputError("每个入口要是一个对象");
   const entry = given;
   for (const name of Object.keys(entry))
-    if (!["name", "types", "to", "cwd", "prompt", "skill", "parallel", "group", "tell", "emits"].includes(name))
+    if (!["name", "types", "cron", "to", "cwd", "prompt", "skill", "parallel", "group", "tell", "emits"].includes(name))
       throw new InputError(`入口有不认识的字段 ${name}`);
   const text = (name: string, optional = false) => {
     const value = entry[name];
@@ -79,13 +85,21 @@ export function checkedLocalEntry(given: unknown): Entry {
     return value.trim();
   };
   const name = text("name")!;
+  // Exactly one trigger: an event entry lists types, a timed one names a cron. Anything else would
+  // write a rule that never runs (or runs by surprise) under one of the two when shapes.
   const types = entry.types;
-  if (
-    !Array.isArray(types) ||
-    !types.length ||
-    !types.every((type) => typeof type === "string" && TYPE_PATTERN.test(type))
-  )
-    throw new InputError(`入口「${name}」的 types 要是事件类型的列表，只能用小写字母、数字和 . _ -，可用 x.* 通配`);
+  const cron = text("cron", true);
+  let checkedTypes: string[] | undefined;
+  if (cron === undefined) {
+    if (
+      !Array.isArray(types) ||
+      !types.length ||
+      !types.every((type) => typeof type === "string" && TYPE_PATTERN.test(type))
+    )
+      throw new InputError(`入口「${name}」的 types 要是事件类型的列表，只能用小写字母、数字和 . _ -，可用 x.* 通配`);
+    checkedTypes = types;
+  } else if (types !== undefined) throw new InputError(`入口「${name}」的 types 和 cron 只能选一个`);
+  else if (parseCron(cron) === null) throw new InputError(`入口「${name}」的 cron 不是有效的写法`);
   const parallel = entry.parallel;
   if (parallel !== undefined && (!Number.isInteger(parallel) || (parallel as number) <= 0))
     throw new InputError(`入口「${name}」的 parallel 要是正整数`);
@@ -111,7 +125,7 @@ export function checkedLocalEntry(given: unknown): Entry {
   }
   return {
     name,
-    types,
+    ...(cron !== undefined ? { cron } : { types: checkedTypes! }),
     to: text("to")!,
     cwd: text("cwd")!,
     ...(text("group", true) && { group: text("group", true) }),
@@ -159,7 +173,7 @@ export function writeLocalEntriesWith(entries: Entry[], io: LocalEntriesWriteIO)
   const replacements = entries.map((entry) => {
     const rule: Entry = {
       name: entry.name,
-      when: { source: "local", types: entry.types },
+      when: entry.cron !== undefined ? { cron: entry.cron, local: true } : { source: "local", types: entry.types },
       to: entry.to,
       cwd: entry.cwd,
     };

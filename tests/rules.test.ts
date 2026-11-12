@@ -128,7 +128,17 @@ test("a mistake says which rule and what is wrong", () => {
   problem((r) => {
     r.askFirst = "删数据";
   }, /askFirst/);
+  problem((r) => {
+    r.rules[3].when.local = "yes";
+  }, /规则「早报」.*local/);
   assert.throws(() => parseRules("{ not json"), /不是 JSON/);
+});
+
+test("a cron rule may carry the local marker the desktop's timed entries need", () => {
+  const r = good();
+  r.rules[3].when.local = true;
+  const parsed = parseRules(JSON.stringify(r));
+  assert.deepEqual(parsed.rules[3].when, { cron: "0 9 * * *", local: true });
 });
 
 test("types match exactly, by prefix or all", () => {

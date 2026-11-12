@@ -124,13 +124,29 @@ test("entry projection keeps only what a chooser needs", () => {
     {},
     { entries: "x" },
     // An empty list is real hub state (no rules yet); it passes and the panel says so.
-    { entries: [{ name: "x", to: "claude" }] }, // missing types
+    // (An entry without types is the timed shape — see the chooser test below — not poison here.)
     { entries: [{ name: "x", types: [], to: "c" }] },
     { entries: [{ name: "x", types: ["BAD"], to: "c" }] },
     { entries: new Array(51).fill({ name: "x", types: ["t"], to: "c" }) },
   ]) {
     assert.throws(() => projectDesktopTaskEntries(bad));
   }
+});
+
+test("a timed entry has no types to offer a hand-made task, so the chooser skips it", () => {
+  // The automation page may hold timed entries (cron) next to event ones; the new-task chooser
+  // lists event types only. Skipping keeps one shared door: a timed entry must not break the read.
+  const page = {
+    entries: [
+      { name: "定时巡检", cron: "0 9 * * *", to: "claude", cwd: "/x" },
+      { name: "开发任务", types: ["task.dev"], to: "claude", cwd: "/x" },
+    ],
+    agents: [],
+    seq: 5,
+  };
+  assert.deepEqual(projectDesktopTaskEntries(page), {
+    entries: [{ name: "开发任务", types: ["task.dev"], to: "claude" }],
+  });
 });
 
 test("create responses round-trip and fixed messages are verbatim", () => {

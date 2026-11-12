@@ -1,4 +1,5 @@
-// Failure modes: CAS conflicts write or apply an external declaration; rename failure still triggers apply.
+// Failure modes: CAS conflicts write or apply an external declaration; rename failure still triggers apply; a timed
+// local entry loses its cron (or turns into an event entry) anywhere between read, check and write.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { checkedLocalEntry, createLocalEntriesReader, writeLocalEntriesWith } from "../host/local-entries.ts";
@@ -77,6 +78,39 @@ test("real EVENT_TYPE accepts 64 characters and rejects 65 and wildcard events",
   assert.equal(EVENT_TYPE.test("a".repeat(65)), false);
   assert.equal(EVENT_TYPE.test("task.*"), false);
   assert.deepEqual(checkedLocalEntry(entry("模式", { types: ["*", "task.*"] })).types, ["*", "task.*"]);
+});
+
+test("a timed local entry keeps its cron through read, check and write; mixing both shapes is refused", () => {
+  const timed = (name: string, extra = {}) => ({
+    name,
+    when: { cron: "0 9 * * *", local: true },
+    to: "a",
+    cwd: "~/x",
+    ...extra,
+  });
+  const m = memory(config([timed("早报", { prompt: "写。" })]));
+  let applied = parse(m.disk());
+  const read = createLocalEntriesReader({ read: m.io.read, parse, applied: () => applied });
+  const entries = read();
+  assert.deepEqual(entries, [{ name: "早报", cron: "0 9 * * *", to: "a", cwd: "~/x", prompt: "写。" }]);
+  m.events.length = 0;
+  writeLocalEntriesWith(entries.map(checkedLocalEntry), m.io);
+  assert.deepEqual(m.events, ["read", "validate", "write", "rename"]);
+  applied = parse(m.disk());
+  assert.deepEqual(applied.rules[0].when, { cron: "0 9 * * *", local: true });
+  // The whole shape round-trips: renaming keeps the slot timed, without inventing a source.
+  entries[0].name = "改名的早报";
+  writeLocalEntriesWith(entries.map(checkedLocalEntry), m.io);
+  applied = parse(m.disk());
+  assert.equal(applied.rules[0].name, "改名的早报");
+  assert.deepEqual(applied.rules[0].when, { cron: "0 9 * * *", local: true });
+  // The checker takes exactly one trigger: a cron entry carries no types, an event entry carries no cron.
+  assert.throws(() => checkedLocalEntry(entry("两者", { cron: "0 9 * * *", types: ["task.*"] })), {
+    message: /types.*cron.*只能选一个|cron.*types.*只能选一个/,
+  });
+  assert.throws(() => checkedLocalEntry(entry("没触发", { types: undefined })), /types/);
+  assert.throws(() => checkedLocalEntry(entry("坏表", { cron: "99 * * * *" })), /cron/);
+  assert.equal(checkedLocalEntry(entry("事件", { types: ["task.*"] })).cron, undefined);
 });
 
 test("real parseRules preserves explicit old group and lets omitted group follow rename", () => {
