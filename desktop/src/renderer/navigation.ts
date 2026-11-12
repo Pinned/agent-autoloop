@@ -17,7 +17,7 @@ export const ownerPages: readonly Page[] = [
     id: "automation",
     nav: "自动化",
     title: "自动化",
-    description: "让可信规则安排重复工作，把判断留给你。",
+    description: "本机入口；其他规则在中台网页控制台修改。",
     icon: "automation",
   },
   {

@@ -472,7 +472,7 @@ function render(id: string, focus = true) {
           id: "automation-entry",
           nav: "编辑入口",
           title: "编辑入口",
-          description: "确认后立即保存；入口只影响本机中台接到的本地事件。",
+          description: "确认即保存到本机中台。",
           icon: "automation",
         }
       : pages.find((item) => item.id === id)!;

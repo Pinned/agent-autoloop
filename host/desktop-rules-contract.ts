@@ -56,7 +56,6 @@ export const DESKTOP_RULES_MESSAGES = Object.freeze({
   "no-hub": "此电脑以纯 worker 运行，不能编辑入口；请在中台所在设备上修改。",
   error: "保存入口失败，请稍后重试。",
   loadFailed: "读取任务入口失败，请稍后重试。",
-  noEntry: "本机还没有入口，先加一个再保存。",
 } satisfies Record<string, string>);
 
 function within(value: string, max: number) {
