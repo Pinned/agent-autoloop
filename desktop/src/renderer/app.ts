@@ -455,13 +455,15 @@ function render(id: string, focus = true) {
   markCurrent();
   main.innerHTML = `<header class="page-head"><div class="page-head-copy"><h1 id="page-title">${page.title}</h1><p>${page.description}</p></div><div class="page-head-actions"></div></header>`;
   if (id === "dispatch-task") {
-    const actions = main.querySelector<HTMLElement>(".page-head-actions")!;
+    const head = main.querySelector<HTMLElement>(".page-head")!;
+    head.classList.add("page-head-subpage");
+    const copy = main.querySelector<HTMLElement>(".page-head-copy")!;
     const backButton = document.createElement("button");
     backButton.textContent = "← 返回";
     backButton.type = "button";
     backButton.className = "task-back-button";
     backButton.addEventListener("click", leaveTaskPage);
-    actions.append(backButton);
+    copy.prepend(backButton);
     main.append(taskPanel.root);
     taskPanel.open();
   } else if (id === "settings") {

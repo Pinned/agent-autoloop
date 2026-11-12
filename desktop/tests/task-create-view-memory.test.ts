@@ -337,3 +337,16 @@ test("unsubmitted task input is cached before dispatch and restored on reopen", 
     assert.equal(detail.value, "# 详细说明");
   });
 });
+
+test("task subpage card does not duplicate the page header title and displays live route target summary", async () => {
+  await withView(async (f) => {
+    f.panel.open();
+    await flush();
+    const duplicateTitle = f.body.find((e) => e.tag === "h2" && e.textContent === "派发任务");
+    assert.equal(duplicateTitle, undefined);
+    const routeSummary = f.body.find((e) => e.id === "task-route-summary");
+    assert.ok(routeSummary);
+    assert.match(routeSummary.textContent, /入口/);
+    assert.match(routeSummary.textContent, /worker/);
+  });
+});
