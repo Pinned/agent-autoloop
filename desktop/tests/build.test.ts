@@ -381,11 +381,14 @@ test("the automation page edits the hub's own entries through the versioned rule
   assert.match(app, /rules\.refresh\(\)/);
   assert.match(app, /rulesGet: \(\) => window\.desktop\.rulesCasGet\(\)/);
   assert.match(app, /rulesPut: \(input\) => window\.desktop\.rulesCasPut\(input\)/);
-  // Pure DOM construction only; the list and the dialog never serialise markup.
+  // Pure DOM construction only; the list and the editor subpage never serialise markup.
   assert.doesNotMatch(view, /innerHTML|insertAdjacentHTML|console\./);
   assert.doesNotMatch(controller, /node:|from ["'].*host\/(?:config|runtime|setup)\.ts/);
   assert.match(controller, /from ["'].*host\/desktop-rules-cas-contract\.ts/);
-  assert.match(view, /showModal\(\)/);
+  // The editor is an in-page subpage driven by open/close, not a modal dialog over the page.
+  assert.match(view, /function openEditor\(\)/);
+  assert.match(view, /function closeEditor\(\)/);
+  assert.doesNotMatch(view, /showModal|createElement\("dialog"\)/);
   // The preview is a local diff of the draft against the read baseline: it states only the counts
   // the save hands over, never that the hub accepted a save or that a rule will route.
   assert.match(view, /本次保存将提交/);
