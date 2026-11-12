@@ -283,32 +283,56 @@ test("throwing refresh callback cannot rewrite accepted or repeat on later updat
   });
 });
 
-test("detail Markdown preview toggles and renders formatted content", async () => {
+test("detail Markdown uses a single-column WYSIWYG canvas without split panes or mode switching", async () => {
   await withView(async (f) => {
     f.panel.open();
     await flush();
     const detail = f.body.find((e) => e.id === "task-detail")!;
+    const previewContainer = f.body.find((e) => e.id === "task-detail-preview")!;
+    assert.ok(detail);
+    assert.ok(previewContainer);
+    assert.equal(detail.hidden, false);
+    assert.equal(previewContainer.hidden, false);
+
+    // No dual-column split panes exist
+    assert.equal(
+      f.body.find((e) => e.className.includes("task-workbench-body")),
+      undefined,
+    );
+    assert.equal(
+      f.body.find((e) => e.className.includes("task-editor-pane")),
+      undefined,
+    );
+    assert.equal(
+      f.body.find((e) => e.className.includes("task-preview-pane")),
+      undefined,
+    );
+
+    // Active inline block editor starts inside the single-column WYSIWYG container
+    const activeInput = previewContainer.find((e) => e.className.includes("task-wysiwyg-active-input"))!;
+    assert.ok(activeInput);
+    activeInput.value = "## 单栏标题";
+    activeInput.emit("input");
+    assert.equal(detail.value, "## 单栏标题");
+
+    // Updating the backing value renders all Markdown blocks inside the single-column canvas
     detail.value = "## 任务目标\n\n- [x] 排查完成\n- [ ] 验证修复\n\n```ts\nconst ok = true;\n```";
     detail.emit("input");
 
-    const previewTab = f.body.find((e) => e.textContent === "预览")!;
-    const editTab = f.body.find((e) => e.textContent === "编辑")!;
-    assert.ok(previewTab);
-    assert.ok(editTab);
-
-    previewTab.emit("click");
-    const previewContainer = f.body.find((e) => e.id === "task-detail-preview")!;
+    assert.equal(detail.hidden, false);
     assert.equal(previewContainer.hidden, false);
-    assert.equal(detail.hidden, true);
-
     const h2 = previewContainer.find((e) => e.tag === "h2");
     assert.ok(h2);
     const pre = previewContainer.find((e) => e.tag === "pre");
     assert.ok(pre);
 
-    editTab.emit("click");
-    assert.equal(detail.hidden, false);
-    assert.equal(previewContainer.hidden, true);
+    // Clicking a rendered block activates it inline inside the single-column canvas
+    const block = previewContainer.find((e) => e.className.includes("task-wysiwyg-block"))!;
+    assert.ok(block);
+    block.emit("click");
+    const reactivated = previewContainer.find((e) => e.className.includes("task-wysiwyg-active-input"))!;
+    assert.ok(reactivated);
+    assert.equal(reactivated.value, "## 任务目标");
   });
 });
 
@@ -335,13 +359,29 @@ test("unsubmitted task input is cached before dispatch and restored on reopen", 
 
     assert.equal(summary.value, "未派发的草稿标题");
     assert.equal(detail.value, "# 详细说明");
+    // Live preview also reflects restored draft immediately
+    const previewContainer = f.body.find((e) => e.id === "task-detail-preview")!;
+    assert.ok(previewContainer.find((e) => e.tag === "h1"));
   });
 });
 
-test("task subpage card does not duplicate the page header title and displays live route target summary", async () => {
+test("task subpage has no outer panel card wrapper and combines title with inline routing controls", async () => {
   await withView(async (f) => {
     f.panel.open();
     await flush();
+    const rootSection = f.body.find((e) => e.id === "task-subpage")!;
+    assert.ok(!rootSection.className.split(" ").includes("panel"));
+    const collapsedDetails = f.body.find((e) => e.tag === "details");
+    assert.equal(collapsedDetails, undefined);
+    const titleRouteBar = f.body.find((e) => e.className.includes("task-title-route-bar"))!;
+    assert.ok(titleRouteBar);
+    assert.ok(titleRouteBar.find((e) => e.id === "task-summary"));
+    const entrySelect = titleRouteBar.find((e) => e.id === "task-entry")!;
+    const typeSelect = titleRouteBar.find((e) => e.id === "task-type")!;
+    assert.ok(entrySelect);
+    assert.ok(typeSelect);
+    assert.equal(entrySelect.hidden, false);
+    assert.equal(typeSelect.hidden, false);
     const duplicateTitle = f.body.find((e) => e.tag === "h2" && e.textContent === "派发任务");
     assert.equal(duplicateTitle, undefined);
     const routeSummary = f.body.find((e) => e.id === "task-route-summary");

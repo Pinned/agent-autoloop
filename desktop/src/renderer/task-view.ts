@@ -20,61 +20,69 @@ export function mountTaskView(
   syncDraft(): void;
 } {
   const root = document.createElement("section");
-  root.className = "panel task-panel task-subpage-panel";
+  root.className = "task-panel task-subpage-panel";
   root.id = "task-subpage";
   root.hidden = true;
 
   const form = document.createElement("form");
   form.className = "task-form";
 
-  // Section 1: Compact Routing Bar (Slim & Secondary)
-  const routeSection = document.createElement("details");
-  routeSection.className = "task-route-section";
-  routeSection.open = false;
+  // Section 1: Unified single-row Title + Routing Bar (Prominent Title on left, compact Route controls on right)
+  const titleRouteBar = document.createElement("div");
+  titleRouteBar.className = "task-title-route-bar";
 
-  const routeSummaryBar = document.createElement("summary");
-  routeSummaryBar.className = "task-route-bar";
+  const summaryField = document.createElement("label");
+  summaryField.className = "task-summary-field";
+  const summaryLabel = document.createElement("span");
+  summaryLabel.className = "task-summary-label";
+  summaryLabel.textContent = "任务标题";
+  const summaryInput = document.createElement("input");
+  summaryInput.id = "task-summary";
+  summaryInput.placeholder = "一句话概括任务目标，例如：排查线上支付超时并输出修复方案";
+  summaryInput.required = true;
+  summaryField.append(summaryLabel, summaryInput);
 
-  const routeSummaryLeft = document.createElement("div");
-  routeSummaryLeft.className = "task-route-bar-left";
-  const routeTitle = document.createElement("span");
-  routeTitle.className = "task-section-title";
-  routeTitle.textContent = "分发入口";
-  const routeSummary = document.createElement("span");
-  routeSummary.id = "task-route-summary";
-  routeSummary.className = "task-route-summary";
-  routeSummary.textContent = "正在读取可用入口……";
-  routeSummaryLeft.append(routeTitle, routeSummary);
+  const headerSep = document.createElement("span");
+  headerSep.className = "task-header-sep";
+  headerSep.setAttribute("aria-hidden", "true");
 
-  const routeToggleHint = document.createElement("span");
-  routeToggleHint.className = "task-route-toggle-hint";
-  routeToggleHint.textContent = "更改入口与类型 ▾";
-  routeSummaryBar.append(routeSummaryLeft, routeToggleHint);
-
-  const routeGrid = document.createElement("div");
-  routeGrid.className = "task-route-grid";
+  const routeControls = document.createElement("div");
+  routeControls.className = "task-route-controls";
 
   const entryField = document.createElement("label");
-  entryField.className = "setup-field task-route-field";
+  entryField.className = "task-route-field";
   const entryLabel = document.createElement("span");
-  entryLabel.textContent = "任务入口";
+  entryLabel.className = "task-route-label";
+  entryLabel.textContent = "入口";
   const entrySelect = document.createElement("select");
   entrySelect.id = "task-entry";
   entryField.append(entryLabel, entrySelect);
 
+  const routeDivider = document.createElement("span");
+  routeDivider.className = "task-route-divider";
+  routeDivider.setAttribute("aria-hidden", "true");
+  routeDivider.textContent = "/";
+
   const typeField = document.createElement("label");
-  typeField.className = "setup-field task-route-field";
+  typeField.className = "task-route-field";
   const typeLabel = document.createElement("span");
-  typeLabel.textContent = "事件类型";
+  typeLabel.className = "task-route-label";
+  typeLabel.textContent = "类型";
   const typeSelect = document.createElement("select");
   typeSelect.id = "task-type";
   const concreteInput = document.createElement("input");
   concreteInput.id = "task-concrete-type";
-  concreteInput.placeholder = "填写具体类型，例如 task.release；不自动推测后缀";
+  concreteInput.className = "task-concrete-input";
+  concreteInput.placeholder = "具体类型，如 task.release";
   typeField.append(typeLabel, typeSelect, concreteInput);
 
-  routeGrid.append(entryField, typeField);
-  routeSection.append(routeSummaryBar, routeGrid);
+  const routeSummary = document.createElement("span");
+  routeSummary.id = "task-route-summary";
+  routeSummary.className = "task-route-summary";
+  routeSummary.textContent = "正在读取可用入口……";
+
+  routeControls.append(entryField, routeDivider, typeField, routeSummary);
+  titleRouteBar.append(summaryField, headerSep, routeControls);
 
   const needsConcrete = () => typeSelect.value.includes("*");
   function updateRouteSummary() {
@@ -96,26 +104,16 @@ export function mountTaskView(
     updateRouteSummary();
   }
 
-  // Section 2: Task content composer
+  // Section 2: Full-height Single-Column WYSIWYG Detail Editor
   const composeSection = document.createElement("div");
   composeSection.className = "task-compose-section";
 
-  const summaryField = document.createElement("label");
-  summaryField.className = "setup-field task-summary-field";
-  const summaryLabel = document.createElement("span");
-  summaryLabel.textContent = "任务标题";
-  const summaryInput = document.createElement("input");
-  summaryInput.id = "task-summary";
-  summaryInput.placeholder = "一句话概括任务目标，例如：排查线上支付超时并输出修复方案";
-  summaryInput.required = true;
-  summaryField.append(summaryLabel, summaryInput);
-
-  // Detail field with integrated Markdown edit / preview workbench
+  // Detail field with single-column WYSIWYG live Markdown editor
   const detailField = document.createElement("div");
   detailField.className = "setup-field task-detail-field";
 
   const editorBox = document.createElement("div");
-  editorBox.className = "task-editor-box";
+  editorBox.className = "task-editor-box task-wysiwyg-box";
 
   const detailHeader = document.createElement("div");
   detailHeader.className = "task-detail-header";
@@ -126,15 +124,310 @@ export function mountTaskView(
   detailLabel.textContent = "任务详情";
   const detailBadge = document.createElement("span");
   detailBadge.className = "task-md-badge";
-  detailBadge.textContent = "Markdown";
+  detailBadge.textContent = "Markdown · 所见即所得";
   detailLabelGroup.append(detailLabel, detailBadge);
 
-  const mdTabs = document.createElement("div");
-  mdTabs.className = "markdown-tabs";
-
-  // Shortcut helpers for Typora-like typing
+  // Formatting shortcut toolbar
   const toolsGroup = document.createElement("div");
   toolsGroup.className = "task-md-tools";
+
+  // Backing textarea (#task-detail) holds the canonical full Markdown text for form submission & tests
+  const detailInput = document.createElement("textarea");
+  detailInput.id = "task-detail";
+  detailInput.className = "task-detail-backing";
+  detailInput.rows = 1;
+  detailInput.setAttribute("aria-hidden", "true");
+  detailInput.setAttribute("tabindex", "-1");
+
+  // Single-column WYSIWYG live container (#task-detail-preview)
+  const previewContainer = document.createElement("div");
+  previewContainer.id = "task-detail-preview";
+  previewContainer.className = "task-markdown-preview task-wysiwyg-canvas";
+
+  // Active inline block editor used inside the single-column flow
+  const activeEditor = document.createElement("textarea");
+  activeEditor.className = "task-wysiwyg-active-input";
+  activeEditor.rows = 1;
+  activeEditor.placeholder =
+    "直接输入内容，支持 Markdown 实时排版（如 # 标题、- 列表、- [ ] 待办、**粗体**、``` 代码块），回车即刻渲染……";
+
+  let activeLine: number | null = 0;
+  let fullSelectMode = false;
+
+  interface EditableUnit {
+    startLine: number;
+    endLine: number;
+    text: string;
+    isCode: boolean;
+  }
+
+  function buildUnits(lines: string[]): EditableUnit[] {
+    const units: EditableUnit[] = [];
+    let i = 0;
+    while (i < lines.length) {
+      if (lines[i].trim().startsWith("```")) {
+        let j = i + 1;
+        while (j < lines.length && !lines[j].trim().startsWith("```")) {
+          j++;
+        }
+        const end = j < lines.length ? j : lines.length - 1;
+        units.push({
+          startLine: i,
+          endLine: end,
+          text: lines.slice(i, end + 1).join("\n"),
+          isCode: true,
+        });
+        i = end + 1;
+      } else {
+        units.push({
+          startLine: i,
+          endLine: i,
+          text: lines[i],
+          isCode: false,
+        });
+        i++;
+      }
+    }
+    if (units.length === 0) {
+      units.push({ startLine: 0, endLine: 0, text: "", isCode: false });
+    }
+    return units;
+  }
+
+  function findUnitForLine(units: EditableUnit[], lineIdx: number): EditableUnit {
+    const clamped = Math.max(0, lineIdx);
+    for (const unit of units) {
+      if (clamped >= unit.startLine && clamped <= unit.endLine) return unit;
+    }
+    return units[units.length - 1];
+  }
+
+  function detectBlockType(text: string): string {
+    const firstLine = text.split("\n")[0] ?? "";
+    if (/^#\s+/.test(firstLine)) return "h1";
+    if (/^##\s+/.test(firstLine)) return "h2";
+    if (/^###\s+/.test(firstLine)) return "h3";
+    if (/^#{4,6}\s+/.test(firstLine)) return "h4";
+    if (firstLine.trim().startsWith("```")) return "code";
+    if (firstLine.trim().startsWith(">")) return "quote";
+    if (/^\s*([-*+]\s+|\d+\.\s+)/.test(firstLine)) return "list";
+    return "p";
+  }
+
+  function syncActiveEditorAppearance() {
+    const lineCount = Math.max(1, activeEditor.value.split("\n").length);
+    activeEditor.rows = lineCount;
+    activeEditor.setAttribute("data-block-type", detectBlockType(activeEditor.value));
+  }
+
+  interface RenderSegment {
+    startLine: number;
+    endLine: number;
+    markdown: string;
+  }
+
+  function groupRenderSegments(lines: string[], offset: number): RenderSegment[] {
+    const segments: RenderSegment[] = [];
+    let i = 0;
+    while (i < lines.length) {
+      if (!lines[i].trim()) {
+        i++;
+        continue;
+      }
+      if (lines[i].trim().startsWith("```")) {
+        let j = i + 1;
+        while (j < lines.length && !lines[j].trim().startsWith("```")) j++;
+        const end = j < lines.length ? j : lines.length - 1;
+        segments.push({
+          startLine: offset + i,
+          endLine: offset + end,
+          markdown: lines.slice(i, end + 1).join("\n"),
+        });
+        i = end + 1;
+        continue;
+      }
+      segments.push({
+        startLine: offset + i,
+        endLine: offset + i,
+        markdown: lines[i],
+      });
+      i++;
+    }
+    return segments;
+  }
+
+  function renderSegmentSlice(lines: string[], offset: number, target: HTMLElement) {
+    const segments = groupRenderSegments(lines, offset);
+    for (const seg of segments) {
+      const rendered = renderMarkdown(seg.markdown);
+      rendered.className = "markdown-body task-wysiwyg-block";
+      rendered.addEventListener("click", (ev: Event) => {
+        if (detailInput.disabled) return;
+        const rawTarget = (ev as { target?: { tag?: string; tagName?: string; type?: string } }).target;
+        const tagName = (rawTarget?.tagName ?? rawTarget?.tag ?? "").toLowerCase();
+        if (tagName === "input" && rawTarget?.type === "checkbox") {
+          const docLines = detailInput.value.split(/\r?\n/);
+          const line = docLines[seg.startLine] ?? "";
+          if (/\[ \]/.test(line)) {
+            docLines[seg.startLine] = line.replace("[ ]", "[x]");
+          } else if (/\[[xX]\]/.test(line)) {
+            docLines[seg.startLine] = line.replace(/\[[xX]\]/, "[ ]");
+          }
+          detailInput.value = docLines.join("\n");
+          refreshLivePreview();
+          saveCurrentDraft();
+          return;
+        }
+        if (tagName === "a") return;
+        activateLine(seg.startLine, null);
+      });
+      target.append(rendered);
+    }
+  }
+
+  function activateLine(lineIdx: number, cursorOffset: number | null = null) {
+    if (detailInput.disabled) return;
+    fullSelectMode = false;
+    const lines = detailInput.value.split(/\r?\n/);
+    const units = buildUnits(lines);
+    const unit = findUnitForLine(units, lineIdx);
+    activeLine = unit.startLine;
+    refreshLivePreview();
+    activeEditor.focus?.();
+    const pos =
+      cursorOffset !== null
+        ? Math.max(0, Math.min(cursorOffset, activeEditor.value.length))
+        : activeEditor.value.length;
+    activeEditor.setSelectionRange?.(pos, pos);
+  }
+
+  function commitActiveEditorToBacking() {
+    const lines = detailInput.value.split(/\r?\n/);
+    if (fullSelectMode) {
+      detailInput.value = activeEditor.value;
+      return;
+    }
+    if (activeLine === null) return;
+    const units = buildUnits(lines);
+    const unit = findUnitForLine(units, activeLine);
+    const replacementLines = activeEditor.value.split(/\r?\n/);
+    lines.splice(unit.startLine, unit.endLine - unit.startLine + 1, ...replacementLines);
+    detailInput.value = lines.join("\n");
+  }
+
+  function refreshLivePreview() {
+    const raw = detailInput.value;
+    const lines = raw.split(/\r?\n/);
+    const nodes: HTMLElement[] = [];
+
+    if (fullSelectMode) {
+      activeEditor.value = raw;
+      syncActiveEditorAppearance();
+      nodes.push(activeEditor);
+      previewContainer.replaceChildren(...nodes);
+      return;
+    }
+
+    if (activeLine !== null && !detailInput.disabled) {
+      const units = buildUnits(lines);
+      const unit = findUnitForLine(units, activeLine);
+      activeLine = unit.startLine;
+
+      if (unit.startLine > 0) {
+        const beforeWrap = document.createElement("div");
+        beforeWrap.className = "task-wysiwyg-slice";
+        renderSegmentSlice(lines.slice(0, unit.startLine), 0, beforeWrap);
+        if (beforeWrap.children.length > 0) nodes.push(beforeWrap);
+      }
+
+      activeEditor.value = unit.text;
+      syncActiveEditorAppearance();
+      nodes.push(activeEditor);
+
+      if (unit.endLine + 1 < lines.length) {
+        const afterWrap = document.createElement("div");
+        afterWrap.className = "task-wysiwyg-slice";
+        renderSegmentSlice(lines.slice(unit.endLine + 1), unit.endLine + 1, afterWrap);
+        if (afterWrap.children.length > 0) nodes.push(afterWrap);
+      }
+
+      const tail = document.createElement("div");
+      tail.className = "task-wysiwyg-tail";
+      tail.addEventListener("click", () => {
+        if (detailInput.disabled) return;
+        const currentLines = detailInput.value.split(/\r?\n/);
+        const lastIdx = currentLines.length - 1;
+        if (currentLines[lastIdx]?.trim() !== "") {
+          currentLines.push("");
+          detailInput.value = currentLines.join("\n");
+          saveCurrentDraft();
+        }
+        activateLine(currentLines.length - 1, 0);
+      });
+      nodes.push(tail);
+
+      previewContainer.replaceChildren(...nodes);
+      return;
+    }
+
+    // When not actively editing a specific line (or when disabled), render all blocks
+    const fullWrap = document.createElement("div");
+    fullWrap.className = "task-wysiwyg-slice";
+    if (raw.trim()) {
+      renderSegmentSlice(lines, 0, fullWrap);
+      nodes.push(fullWrap);
+    } else {
+      activeLine = 0;
+      activeEditor.value = "";
+      syncActiveEditorAppearance();
+      nodes.push(activeEditor);
+    }
+    const tail = document.createElement("div");
+    tail.className = "task-wysiwyg-tail";
+    tail.addEventListener("click", () => {
+      if (detailInput.disabled) return;
+      const currentLines = detailInput.value.split(/\r?\n/);
+      activateLine(currentLines.length - 1);
+    });
+    nodes.push(tail);
+    previewContainer.replaceChildren(...nodes);
+  }
+
+  activeEditor.addEventListener("input", () => {
+    syncActiveEditorAppearance();
+    commitActiveEditorToBacking();
+    saveCurrentDraft();
+  });
+
+  activeEditor.addEventListener("blur", () => {
+    commitActiveEditorToBacking();
+    if (detailInput.value.trim()) {
+      activeLine = null;
+      fullSelectMode = false;
+      refreshLivePreview();
+    }
+  });
+
+  function wrapSelection(wrapStart: string, wrapEnd: string = wrapStart) {
+    if (activeLine === null) {
+      const lines = detailInput.value.split(/\r?\n/);
+      activeLine = Math.max(0, lines.length - 1);
+      refreshLivePreview();
+    }
+    const start = activeEditor.selectionStart ?? activeEditor.value.length;
+    const end = activeEditor.selectionEnd ?? activeEditor.value.length;
+    const sel = activeEditor.value.slice(start, end) || "文本";
+    const before = activeEditor.value.slice(0, start);
+    const after = activeEditor.value.slice(end);
+    activeEditor.value = `${before}${wrapStart}${sel}${wrapEnd}${after}`;
+    const newCursorStart = start + wrapStart.length;
+    const newCursorEnd = newCursorStart + sel.length;
+    commitActiveEditorToBacking();
+    refreshLivePreview();
+    activeEditor.focus?.();
+    activeEditor.setSelectionRange?.(newCursorStart, newCursorEnd);
+    saveCurrentDraft();
+  }
 
   function createToolBtn(label: string, title: string, wrapStart: string, wrapEnd: string = wrapStart) {
     const btn = document.createElement("button");
@@ -142,19 +435,12 @@ export function mountTaskView(
     btn.className = "task-md-tool-btn";
     btn.textContent = label;
     btn.title = title;
+    btn.addEventListener("mousedown", (e: Event) => {
+      e.preventDefault();
+    });
     btn.addEventListener("click", () => {
-      if (currentTab !== "edit") switchTab("edit");
-      const start = detailInput.selectionStart ?? detailInput.value.length;
-      const end = detailInput.selectionEnd ?? detailInput.value.length;
-      const sel = detailInput.value.slice(start, end) || "文本";
-      const before = detailInput.value.slice(0, start);
-      const after = detailInput.value.slice(end);
-      detailInput.value = `${before}${wrapStart}${sel}${wrapEnd}${after}`;
-      const newCursorStart = start + wrapStart.length;
-      const newCursorEnd = newCursorStart + sel.length;
-      detailInput.focus?.();
-      detailInput.setSelectionRange?.(newCursorStart, newCursorEnd);
-      saveCurrentDraft();
+      if (detailInput.disabled) return;
+      wrapSelection(wrapStart, wrapEnd);
     });
     return btn;
   }
@@ -162,92 +448,62 @@ export function mountTaskView(
   toolsGroup.append(
     createToolBtn("B", "粗体 (Ctrl+B / Cmd+B)", "**"),
     createToolBtn("I", "斜体 (Ctrl+I / Cmd+I)", "*"),
-    createToolBtn("H", "标题 (Ctrl+H)", "### ", ""),
+    createToolBtn("H", "标题 (Ctrl+H / Cmd+H)", "### ", ""),
     createToolBtn("`", "行内代码", "`"),
-    createToolBtn("```", "代码块", "\n```\n", "\n```\n"),
-    createToolBtn("-", "无序列表", "- ", ""),
+    createToolBtn("```", "代码块", "```\n", "\n```"),
+    createToolBtn("•", "无序列表", "- ", ""),
     createToolBtn("1.", "有序列表", "1. ", ""),
-    createToolBtn("[ ]", "任务清单", "- [ ] ", ""),
+    createToolBtn("☑", "任务清单", "- [ ] ", ""),
+    createToolBtn("❝", "引用块", "> ", ""),
   );
 
-  const tabButtons = document.createElement("div");
-  tabButtons.className = "task-tab-buttons";
-  const editTab = document.createElement("button");
-  editTab.type = "button";
-  editTab.className = "markdown-tab active";
-  editTab.textContent = "编辑";
-  const previewTab = document.createElement("button");
-  previewTab.type = "button";
-  previewTab.className = "markdown-tab";
-  previewTab.textContent = "预览";
-  tabButtons.append(editTab, previewTab);
-  mdTabs.append(toolsGroup, tabButtons);
-  detailHeader.append(detailLabelGroup, mdTabs);
+  detailHeader.append(detailLabelGroup, toolsGroup);
 
-  const detailInput = document.createElement("textarea");
-  detailInput.id = "task-detail";
-  detailInput.rows = 10;
-  detailInput.placeholder =
-    "描述背景上下文、验收标准或参考资料，支持 Markdown 语法……\n\n- 支持快捷键：Tab 缩进、Shift+Tab 反缩进、回车自动延续列表项\n- 点击顶部快捷工具或输入 Markdown 标记，随时切换预览查看排版";
+  // Single-column WYSIWYG keyboard navigation & live block transitions
+  activeEditor.addEventListener("keydown", (e: KeyboardEvent) => {
+    const isMod = e.metaKey || e.ctrlKey;
 
-  // Keyboard shortcut enhancements for Typora-like editing
-  detailInput.addEventListener("keydown", (e: KeyboardEvent) => {
-    // 1. Tab / Shift+Tab indentation
-    if (e.key === "Tab") {
-      e.preventDefault();
-      const start = detailInput.selectionStart ?? 0;
-      const end = detailInput.selectionEnd ?? 0;
-      const val = detailInput.value;
-      if (e.shiftKey) {
-        // Unindent
-        if (val.slice(start - 2, start) === "  ") {
-          detailInput.value = val.slice(0, start - 2) + val.slice(start);
-          detailInput.setSelectionRange?.(start - 2, end - 2);
-        }
-      } else {
-        // Indent
-        detailInput.value = val.slice(0, start) + "  " + val.slice(end);
-        detailInput.setSelectionRange?.(start + 2, start + 2);
-      }
-      saveCurrentDraft();
-      return;
-    }
-
-    // 2. Auto-continue list markers on Enter
-    if (e.key === "Enter" && !e.shiftKey) {
-      const cursor = detailInput.selectionStart ?? 0;
-      const textBefore = detailInput.value.slice(0, cursor);
-      const lastLine = textBefore.split("\n").pop() ?? "";
-      const match = lastLine.match(/^(\s*)([-*] \[[ xX]\] |[-*] |\d+\. )/);
-      if (match) {
-        // If current list line is empty (just the marker), pressing Enter clears the marker
-        if (lastLine.trim() === match[2].trim()) {
-          e.preventDefault();
-          const lineStart = cursor - lastLine.length;
-          detailInput.value = detailInput.value.slice(0, lineStart) + detailInput.value.slice(cursor);
-          detailInput.setSelectionRange?.(lineStart, lineStart);
-          saveCurrentDraft();
-          return;
-        }
+    if (isMod && (e.key === "a" || e.key === "A")) {
+      if (!fullSelectMode && detailInput.value.includes("\n")) {
         e.preventDefault();
-        let nextMarker = match[2];
-        const numMatch = match[2].match(/^(\d+)\. /);
-        if (numMatch) {
-          nextMarker = `${parseInt(numMatch[1], 10) + 1}. `;
-        } else if (match[2].includes("[")) {
-          nextMarker = "- [ ] ";
-        }
-        const insert = `\n${match[1]}${nextMarker}`;
-        detailInput.value = detailInput.value.slice(0, cursor) + insert + detailInput.value.slice(cursor);
-        const newPos = cursor + insert.length;
-        detailInput.setSelectionRange?.(newPos, newPos);
-        saveCurrentDraft();
+        commitActiveEditorToBacking();
+        fullSelectMode = true;
+        refreshLivePreview();
+        activeEditor.focus?.();
+        activeEditor.setSelectionRange?.(0, activeEditor.value.length);
         return;
       }
     }
 
-    // 3. Bold/Italic shortcuts (Cmd/Ctrl + B, Cmd/Ctrl + I)
-    const isMod = e.metaKey || e.ctrlKey;
+    if (e.key === "Escape" && fullSelectMode) {
+      e.preventDefault();
+      commitActiveEditorToBacking();
+      fullSelectMode = false;
+      activeLine = 0;
+      refreshLivePreview();
+      activeEditor.focus?.();
+      return;
+    }
+
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const start = activeEditor.selectionStart ?? 0;
+      const end = activeEditor.selectionEnd ?? 0;
+      const val = activeEditor.value;
+      if (e.shiftKey) {
+        if (val.slice(start - 2, start) === "  ") {
+          activeEditor.value = val.slice(0, start - 2) + val.slice(start);
+          activeEditor.setSelectionRange?.(start - 2, end - 2);
+        }
+      } else {
+        activeEditor.value = val.slice(0, start) + "  " + val.slice(end);
+        activeEditor.setSelectionRange?.(start + 2, start + 2);
+      }
+      commitActiveEditorToBacking();
+      saveCurrentDraft();
+      return;
+    }
+
     if (isMod && (e.key === "b" || e.key === "B")) {
       e.preventDefault();
       wrapSelection("**");
@@ -263,54 +519,127 @@ export function mountTaskView(
       wrapSelection("### ", "");
       return;
     }
+
+    if (fullSelectMode) return;
+
+    const cursor = activeEditor.selectionStart ?? 0;
+    const selEnd = activeEditor.selectionEnd ?? cursor;
+    const val = activeEditor.value;
+    const isCodeBlock = val.trim().startsWith("```");
+
+    if (e.key === "Enter" && !e.shiftKey) {
+      if (isCodeBlock) {
+        const codeLines = val.split("\n");
+        const hasClosingFence = codeLines.length > 1 && codeLines[codeLines.length - 1].trim().startsWith("```");
+        if (hasClosingFence && cursor === val.length) {
+          e.preventDefault();
+          commitActiveEditorToBacking();
+          const docLines = detailInput.value.split(/\r?\n/);
+          const units = buildUnits(docLines);
+          const unit = findUnitForLine(units, activeLine ?? 0);
+          docLines.splice(unit.endLine + 1, 0, "");
+          detailInput.value = docLines.join("\n");
+          saveCurrentDraft();
+          activateLine(unit.endLine + 1, 0);
+          return;
+        }
+        return;
+      }
+
+      e.preventDefault();
+      const before = val.slice(0, cursor);
+      const after = val.slice(selEnd);
+      const listMatch = before.match(/^(\s*)([-*] \[[ xX]\] |[-*] |\d+\. )/);
+
+      commitActiveEditorToBacking();
+      const docLines = detailInput.value.split(/\r?\n/);
+      const currentIdx = activeLine ?? 0;
+
+      if (listMatch) {
+        if (before.trim() === listMatch[2].trim() && after.trim() === "") {
+          docLines[currentIdx] = "";
+          detailInput.value = docLines.join("\n");
+          saveCurrentDraft();
+          activateLine(currentIdx, 0);
+          return;
+        }
+        let nextMarker = listMatch[2];
+        const numMatch = listMatch[2].match(/^(\d+)\. /);
+        if (numMatch) {
+          nextMarker = `${parseInt(numMatch[1], 10) + 1}. `;
+        } else if (listMatch[2].includes("[")) {
+          nextMarker = "- [ ] ";
+        }
+        const nextLinePrefix = `${listMatch[1]}${nextMarker}`;
+        docLines[currentIdx] = before;
+        docLines.splice(currentIdx + 1, 0, `${nextLinePrefix}${after}`);
+        detailInput.value = docLines.join("\n");
+        saveCurrentDraft();
+        activateLine(currentIdx + 1, nextLinePrefix.length);
+        return;
+      }
+
+      docLines[currentIdx] = before;
+      docLines.splice(currentIdx + 1, 0, after);
+      detailInput.value = docLines.join("\n");
+      saveCurrentDraft();
+      activateLine(currentIdx + 1, 0);
+      return;
+    }
+
+    if (e.key === "Backspace" && cursor === 0 && selEnd === 0 && (activeLine ?? 0) > 0) {
+      e.preventDefault();
+      commitActiveEditorToBacking();
+      const docLines = detailInput.value.split(/\r?\n/);
+      const units = buildUnits(docLines);
+      const unit = findUnitForLine(units, activeLine ?? 0);
+      if (unit.startLine > 0) {
+        const prevUnit = findUnitForLine(units, unit.startLine - 1);
+        const joinCol = docLines[prevUnit.endLine].length;
+        docLines[prevUnit.endLine] = docLines[prevUnit.endLine] + docLines[unit.startLine];
+        docLines.splice(unit.startLine, 1);
+        detailInput.value = docLines.join("\n");
+        saveCurrentDraft();
+        activateLine(prevUnit.startLine, joinCol);
+      }
+      return;
+    }
+
+    if (e.key === "ArrowUp" && !val.slice(0, cursor).includes("\n") && (activeLine ?? 0) > 0) {
+      e.preventDefault();
+      commitActiveEditorToBacking();
+      const docLines = detailInput.value.split(/\r?\n/);
+      const units = buildUnits(docLines);
+      const unit = findUnitForLine(units, activeLine ?? 0);
+      if (unit.startLine > 0) {
+        const prevUnit = findUnitForLine(units, unit.startLine - 1);
+        activateLine(prevUnit.startLine, cursor);
+      }
+      return;
+    }
+
+    if (e.key === "ArrowDown" && !val.slice(cursor).includes("\n")) {
+      commitActiveEditorToBacking();
+      const docLines = detailInput.value.split(/\r?\n/);
+      const units = buildUnits(docLines);
+      const unit = findUnitForLine(units, activeLine ?? 0);
+      if (unit.endLine < docLines.length - 1) {
+        e.preventDefault();
+        const nextUnit = findUnitForLine(units, unit.endLine + 1);
+        activateLine(nextUnit.startLine, cursor);
+      }
+    }
   });
-
-  function wrapSelection(wrapStart: string, wrapEnd: string = wrapStart) {
-    const start = detailInput.selectionStart ?? detailInput.value.length;
-    const end = detailInput.selectionEnd ?? detailInput.value.length;
-    const sel = detailInput.value.slice(start, end) || "文本";
-    const before = detailInput.value.slice(0, start);
-    const after = detailInput.value.slice(end);
-    detailInput.value = `${before}${wrapStart}${sel}${wrapEnd}${after}`;
-    const newCursorStart = start + wrapStart.length;
-    const newCursorEnd = newCursorStart + sel.length;
-    detailInput.focus?.();
-    detailInput.setSelectionRange?.(newCursorStart, newCursorEnd);
-    saveCurrentDraft();
-  }
-
-  const previewContainer = document.createElement("div");
-  previewContainer.id = "task-detail-preview";
-  previewContainer.className = "task-markdown-preview";
-  previewContainer.hidden = true;
 
   const mdHint = document.createElement("p");
   mdHint.className = "muted task-detail-hint";
-  mdHint.textContent = "支持 Markdown 格式：标题 (#)、列表 (- / 1.)、代码块 (```)、粗体 (**) 等";
+  mdHint.textContent =
+    "单栏所见即所得：输入 # 标题、**粗体**、- 列表、- [ ] 待办、``` 代码块后回车即刻渲染，点击任意已渲染段落可直接原位修改";
 
+  refreshLivePreview();
   editorBox.append(detailHeader, detailInput, previewContainer, mdHint);
   detailField.append(editorBox);
-  composeSection.append(summaryField, detailField);
-
-  let currentTab: "edit" | "preview" = "edit";
-  function switchTab(tab: "edit" | "preview") {
-    currentTab = tab;
-    if (editTab.classList?.toggle) {
-      editTab.classList.toggle("active", tab === "edit");
-      previewTab.classList.toggle("active", tab === "preview");
-    } else {
-      editTab.className = tab === "edit" ? "markdown-tab active" : "markdown-tab";
-      previewTab.className = tab === "preview" ? "markdown-tab active" : "markdown-tab";
-    }
-    detailInput.hidden = tab !== "edit";
-    previewContainer.hidden = tab !== "preview";
-    mdHint.hidden = tab !== "edit";
-    if (tab === "preview") {
-      previewContainer.replaceChildren(renderMarkdown(detailInput.value));
-    }
-  }
-  editTab.addEventListener("click", () => switchTab("edit"));
-  previewTab.addEventListener("click", () => switchTab("preview"));
+  composeSection.append(detailField);
 
   // Section 3: Status feedback & action footer
   const footer = document.createElement("div");
@@ -358,7 +687,7 @@ export function mountTaskView(
   primaryGroup.append(anotherButton, submitButton, doneButton);
   actions.append(cancelButton, primaryGroup);
   footer.append(status, error, actions);
-  form.append(routeSection, composeSection, footer);
+  form.append(titleRouteBar, composeSection, footer);
   root.append(form);
 
   function saveCurrentDraft() {
@@ -374,10 +703,10 @@ export function mountTaskView(
 
   summaryInput.addEventListener("input", saveCurrentDraft);
   detailInput.addEventListener("input", () => {
+    fullSelectMode = false;
+    activeLine = detailInput.value.trim() ? null : 0;
+    refreshLivePreview();
     saveCurrentDraft();
-    if (currentTab === "preview") {
-      previewContainer.replaceChildren(renderMarkdown(detailInput.value));
-    }
   });
   concreteInput.addEventListener("input", () => {
     updateRouteSummary();
@@ -406,6 +735,7 @@ export function mountTaskView(
     entrySelect.disabled = !usable;
     summaryInput.disabled = !usable;
     detailInput.disabled = !usable;
+    activeEditor.disabled = !usable;
     submitButton.disabled = !usable;
   }
 
@@ -426,7 +756,8 @@ export function mountTaskView(
       }),
     );
     if (types.includes(selected)) typeSelect.value = selected;
-    typeField.hidden = types.length <= 1 && !types.some((type) => type.includes("*"));
+    typeField.hidden = false;
+    typeSelect.hidden = false;
     updateConcrete();
   }
 
@@ -450,6 +781,8 @@ export function mountTaskView(
       concreteInput.value = operation.draft.concrete;
       summaryInput.value = operation.draft.summary;
       detailInput.value = operation.draft.detail;
+      activeLine = null;
+      fullSelectMode = false;
       updateConcrete();
     } else if (controller.draft) {
       const draft = controller.draft;
@@ -468,18 +801,17 @@ export function mountTaskView(
       }
       if (draft.detail !== undefined && !detailInput.value) {
         detailInput.value = draft.detail;
+        if (draft.detail.trim()) activeLine = null;
       }
       updateConcrete();
     } else {
       updateRouteSummary();
     }
 
-    if (currentTab === "preview") {
-      previewContainer.replaceChildren(renderMarkdown(detailInput.value));
-    }
-
-    for (const field of [entrySelect, typeSelect, concreteInput, summaryInput, detailInput])
+    for (const field of [entrySelect, typeSelect, concreteInput, summaryInput, detailInput, activeEditor])
       field.disabled = !!operation || !controller.canSubmit || state.kind !== "ready";
+
+    refreshLivePreview();
     anotherButton.hidden =
       !operation || controller.submitState.kind === "busy" || controller.submitState.kind === "uncertain";
     anotherButton.disabled = !controller.canBeginAnother;
@@ -575,8 +907,11 @@ export function mountTaskView(
     if (controller.operation) return;
     summaryInput.value = "";
     detailInput.value = "";
+    activeEditor.value = "";
     concreteInput.value = "";
-    switchTab("edit");
+    activeLine = 0;
+    fullSelectMode = false;
+    refreshLivePreview();
     controller.loadEntries();
     update();
   });
@@ -591,7 +926,10 @@ export function mountTaskView(
       if (controller.draft) {
         const draft = controller.draft;
         if (draft.summary) summaryInput.value = draft.summary;
-        if (draft.detail) detailInput.value = draft.detail;
+        if (draft.detail) {
+          detailInput.value = draft.detail;
+          activeLine = draft.detail.trim() ? null : 0;
+        }
         if (draft.concrete) concreteInput.value = draft.concrete;
       }
     }
