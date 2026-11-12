@@ -68,6 +68,29 @@ select:disabled {
   opacity: 0.6;
   cursor: wait;
 }
+/* The OS draws its own select arrow hugging the right border in system grey; the app takes over
+   instead, so the chevron's spacing and colour follow the design tokens like every other control.
+   padding-right reserves the chevron's room so long option text never runs under it. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  padding-right: 36px;
+}
+/* CSP forbids images (img-src 'none'), so the chevron is two borders rotated into a vee. It must
+   never eat the click that opens the list. */
+select::after {
+  content: "";
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: translateY(-60%) rotate(45deg);
+  pointer-events: none;
+}
 :focus-visible {
   outline: 2px solid var(--blue);
   outline-offset: 3px;
@@ -202,12 +225,15 @@ h2 {
   right: -5px;
   bottom: -4px;
 }
-nav {
+/* The sidebar's own menu. Scoped to the sidebar so a page nav (the settings groups, any future
+   one) cannot inherit the column layout meant for the menu — an unscoped `nav` rule once
+   stretched the settings pills into full-width bars stacked one per row. */
+.sidebar nav {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
-nav button {
+.sidebar nav button {
   display: flex;
   align-items: center;
   gap: 11px;
@@ -217,7 +243,7 @@ nav button {
   border: 0;
   text-align: left;
 }
-nav button.active {
+.sidebar nav button.active {
   color: var(--text);
   background: var(--accent-bg);
   font-weight: 600;
@@ -1012,8 +1038,7 @@ main {
   gap: 10px;
   margin-top: 16px;
 }
-.tasks-filters input,
-.tasks-filters select {
+.tasks-filters input {
   font: inherit;
   color: var(--text);
   background: var(--panel2);
@@ -1040,8 +1065,10 @@ main {
   font-size: 12px;
   margin: 10px 0 0;
 }
-.rules-preview[hidden] {
-  display: none;
+/* The panel is no longer a .panel card (the page head carries the title), so the intro keeps its
+   own compact spacing under the page header. */
+.rules-panel > .rules-intro {
+  margin: 0;
 }
 .rules-actions {
   display: flex;
@@ -1051,50 +1078,136 @@ main {
 }
 .entry-list {
   list-style: none;
-  margin: 18px 0 0;
+  margin: 20px 0 0;
   padding: 0;
-  display: grid;
-  gap: 10px;
 }
+/* Joint rows like the today page's run list: rows share borders, only the ends get radius. */
 .entry-item {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 14px;
-  background: var(--panel2);
   display: grid;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 15px;
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  background: var(--panel);
+}
+.entry-list li:first-child .entry-item {
+  border-radius: 8px 8px 0 0;
+}
+.entry-list li:last-child .entry-item {
+  border-bottom: 1px solid var(--border);
+  border-radius: 0 0 8px 8px;
+}
+.entry-list li:only-child .entry-item {
+  border-radius: 8px;
+}
+.entry-copy {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* Draft rows state their own kind: dashed border means unsaved, the badge says which kind. */
+.entry-item.added,
+.entry-item.changed,
+.entry-item.removed {
+  border-style: dashed;
+}
+.entry-badge {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.entry-badge.added {
+  color: var(--green);
+  border-color: var(--green);
+  background: color-mix(in srgb, var(--green) 8%, transparent);
+}
+.entry-badge.changed {
+  color: var(--amber);
+  border-color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 8%, transparent);
+}
+.entry-badge.removed {
+  color: var(--red);
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 8%, transparent);
 }
 .entry-head {
   display: flex;
-  justify-content: space-between;
   align-items: baseline;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 7px;
+  font-size: 13px;
 }
-.entry-to {
-  font-size: 12px;
-  color: var(--faint);
+.entry-head strong {
+  font-weight: 550;
 }
 .entry-types {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  margin-top: 6px;
 }
 .entry-types code {
   font-size: 11px;
-  padding: 2px 7px;
+  padding: 1px 7px;
   border-radius: 999px;
   border: 1px solid var(--border);
-  background: var(--panel);
+  background: var(--panel2);
 }
 .entry-meta {
   font-size: 11px;
+  color: var(--muted);
+  margin-top: 3px;
 }
 .entry-actions {
   display: flex;
   gap: 8px;
 }
-.entry-list.editing .entry-item {
-  border-style: dashed;
+.entry-actions button {
+  font-size: 12px;
+  padding: 4px 9px;
+}
+.entry-item.removed .entry-head strong {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+/* The draft bar and the add row: the page's only standing controls besides the list itself. */
+.draft-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.draft-bar .rules-preview {
+  margin: 0;
+  margin-right: auto;
+  flex: 1 1 240px;
+}
+.rules-warning {
+  font-size: 11px;
+  margin: 8px 0 0;
+}
+.entry-add {
+  list-style: none;
+  margin-top: 10px;
+}
+.entry-add .rules-add {
+  font-size: 12px;
+  padding: 5px 9px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+.entry-add .rules-add:hover {
+  border-color: var(--blue);
+  color: var(--text);
 }
 .rules-dialog .setup-field input[type="number"] {
   width: 90px;
@@ -1299,14 +1412,19 @@ main {
   .sidebar-status-dot {
     background: CanvasText;
   }
-  nav button.active {
+  .sidebar nav button.active,
+  .settings-tab.active {
     outline: 2px solid Highlight;
   }
 }
-/* The settings page: tabs are plain buttons; only the body swaps. */
+/* The settings page: the groups are horizontal pills in the sidebar's activation language, and
+   only the body swaps. The row states its own direction — never again inherited from a nav
+   default outside the page. */
 .settings-tabs {
   display: flex;
+  flex-direction: row;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
   margin-top: 16px;
   border-bottom: 1px solid var(--border);
@@ -1323,8 +1441,9 @@ main {
 }
 .settings-tab.active {
   color: var(--text);
-  border-color: var(--border);
-  background: var(--panel2);
+  border-color: transparent;
+  background: var(--accent-bg);
+  font-weight: 600;
 }
 .settings-tab:disabled {
   opacity: 0.45;

@@ -190,6 +190,12 @@ export function createRendererRulesCas(bridge: RulesCasBridge, onChange?: () => 
       if (!Number.isInteger(index) || index < 0 || index >= current.entries.length) throw new Error("入口位置无效");
       change(current.entries.filter((_, at) => at !== index));
     },
+    /** Undo a removal by putting the original entry back at its old position. */
+    restoreEntry(index: number, value: unknown) {
+      const current = editing();
+      if (!Number.isInteger(index) || index < 0 || index > current.entries.length) throw new Error("入口位置无效");
+      change([...current.entries.slice(0, index), parseDesktopRuleEntry(value), ...current.entries.slice(index)]);
+    },
     save() {
       if (putFlight || !draft || needsReview) return;
       const captured = draft;
