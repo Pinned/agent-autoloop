@@ -1,2 +1,4 @@
 desktop/dist/
 desktop/.cache/
+desktop/stage/
+desktop/release/

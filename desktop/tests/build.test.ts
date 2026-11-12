@@ -472,7 +472,7 @@ test("a pure worker's task page never asks for a history it has no credential fo
   assert.match(app, /renderedFlavor/);
 });
 
-test("the global new-task dialog is a native dialog driven by the pure task contract", () => {
+test("the global dispatch-task view is a subpage driven by the pure task contract", () => {
   const app = read("../src/renderer/app.ts");
   const html = read("../src/renderer/index.html");
   const view = read("../src/renderer/task-view.ts");
@@ -480,7 +480,7 @@ test("the global new-task dialog is a native dialog driven by the pure task cont
   assert.match(html, /id="new-task"/);
   assert.match(app, /mountTaskDialog\(/);
   assert.match(app, /today\.refresh\(\)/);
-  // Pure DOM construction only; the dialog never serialises markup.
+  // Pure DOM construction only; the view never serialises markup.
   assert.doesNotMatch(view, /innerHTML|insertAdjacentHTML|console\./);
   assert.doesNotMatch(controller, /node:|from ["'].*host\/(?:config|runtime|setup)\.ts/);
   assert.match(controller, /from ["'].*host\/desktop-task-contract\.ts/);
@@ -494,7 +494,7 @@ test("the global new-task dialog is a native dialog driven by the pure task cont
   assert.ok(view.indexOf("notifiedResult = submission.result") < view.indexOf("onCreated();"));
   assert.match(view, /try \{\s*onCreated\(\);\s*\} catch/);
   assert.doesNotMatch(view, /addEventListener\("close",[\s\S]*controller\.reset/);
-  assert.match(view, /showModal\(\)/);
+  assert.match(view, /renderMarkdown/);
 });
 
 test("the tray's live glance listens to the hub's own stream and never polls", () => {

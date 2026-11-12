@@ -812,6 +812,12 @@ main {
 .new-task-button {
   margin-top: 10px;
 }
+.new-task-button.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--text);
+  font-weight: 600;
+}
 .task-dialog {
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -824,9 +830,17 @@ main {
 .task-dialog::backdrop {
   background: rgba(10, 14, 22, 0.45);
 }
+.task-subpage-panel {
+  max-width: 780px;
+  width: 100%;
+}
+.task-back-button {
+  font-size: 13px;
+  padding: 6px 14px;
+}
 .task-form {
   display: grid;
-  gap: 14px;
+  gap: 16px;
   padding: 22px;
 }
 .task-form h2 {
@@ -844,6 +858,127 @@ main {
 }
 .task-dialog-error {
   margin: 0;
+}
+.task-detail-field {
+  display: flex;
+  flex-direction: column;
+}
+.task-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.markdown-tabs {
+  display: flex;
+  gap: 4px;
+}
+.markdown-tab {
+  padding: 3px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel2);
+  color: var(--muted);
+  cursor: pointer;
+}
+.markdown-tab.active {
+  background: var(--accent-bg);
+  color: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.task-markdown-preview {
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 16px;
+  min-height: 140px;
+  max-height: 380px;
+  overflow-y: auto;
+}
+.task-detail-hint {
+  font-size: 11px;
+  margin-top: 6px;
+  color: var(--muted);
+}
+.markdown-body {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  margin: 12px 0 6px;
+  font-weight: 600;
+  color: var(--text);
+}
+.markdown-body h1 {
+  font-size: 18px;
+  border-bottom: 1px solid var(--soft);
+  padding-bottom: 4px;
+}
+.markdown-body h2 {
+  font-size: 15px;
+}
+.markdown-body h3 {
+  font-size: 14px;
+}
+.markdown-body p {
+  margin: 6px 0;
+}
+.markdown-body pre {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  margin: 8px 0;
+}
+.markdown-body code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--soft);
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+}
+.markdown-body blockquote {
+  margin: 8px 0;
+  padding: 6px 12px;
+  border-left: 3px solid var(--accent);
+  color: var(--muted);
+  background: var(--panel);
+  border-radius: 0 4px 4px 0;
+}
+.markdown-body ul,
+.markdown-body ol {
+  margin: 6px 0;
+  padding-left: 22px;
+}
+.markdown-body li {
+  margin: 3px 0;
+}
+.markdown-body hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+.markdown-body a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.markdown-empty {
+  font-style: italic;
 }
 .task-form textarea {
   font: inherit;

@@ -240,3 +240,41 @@ test("a throwing listener never corrupts the state transition", async () => {
   assert.equal(controller.entriesState.kind, "ready");
   assert.equal(controller.submitState.kind, "done");
 });
+
+test("unsubmitted draft is cached in memory and cleared on accepted dispatch", async () => {
+  const f = fixture();
+  f.controller.saveDraft({
+    entry: "值班规则",
+    pattern: "task.ops",
+    concrete: "",
+    summary: "草稿任务标题",
+    detail: "## 详情描述\nMarkdown 格式",
+  });
+  assert.ok(f.controller.draft);
+  assert.equal(f.controller.draft.summary, "草稿任务标题");
+  assert.equal(f.controller.draft.detail, "## 详情描述\nMarkdown 格式");
+
+  // Submitting and accepting clears the draft cache
+  f.controller.loadEntries();
+  f.answerEntries(entriesReady([entry()]));
+  await flush();
+  f.controller.submitTask({ type: "task.ops", summary: "草稿任务标题", detail: "## 详情描述" });
+  f.answerCreate(createOk());
+  await flush();
+  assert.equal(f.controller.submitState.kind, "done");
+  assert.equal(f.controller.draft, null);
+});
+
+test("explicit reset clears the draft cache", () => {
+  const f = fixture();
+  f.controller.saveDraft({
+    entry: "值班规则",
+    pattern: "task.ops",
+    concrete: "",
+    summary: "将被清空的草稿",
+    detail: "详情",
+  });
+  assert.ok(f.controller.draft);
+  f.controller.clearDraft();
+  assert.equal(f.controller.draft, null);
+});

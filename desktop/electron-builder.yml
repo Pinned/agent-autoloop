@@ -22,3 +22,4 @@ mac:
   icon: assets/icon.icns
   # V1 ships unsigned for local use; signing is a later release decision.
   identity: null
+publish: null
