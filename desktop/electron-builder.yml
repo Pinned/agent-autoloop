@@ -1,7 +1,7 @@
 # What the app needs at runtime but must not keep inside asar: the business sources it copies per
 # request and the verified official Node archive. scripts/stage.mjs produces exactly this shape.
 appId: com.autoloop.desktop
-productName: agent-autoloop
+productName: 指挥部
 directories:
   output: release
   buildResources: assets

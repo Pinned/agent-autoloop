@@ -498,7 +498,7 @@ if (ownsAppLock)
         Menu.setApplicationMenu(
           Menu.buildFromTemplate([
             {
-              label: "agent-autoloop",
+              label: "指挥部",
               submenu: [
                 { label: "显示窗口", click: restore },
                 { label: "隐藏窗口", accelerator: "CommandOrControl+W", click: () => window.close() },
@@ -513,7 +513,7 @@ if (ownsAppLock)
         );
         if (tray) {
           const glance = watcher.glance();
-          tray.setToolTip(`agent-autoloop · ${statusLabel(state)}`);
+          tray.setToolTip(`指挥部 · ${statusLabel(state)}`);
           // The pending-decision count rides beside the icon as title text: template artwork stays,
           // so light and dark keep working. A red badge would need non-template art for one number.
           if (process.platform === "darwin") tray.setTitle(glance.attention > 0 ? String(glance.attention) : "");
@@ -560,7 +560,7 @@ if (ownsAppLock)
         minWidth: 760,
         minHeight: 540,
         show: false,
-        title: "agent-autoloop · 指挥部",
+        title: "指挥部",
         titleBarStyle: "hiddenInset",
         backgroundColor: nativeTheme.shouldUseDarkColors ? "#0b0e14" : "#f4f6fa",
         icon: appIcon,
@@ -588,7 +588,7 @@ if (ownsAppLock)
           if (lifecycle) return true;
           const result = await dialog.showMessageBox(window, {
             type: "question",
-            title: "退出 agent-autoloop？",
+            title: "退出指挥部？",
             message: "确认退出桌面应用？",
             detail: ["starting", "running", "draining", "unknown", "failed"].includes(runtimeState().status)
               ? "退出前将停止本机 Agent 并等待安全排空；远程队列不会取消。无法确认安全停止时不会退出，也不会强制终止。退出后托盘关闭；只想收起窗口请选择取消。"
