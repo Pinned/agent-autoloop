@@ -1,6 +1,6 @@
 # 桌面 App 开发范围
 
-桌面版正在分步开发，**尚未交付可用于真实业务的 App**。已确认的交互基准是 [`mockups/app-prototype/`](../mockups/app-prototype/README.md)；另外保留 v1/v2/v3 两页视觉候选，最终采用 v1，并支持深色、浅色和跟随系统。
+桌面版正在分步开发，**尚未交付可用于真实业务的 App**。已确认的交互基准是 [`mockups/app-prototype/`](../mockups/app-prototype/README.md)；另外保留 v1/v2/v3 两页视觉候选，最终采用 v1，并支持深色、浅色和跟随系统。完整的交互设计原则、视觉令牌、组件模式与前端开发规范见 [桌面端 UI 交互设计与前端开发规范](desktop-ui-guide.md)。
 
 ## 当前可运行范围
 
