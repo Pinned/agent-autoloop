@@ -205,6 +205,14 @@ export function createRendererTask(bridge: TaskBridge, onChange: () => void, gat
         finishSubmit(token, undefined, true);
       }
     },
+    /** A confirmed receipt no longer needs a write barrier; eligibility is not evidence of ingestion. */
+    completeAccepted(): void {
+      if (flight || submit.kind !== "done") return;
+      operation = null;
+      cachedDraft = null;
+      submit = Object.freeze({ kind: "idle" });
+      notify();
+    },
     /** Explicit 'another task' only; close/open never calls this. */
     reset(): void {
       const token = operation;

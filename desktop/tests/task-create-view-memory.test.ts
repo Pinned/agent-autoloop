@@ -230,7 +230,7 @@ test("real view pending close/reopen preserves draft and single bridge call", as
   });
 });
 
-test("real view gate disables submission and accepted offers explicit another only when eligible", async () => {
+test("real view gate disables submission while accepted clears only the submitted operation", async () => {
   await withView(async (f) => {
     f.panel.open();
     await flush();
@@ -251,12 +251,13 @@ test("real view gate disables submission and accepted offers explicit another on
     });
     await flush();
     const another = f.body.find((e) => e.textContent === "显式另派一条")!;
-    assert.equal(another.hidden, false);
-    assert.equal(another.disabled, true);
-    another.emit("click");
-    assert.ok(f.controller.operation);
+    assert.equal(another.hidden, true);
+    assert.equal(f.controller.canSubmit, false);
+    assert.equal(f.controller.operation, null);
+    f.panel.open();
+    f.body.find((e) => e.tag === "form")!.emit("submit");
+    assert.equal(f.calls(), 1);
     f.setGate(true);
-    another.emit("click");
     assert.equal(f.controller.operation, null);
     await flush();
     assert.equal(f.body.find((e) => e.id === "task-summary")!.value, "");
@@ -282,7 +283,10 @@ test("accepted refresh is exactly once per result even after close/reopen and an
     });
     await flush();
     const first = f.controller.submitState;
-    assert.equal(first.kind, "done");
+    assert.equal(first.kind, "idle");
+    assert.equal(f.controller.operation, null);
+    assert.equal(summary.value, "");
+    assert.equal(panel.hidden, true);
     assert.equal(f.createdCalls(), 1);
     f.panel.update();
     f.panel.update();
@@ -327,7 +331,9 @@ test("throwing refresh callback cannot rewrite accepted or repeat on later updat
     });
     await flush();
     const receipt = f.controller.submitState;
-    assert.equal(receipt.kind, "done");
+    assert.equal(receipt.kind, "idle");
+    assert.equal(f.controller.operation, null);
+    assert.equal(f.controller.draft, null);
     assert.equal(f.createdCalls(), 1);
     f.panel.update();
     f.body.find((e) => e.tag === "section")!.close();

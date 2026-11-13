@@ -90,6 +90,26 @@ const submitMessage = (f: Fixture): string => {
   return state.message;
 };
 
+test("accepted completion releases only proven success even after eligibility changes", async () => {
+  let allowed = true;
+  const response = deferred<unknown>();
+  const control = createRendererTask(
+    { taskEntries: async () => entriesReady([]), taskCreate: () => response.promise as Promise<DesktopTaskOutcome> },
+    () => {},
+    () => allowed,
+  );
+  control.submitTask({ type: "task.ops", summary: "标题", detail: "正文" });
+  control.completeAccepted();
+  assert.ok(control.operation);
+  allowed = false;
+  response.resolve(createOk());
+  await flush();
+  control.completeAccepted();
+  assert.equal(control.operation, null);
+  assert.equal(control.draft, null);
+  assert.equal(control.submitState.kind, "idle");
+});
+
 test("wildcard candidates load, but task submission needs a concrete type", async () => {
   const f = fixture();
   f.controller.loadEntries();
