@@ -92,8 +92,18 @@ select::after {
   pointer-events: none;
 }
 :focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: 3px;
+  outline: 1.5px solid var(--blue);
+  outline-offset: 1px;
+}
+/* Programmatic focus targets (page switch, headings, alert banners) should not paint a ring. */
+[tabindex="-1"]:focus-visible {
+  outline: none;
+}
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  border-color: var(--blue);
 }
 h1,
 h2,
@@ -440,7 +450,6 @@ main {
 .setup-choice[aria-pressed="true"] {
   border-color: var(--blue);
   background: var(--accent-bg);
-  outline: 1px solid var(--blue);
 }
 .setup-field {
   display: grid;

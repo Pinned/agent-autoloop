@@ -602,3 +602,39 @@ test("dispatch-task styles and navigation follow desktop-ui-guide tokens and for
   assert.match(app, /newTaskButton\.setAttribute\("aria-current",\s*"page"\)/);
   assert.match(app, /newTaskButton\.removeAttribute\("aria-current"\)/);
 });
+
+test("task subpage keeps copy concise without redundant markdown or routing hints", async () => {
+  await withView(async (f) => {
+    f.panel.open();
+    await flush();
+    assert.equal(
+      f.body.find((e) => e.className.includes("task-detail-hint")),
+      undefined,
+    );
+    assert.equal(
+      f.body.find((e) => e.className.includes("task-md-badge")),
+      undefined,
+    );
+    assert.equal(
+      f.body.find((e) => e.className.includes("task-type-hint")),
+      undefined,
+    );
+
+    const summary = f.body.find((e) => e.id === "task-summary")!;
+    const activeInput = f.body.find((e) => e.className.includes("task-wysiwyg-active-input"))!;
+    assert.ok(summary.placeholder.length <= 20, `summary placeholder too long: ${summary.placeholder}`);
+    assert.ok(activeInput.placeholder.length <= 25, `editor placeholder too long: ${activeInput.placeholder}`);
+
+    const submit = f.body.find((e) => e.className.includes("task-submit-button") && e.type === "submit")!;
+    const cancel = f.body.find((e) => e.className.includes("task-cancel-button"))!;
+    assert.equal(submit.textContent, "派发");
+    assert.equal(cancel.textContent, "取消");
+  });
+});
+
+test("app focus styles do not draw oversized focus-visible outlines on programmatic targets or form fields", () => {
+  const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
+  assert.doesNotMatch(css, /outline-offset:\s*3px/);
+  assert.match(css, /\[tabindex="-1"\]:focus-visible\s*\{[^}]*outline:\s*none/);
+  assert.match(css, /input:focus-visible[\s\S]*?outline:\s*none/);
+});
