@@ -11,7 +11,7 @@ import { navigationSignature, ownerPages, pagesFor, workerPages } from "../src/r
 test("an unresolved role projects the full workspace, which only a configured machine may see", () => {
   assert.deepEqual(
     pagesFor(null).map((page) => page.nav),
-    ["今天", "任务", "自动化", "执行机", "设置"],
+    ["今天", "任务", "规则", "执行机", "设置"],
   );
   assert.equal(pagesFor(null), ownerPages);
 });

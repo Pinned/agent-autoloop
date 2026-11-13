@@ -15,9 +15,9 @@ export const ownerPages: readonly Page[] = [
   { id: "tasks", nav: "任务", title: "任务", description: "查看工作的来龙去脉，知道下一步由谁推进。", icon: "tasks" },
   {
     id: "automation",
-    nav: "自动化",
-    title: "自动化",
-    description: "本机入口；其他规则在中台网页控制台修改。",
+    nav: "规则",
+    title: "规则",
+    description: "管理本机事件与定时规则；其他规则在中台网页控制台修改。",
     icon: "automation",
   },
   {

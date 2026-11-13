@@ -940,7 +940,7 @@ if (ownsAppLock)
             !result.nodeAbsent ||
             !result.invalidRejected ||
             result.dark.effective !== "dark" ||
-            result.pages.join(",") !== "今天,任务,自动化,执行机,设置" ||
+            result.pages.join(",") !== "今天,任务,规则,执行机,设置" ||
             !result.runtime ||
             result.runtime.ok !== true ||
             result.runtime.state.status !== "unavailable" ||

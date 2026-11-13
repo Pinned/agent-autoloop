@@ -395,7 +395,7 @@ test("the automation page edits the hub's own entries through the versioned rule
   assert.doesNotMatch(view, /已接受|路由结果/);
   // The page states its own ownership where every page already states it — the page head — and the
   // list body itself stays free of standing instructions: repeated hints read as a demo, not a tool.
-  assert.match(read("../src/renderer/navigation.ts"), /本机入口；其他规则在中台网页控制台修改/);
+  assert.match(read("../src/renderer/navigation.ts"), /管理本机事件与定时规则；其他规则在中台网页控制台修改/);
   assert.match(view, /rules-empty/);
   assert.doesNotMatch(view, /只编辑本机入口；其他规则在中台网页控制台修改/);
   // The editor subpage's head states the save semantics in one short line, not a lecture.
@@ -598,7 +598,7 @@ test("fixed renderer has restrictive CSP and no simulated business or network co
   );
   assert.match(renderer, /今天/);
   assert.match(renderer, /任务/);
-  assert.match(renderer, /自动化/);
+  assert.match(renderer, /规则/);
   assert.match(renderer, /执行机/);
   assert.match(renderer, /设置/);
 });

@@ -12,6 +12,7 @@ export function mountTaskView(
   controller: ReturnType<typeof createRendererTask>,
   onCreated: () => void,
   onBack?: () => void,
+  onOpenRules?: () => void,
 ): {
   root: HTMLElement;
   open(): void;
@@ -27,8 +28,8 @@ export function mountTaskView(
   const form = document.createElement("form");
   form.className = "task-form";
 
-  // Title and route controls share a single focus-within bar so routing stays visible without
-  // taking a separate form row away from the editor viewport.
+  // Two-tier header bar: full-width title above, rule & progressive type strip below,
+  // sharing a single focus-within frame so routing reads as context rather than competing with the title.
   const titleRouteBar = document.createElement("div");
   titleRouteBar.className = "task-title-route-bar";
 
@@ -43,10 +44,6 @@ export function mountTaskView(
   summaryInput.required = true;
   summaryField.append(summaryLabel, summaryInput);
 
-  const headerSep = document.createElement("span");
-  headerSep.className = "task-header-sep";
-  headerSep.setAttribute("aria-hidden", "true");
-
   const routeControls = document.createElement("div");
   routeControls.className = "task-route-controls";
 
@@ -54,54 +51,80 @@ export function mountTaskView(
   entryField.className = "task-route-field";
   const entryLabel = document.createElement("span");
   entryLabel.className = "task-route-label";
-  entryLabel.textContent = "入口";
+  entryLabel.textContent = "规则";
   const entrySelect = document.createElement("select");
   entrySelect.id = "task-entry";
   entryField.append(entryLabel, entrySelect);
 
+  const routeSummary = document.createElement("span");
+  routeSummary.id = "task-route-summary";
+  routeSummary.className = "task-route-summary";
+  routeSummary.textContent = "正在读取可用规则……";
+
   const routeDivider = document.createElement("span");
   routeDivider.className = "task-route-divider";
   routeDivider.setAttribute("aria-hidden", "true");
-  routeDivider.textContent = "/";
+  routeDivider.textContent = "·";
 
   const typeField = document.createElement("label");
-  typeField.className = "task-route-field";
+  typeField.className = "task-route-field task-type-field";
   const typeLabel = document.createElement("span");
   typeLabel.className = "task-route-label";
-  typeLabel.textContent = "类型";
+  typeLabel.textContent = "事件类型";
   const typeSelect = document.createElement("select");
   typeSelect.id = "task-type";
   const concreteInput = document.createElement("input");
   concreteInput.id = "task-concrete-type";
   concreteInput.className = "task-concrete-input";
   concreteInput.placeholder = "具体类型，如 task.release";
-  typeField.append(typeLabel, typeSelect, concreteInput);
+  const typeHint = document.createElement("span");
+  typeHint.className = "task-type-hint";
+  typeHint.textContent = "中台按此事件类型匹配规则";
+  typeField.append(typeLabel, typeSelect, concreteInput, typeHint);
 
-  const routeSummary = document.createElement("span");
-  routeSummary.id = "task-route-summary";
-  routeSummary.className = "task-route-summary";
-  routeSummary.textContent = "正在读取可用入口……";
-
-  routeControls.append(entryField, routeDivider, typeField, routeSummary);
-  titleRouteBar.append(summaryField, headerSep, routeControls);
+  routeControls.append(entryField, routeSummary, routeDivider, typeField);
+  titleRouteBar.append(summaryField, routeControls);
 
   const needsConcrete = () => typeSelect.value.includes("*");
+  function currentTypesFor(entry?: { types: string[] }): string[] {
+    return entry?.types ?? [];
+  }
   function updateRouteSummary() {
     const state = controller.entriesState;
     if (state.kind !== "ready" || state.entries.length === 0) {
-      routeSummary.textContent = state.kind === "loading" ? "正在读取可用入口……" : "暂无可用入口";
+      routeSummary.textContent = state.kind === "loading" ? "正在读取可用规则……" : "暂无可用规则";
       return;
     }
     const currentEntry = state.entries.find((item) => item.name === entrySelect.value) ?? state.entries[0];
-    const activeType = needsConcrete()
-      ? concreteInput.value.trim() || typeSelect.value
-      : typeSelect.value || currentEntry.types[0] || "";
-    routeSummary.textContent = `${currentEntry.name} → ${currentEntry.to}${activeType ? ` · ${activeType}` : ""}`;
+    const types = currentTypesFor(currentEntry);
+    const singleFixed = types.length === 1 && !types[0].includes("*");
+    routeSummary.textContent = singleFixed
+      ? `由 ${currentEntry.to} 执行 · 事件 ${types[0]}`
+      : `由 ${currentEntry.to} 执行`;
   }
 
   function updateConcrete() {
-    concreteInput.hidden = !needsConcrete();
-    concreteInput.required = needsConcrete();
+    const state = controller.entriesState;
+    const currentEntry =
+      state.kind === "ready"
+        ? (state.entries.find((item) => item.name === entrySelect.value) ?? state.entries[0])
+        : undefined;
+    const types = currentTypesFor(currentEntry);
+    const hasMultiple = types.length > 1;
+    const wildcard = needsConcrete();
+    typeSelect.hidden = !hasMultiple;
+    typeField.hidden = !hasMultiple && !wildcard;
+    routeDivider.hidden = typeField.hidden;
+    concreteInput.hidden = !wildcard;
+    concreteInput.required = wildcard;
+    typeHint.hidden = !wildcard;
+    if (wildcard) {
+      const pattern = typeSelect.value || types[0] || "*";
+      concreteInput.placeholder =
+        pattern === "*"
+          ? "具体事件类型，如 task.release"
+          : `填写 ${pattern} 类型，如 ${pattern.replace("*", "release")}`;
+    }
     updateRouteSummary();
   }
 
@@ -694,6 +717,19 @@ export function mountTaskView(
   status.setAttribute("role", "status");
   status.setAttribute("aria-live", "polite");
 
+  const openRulesButton = document.createElement("button");
+  openRulesButton.type = "button";
+  openRulesButton.className = "task-open-rules-button";
+  openRulesButton.textContent = "前往「规则」页添加";
+  openRulesButton.hidden = true;
+  openRulesButton.addEventListener("click", () => {
+    onOpenRules?.();
+  });
+
+  const statusRow = document.createElement("div");
+  statusRow.className = "task-status-row";
+  statusRow.append(status, openRulesButton);
+
   const error = document.createElement("p");
   error.className = "setup-error task-dialog-error";
   error.id = "task-dialog-error";
@@ -734,7 +770,7 @@ export function mountTaskView(
 
   primaryGroup.append(anotherButton, submitButton, doneButton);
   actions.append(cancelButton, primaryGroup);
-  footer.append(status, error, actions);
+  footer.append(statusRow, error, actions);
   form.append(titleRouteBar, composeSection, footer);
   root.append(form);
 
@@ -773,7 +809,7 @@ export function mountTaskView(
       ...entries.map((entry) => {
         const option = document.createElement("option");
         option.value = entry.name;
-        option.textContent = `${entry.name} → ${entry.to}`;
+        option.textContent = entry.name;
         return option;
       }),
     );
@@ -804,8 +840,6 @@ export function mountTaskView(
       }),
     );
     if (types.includes(selected)) typeSelect.value = selected;
-    typeField.hidden = false;
-    typeSelect.hidden = false;
     updateConcrete();
   }
 
@@ -863,10 +897,16 @@ export function mountTaskView(
     anotherButton.hidden =
       !operation || controller.submitState.kind === "busy" || controller.submitState.kind === "uncertain";
     anotherButton.disabled = !controller.canBeginAnother;
-    if (state.kind === "loading") status.textContent = "正在读取任务入口。";
+    if (state.kind === "loading") status.textContent = "正在读取可用规则。";
     else if (state.kind === "ready") status.textContent = state.entries.length ? "" : DESKTOP_TASK_MESSAGES.noEntry;
     else status.textContent = state.message;
     status.hidden = state.kind === "ready" && state.entries.length > 0;
+    openRulesButton.hidden = !(
+      state.kind === "ready" &&
+      state.entries.length === 0 &&
+      typeof onOpenRules === "function"
+    );
+    statusRow.hidden = status.hidden && openRulesButton.hidden;
 
     const submission = controller.submitState;
     status.classList.toggle("is-done", submission.kind === "done");
@@ -899,6 +939,7 @@ export function mountTaskView(
           ? `已入队，交给规则：${routed.join("、")}。`
           : "已记录，但没有规则接住这个类型。";
       status.hidden = false;
+      statusRow.hidden = false;
       if (notifiedResult !== submission.result) {
         notifiedResult = submission.result;
         try {
