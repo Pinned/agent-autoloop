@@ -19,6 +19,11 @@ class MemoryElement {
   required = false;
   open = false;
   rows = 0;
+  scrollHeight = 0;
+  style: Record<string, string> = {};
+  focused = false;
+  selectionStart = 0;
+  selectionEnd = 0;
   children: MemoryElement[] = [];
   classList = {
     toggle: (name: string, force?: boolean) => {
@@ -30,7 +35,7 @@ class MemoryElement {
       this.className = classes.join(" ");
     },
   };
-  listeners = new Map<string, ((event: { preventDefault(): void }) => void)[]>();
+  listeners = new Map<string, ((event: Record<string, unknown> & { preventDefault(): void }) => void)[]>();
   constructor(tag: string) {
     this.tag = tag;
   }
@@ -38,17 +43,36 @@ class MemoryElement {
     this.children.push(...children);
   }
   replaceChildren(...children: MemoryElement[]) {
+    // In real browsers (Chromium/Electron), calling replaceChildren detaches all existing children
+    // before inserting the new ones, which synchronously fires blur on any focused descendant!
+    const focusedOld = this.find((el) => el !== this && el.focused);
     this.children = children;
     if (this.tag === "select") this.value = children[0]?.value ?? "";
+    if (focusedOld) {
+      focusedOld.blur();
+    }
+  }
+  focus() {
+    this.focused = true;
+  }
+  blur() {
+    if (!this.focused) return;
+    this.focused = false;
+    this.emit("blur");
+  }
+  setSelectionRange(start: number, end: number) {
+    this.selectionStart = start;
+    this.selectionEnd = end;
   }
   setAttribute() {}
-  addEventListener(name: string, callback: (event: { preventDefault(): void }) => void) {
+  addEventListener(name: string, callback: (event: Record<string, unknown> & { preventDefault(): void }) => void) {
     this.listeners.set(name, [...(this.listeners.get(name) ?? []), callback]);
   }
-  emit(name: string) {
+  emit(name: string, extra: Record<string, unknown> = {}) {
     let prevented = false;
     for (const callback of this.listeners.get(name) ?? [])
       callback({
+        ...extra,
         preventDefault() {
           prevented = true;
         },
@@ -309,6 +333,12 @@ test("detail Markdown uses a single-column WYSIWYG canvas without split panes or
     );
 
     // Active inline block editor starts inside the single-column WYSIWYG container
+    const detailField = f.body.find((e) => e.className.includes("task-detail-field"))!;
+    assert.ok(detailField);
+    assert.ok(
+      !detailField.className.split(" ").includes("setup-field"),
+      "task-detail-field must not carry setup-field which shrinks <p> font-size to 12px",
+    );
     const activeInput = previewContainer.find((e) => e.className.includes("task-wysiwyg-active-input"))!;
     assert.ok(activeInput);
     activeInput.value = "## 单栏标题";
@@ -388,5 +418,58 @@ test("task subpage has no outer panel card wrapper and combines title with inlin
     assert.ok(routeSummary);
     assert.match(routeSummary.textContent, /入口/);
     assert.match(routeSummary.textContent, /worker/);
+  });
+});
+
+test("pressing Enter in WYSIWYG markdown editor renders completed line and preserves active input focus on next line", async () => {
+  await withView(async (f) => {
+    f.panel.open();
+    await flush();
+    const detail = f.body.find((e) => e.id === "task-detail")!;
+    const previewContainer = f.body.find((e) => e.id === "task-detail-preview")!;
+    const activeInput = previewContainer.find((e) => e.className.includes("task-wysiwyg-active-input"))!;
+    assert.ok(activeInput);
+
+    // Focus the inline editor and type a heading line
+    activeInput.focus();
+    activeInput.value = "## 第一行标题";
+    activeInput.setSelectionRange(activeInput.value.length, activeInput.value.length);
+    activeInput.emit("input");
+    assert.equal(detail.value, "## 第一行标题");
+
+    // Press Enter at the end of the line
+    activeInput.emit("keydown", { key: "Enter", shiftKey: false, metaKey: false, ctrlKey: false });
+
+    // 1. Backing value has the newline
+    assert.equal(detail.value, "## 第一行标题\n");
+    // 2. Previous line is rendered as <h2> in the single-column canvas
+    const renderedH2 = previewContainer.find((e) => e.tag === "h2");
+    assert.ok(renderedH2);
+    assert.ok(renderedH2.find((e) => e.textContent === "第一行标题"));
+    // 3. Active editor remains mounted, visible, and focused on the new line!
+    const activeAfterEnter = previewContainer.find((e) => e.className.includes("task-wysiwyg-active-input"))!;
+    assert.ok(activeAfterEnter, "activeEditor must remain in previewContainer after Enter");
+    assert.equal(activeAfterEnter.hidden, false);
+    assert.equal(activeAfterEnter.focused, true, "activeEditor must retain focus after pressing Enter");
+    assert.equal(activeAfterEnter.value, "");
+    assert.equal(activeAfterEnter.selectionStart, 0);
+
+    // Continue typing on the second line and press Enter again (list continuation)
+    activeAfterEnter.value = "- 列表项一";
+    activeAfterEnter.setSelectionRange(activeAfterEnter.value.length, activeAfterEnter.value.length);
+    activeAfterEnter.emit("input");
+    activeAfterEnter.emit("keydown", { key: "Enter", shiftKey: false, metaKey: false, ctrlKey: false });
+
+    assert.equal(detail.value, "## 第一行标题\n- 列表项一\n- ");
+    assert.equal(activeAfterEnter.focused, true, "activeEditor must retain focus on list continuation");
+    assert.equal(activeAfterEnter.value, "- ");
+    assert.equal(activeAfterEnter.selectionStart, 2);
+
+    // Soft-wrapping on a single long line expands height to scrollHeight so no inner scrollbar appears
+    activeAfterEnter.value =
+      "- 这是一段非常长的单行任务描述文字，在同一行连续输入直到发生自动折行时应当自动撑开高度而不是出现内部滚动条";
+    activeAfterEnter.scrollHeight = 68;
+    activeAfterEnter.emit("input");
+    assert.equal(activeAfterEnter.style.height, "68px");
   });
 });
