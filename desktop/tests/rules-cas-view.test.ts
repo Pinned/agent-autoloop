@@ -435,7 +435,7 @@ test("CR baseline is isolated across cancelled, expired, reopened and add editor
     // An unchanged confirm leaves the page as read: no PUT, no draft.
     assert.equal(f.controller.getState().draft, null);
     assert.equal(f.inputs.length, 0);
-    const next = { ...carriageEntry, name: "另\r入口", prompt: "不同\r\n提示", group: "不同\r组" };
+    const next = { ...carriageEntry, name: "另\r规则", prompt: "不同\r\n提示", group: "不同\r组" };
     f.controller.beginEdit();
     f.controller.updateEntry(0, next);
     f.button("编辑").click();
@@ -444,7 +444,7 @@ test("CR baseline is isolated across cancelled, expired, reopened and add editor
     // The confirmed change is a save in flight; a new editor waits for it to settle.
     f.answer(ready(11, [next]));
     await flush();
-    f.button("＋ 添加入口").click();
+    f.button("＋ 添加规则").click();
     for (const [field, value] of [
       ["name", "新增"],
       ["types", "task.new"],
@@ -510,7 +510,7 @@ test("form validation, add/remove and explicit clearing use the existing full co
   dom(async (f) => {
     f.view.init();
     await flush();
-    f.button("＋ 添加入口").click();
+    f.button("＋ 添加规则").click();
     f.form().emit("submit");
     assert.equal(f.editorOpen(), true);
     for (const [name, value] of [
@@ -560,8 +560,8 @@ test("an empty list shows an empty-state card with a way in, not a bare status s
     const empty = f.find((node) => /\brules-empty\b/.test(node.className));
     assert.ok(!empty.hidden);
     // The card's own subtree carries the title and the line (the fixture keeps text on leaves).
-    assert.ok(all(empty).some((node) => node.textContent.includes("还没有入口")));
-    assert.ok(f.button("＋ 添加入口") !== undefined);
+    assert.ok(all(empty).some((node) => node.textContent.includes("还没有规则")));
+    assert.ok(f.button("＋ 添加规则") !== undefined);
   }));
 
 test("the preview states only what the save hands over for the local slots", () =>
@@ -577,7 +577,7 @@ test("the preview states only what the save hands over for the local slots", () 
     f.form().emit("submit");
     // The confirm sent the PUT; until it settles the preview says what is being handed over.
     assert.equal(preview.hidden, false);
-    assert.equal(preview.textContent, `本次保存将提交 1 条本机入口：修改 1 条。`);
+    assert.equal(preview.textContent, `本次保存将提交 1 条本机规则：修改 1 条。`);
   }));
 
 test("the preview compares every entry field, so an unchanged draft reports no change", () =>
@@ -590,7 +590,7 @@ test("the preview compares every entry field, so an unchanged draft reports no c
     f.id("name").value = "改动";
     f.form().emit("submit");
     assert.equal(preview.hidden, false);
-    assert.equal(preview.textContent, `本次保存将提交 1 条本机入口：修改 1 条。`);
+    assert.equal(preview.textContent, `本次保存将提交 1 条本机规则：修改 1 条。`);
     f.answer(ready(19, [{ ...original, name: "改动" }]));
     await flush();
     assert.equal(preview.hidden, true);

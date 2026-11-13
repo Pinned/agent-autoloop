@@ -399,7 +399,7 @@ test("the automation page edits the hub's own entries through the versioned rule
   assert.match(view, /rules-empty/);
   assert.doesNotMatch(view, /只编辑本机入口；其他规则在中台网页控制台修改/);
   // The editor subpage's head states the save semantics in one short line, not a lecture.
-  assert.match(app, /确认即保存到本机中台。/);
+  assert.match(app, /改动确认后保存到本机中台。/);
   assert.doesNotMatch(view, /\bfetch\(|WebSocket|ipcRenderer/);
   // The save carries the version it started from; the hub refuses a stale one, and the review
   // barrier routes the discard button through discardAndReload.

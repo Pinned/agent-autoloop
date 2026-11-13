@@ -152,7 +152,7 @@ test("a new entry can be timed: the switch asks for a cron instead of types", ()
   dom(async (f) => {
     f.view.init();
     await flush();
-    f.button("＋ 添加入口").click();
+    f.button("＋ 添加规则").click();
     // The form starts as an event entry; switching the trigger kind asks for the cron instead.
     const trigger = f.id("trigger");
     trigger.value = "cron";
