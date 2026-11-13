@@ -110,7 +110,7 @@ export function mountTaskView(
 
   // Detail field with single-column WYSIWYG live Markdown editor
   const detailField = document.createElement("div");
-  detailField.className = "setup-field task-detail-field";
+  detailField.className = "task-detail-field";
 
   const editorBox = document.createElement("div");
   editorBox.className = "task-editor-box task-wysiwyg-box";
@@ -144,6 +144,11 @@ export function mountTaskView(
   previewContainer.id = "task-detail-preview";
   previewContainer.className = "task-markdown-preview task-wysiwyg-canvas";
 
+  // Persistent child slots inside previewContainer so activeEditor is never detached from the DOM
+  // during line transitions (detaching a focused textarea in Chromium fires a synchronous blur event).
+  const beforeWrap = document.createElement("div");
+  beforeWrap.className = "task-wysiwyg-slice task-wysiwyg-before";
+
   // Active inline block editor used inside the single-column flow
   const activeEditor = document.createElement("textarea");
   activeEditor.className = "task-wysiwyg-active-input";
@@ -151,8 +156,17 @@ export function mountTaskView(
   activeEditor.placeholder =
     "直接输入内容，支持 Markdown 实时排版（如 # 标题、- 列表、- [ ] 待办、**粗体**、``` 代码块），回车即刻渲染……";
 
+  const afterWrap = document.createElement("div");
+  afterWrap.className = "task-wysiwyg-slice task-wysiwyg-after";
+
+  const tail = document.createElement("div");
+  tail.className = "task-wysiwyg-tail";
+
+  previewContainer.append(beforeWrap, activeEditor, afterWrap, tail);
+
   let activeLine: number | null = 0;
   let fullSelectMode = false;
+  let isTransitioning = false;
 
   interface EditableUnit {
     startLine: number;
@@ -218,6 +232,12 @@ export function mountTaskView(
     const lineCount = Math.max(1, activeEditor.value.split("\n").length);
     activeEditor.rows = lineCount;
     activeEditor.setAttribute("data-block-type", detectBlockType(activeEditor.value));
+    if (activeEditor.style) {
+      activeEditor.style.height = "auto";
+      if (typeof activeEditor.scrollHeight === "number" && activeEditor.scrollHeight > 0) {
+        activeEditor.style.height = `${activeEditor.scrollHeight}px`;
+      }
+    }
   }
 
   interface RenderSegment {
@@ -261,6 +281,13 @@ export function mountTaskView(
     for (const seg of segments) {
       const rendered = renderMarkdown(seg.markdown);
       rendered.className = "markdown-body task-wysiwyg-block";
+      rendered.addEventListener("mousedown", (ev: Event) => {
+        if (detailInput.disabled) return;
+        const rawTarget = (ev as { target?: { tag?: string; tagName?: string; type?: string } }).target;
+        const tagName = (rawTarget?.tagName ?? rawTarget?.tag ?? "").toLowerCase();
+        if (tagName === "a" || (tagName === "input" && rawTarget?.type === "checkbox")) return;
+        ev.preventDefault();
+      });
       rendered.addEventListener("click", (ev: Event) => {
         if (detailInput.disabled) return;
         const rawTarget = (ev as { target?: { tag?: string; tagName?: string; type?: string } }).target;
@@ -279,26 +306,54 @@ export function mountTaskView(
           return;
         }
         if (tagName === "a") return;
+        if (activeLine !== null) {
+          commitActiveEditorToBacking();
+        }
         activateLine(seg.startLine, null);
       });
       target.append(rendered);
     }
   }
 
+  tail.addEventListener("mousedown", (e: Event) => {
+    if (detailInput.disabled) return;
+    e.preventDefault();
+  });
+
+  tail.addEventListener("click", () => {
+    if (detailInput.disabled) return;
+    if (activeLine !== null) {
+      commitActiveEditorToBacking();
+    }
+    const currentLines = detailInput.value.split(/\r?\n/);
+    const lastIdx = currentLines.length - 1;
+    if (activeLine !== null && currentLines[lastIdx]?.trim() !== "") {
+      currentLines.push("");
+      detailInput.value = currentLines.join("\n");
+      saveCurrentDraft();
+    }
+    activateLine(currentLines.length - 1, activeLine !== null ? 0 : null);
+  });
+
   function activateLine(lineIdx: number, cursorOffset: number | null = null) {
     if (detailInput.disabled) return;
-    fullSelectMode = false;
-    const lines = detailInput.value.split(/\r?\n/);
-    const units = buildUnits(lines);
-    const unit = findUnitForLine(units, lineIdx);
-    activeLine = unit.startLine;
-    refreshLivePreview();
-    activeEditor.focus?.();
-    const pos =
-      cursorOffset !== null
-        ? Math.max(0, Math.min(cursorOffset, activeEditor.value.length))
-        : activeEditor.value.length;
-    activeEditor.setSelectionRange?.(pos, pos);
+    isTransitioning = true;
+    try {
+      fullSelectMode = false;
+      const lines = detailInput.value.split(/\r?\n/);
+      const units = buildUnits(lines);
+      const unit = findUnitForLine(units, lineIdx);
+      activeLine = unit.startLine;
+      refreshLivePreview();
+      activeEditor.focus?.();
+      const pos =
+        cursorOffset !== null
+          ? Math.max(0, Math.min(cursorOffset, activeEditor.value.length))
+          : activeEditor.value.length;
+      activeEditor.setSelectionRange?.(pos, pos);
+    } finally {
+      isTransitioning = false;
+    }
   }
 
   function commitActiveEditorToBacking() {
@@ -318,13 +373,16 @@ export function mountTaskView(
   function refreshLivePreview() {
     const raw = detailInput.value;
     const lines = raw.split(/\r?\n/);
-    const nodes: HTMLElement[] = [];
 
     if (fullSelectMode) {
+      beforeWrap.replaceChildren();
+      beforeWrap.hidden = true;
+      afterWrap.replaceChildren();
+      afterWrap.hidden = true;
+      tail.hidden = true;
+      activeEditor.hidden = false;
       activeEditor.value = raw;
       syncActiveEditorAppearance();
-      nodes.push(activeEditor);
-      previewContainer.replaceChildren(...nodes);
       return;
     }
 
@@ -333,64 +391,41 @@ export function mountTaskView(
       const unit = findUnitForLine(units, activeLine);
       activeLine = unit.startLine;
 
+      beforeWrap.replaceChildren();
       if (unit.startLine > 0) {
-        const beforeWrap = document.createElement("div");
-        beforeWrap.className = "task-wysiwyg-slice";
         renderSegmentSlice(lines.slice(0, unit.startLine), 0, beforeWrap);
-        if (beforeWrap.children.length > 0) nodes.push(beforeWrap);
       }
+      beforeWrap.hidden = beforeWrap.children.length === 0;
 
+      activeEditor.hidden = false;
       activeEditor.value = unit.text;
       syncActiveEditorAppearance();
-      nodes.push(activeEditor);
 
+      afterWrap.replaceChildren();
       if (unit.endLine + 1 < lines.length) {
-        const afterWrap = document.createElement("div");
-        afterWrap.className = "task-wysiwyg-slice";
         renderSegmentSlice(lines.slice(unit.endLine + 1), unit.endLine + 1, afterWrap);
-        if (afterWrap.children.length > 0) nodes.push(afterWrap);
       }
-
-      const tail = document.createElement("div");
-      tail.className = "task-wysiwyg-tail";
-      tail.addEventListener("click", () => {
-        if (detailInput.disabled) return;
-        const currentLines = detailInput.value.split(/\r?\n/);
-        const lastIdx = currentLines.length - 1;
-        if (currentLines[lastIdx]?.trim() !== "") {
-          currentLines.push("");
-          detailInput.value = currentLines.join("\n");
-          saveCurrentDraft();
-        }
-        activateLine(currentLines.length - 1, 0);
-      });
-      nodes.push(tail);
-
-      previewContainer.replaceChildren(...nodes);
+      afterWrap.hidden = afterWrap.children.length === 0;
+      tail.hidden = false;
       return;
     }
 
     // When not actively editing a specific line (or when disabled), render all blocks
-    const fullWrap = document.createElement("div");
-    fullWrap.className = "task-wysiwyg-slice";
+    beforeWrap.replaceChildren();
+    afterWrap.replaceChildren();
+    afterWrap.hidden = true;
     if (raw.trim()) {
-      renderSegmentSlice(lines, 0, fullWrap);
-      nodes.push(fullWrap);
+      renderSegmentSlice(lines, 0, beforeWrap);
+      beforeWrap.hidden = beforeWrap.children.length === 0;
+      activeEditor.hidden = true;
     } else {
+      beforeWrap.hidden = true;
       activeLine = 0;
+      activeEditor.hidden = false;
       activeEditor.value = "";
       syncActiveEditorAppearance();
-      nodes.push(activeEditor);
     }
-    const tail = document.createElement("div");
-    tail.className = "task-wysiwyg-tail";
-    tail.addEventListener("click", () => {
-      if (detailInput.disabled) return;
-      const currentLines = detailInput.value.split(/\r?\n/);
-      activateLine(currentLines.length - 1);
-    });
-    nodes.push(tail);
-    previewContainer.replaceChildren(...nodes);
+    tail.hidden = false;
   }
 
   activeEditor.addEventListener("input", () => {
@@ -400,6 +435,7 @@ export function mountTaskView(
   });
 
   activeEditor.addEventListener("blur", () => {
+    if (isTransitioning) return;
     commitActiveEditorToBacking();
     if (detailInput.value.trim()) {
       activeLine = null;
