@@ -27,7 +27,8 @@ export function mountTaskView(
   const form = document.createElement("form");
   form.className = "task-form";
 
-  // Section 1: Unified single-row Title + Routing Bar (Prominent Title on left, compact Route controls on right)
+  // Title and route controls share a single focus-within bar so routing stays visible without
+  // taking a separate form row away from the editor viewport.
   const titleRouteBar = document.createElement("div");
   titleRouteBar.className = "task-title-route-bar";
 
@@ -104,11 +105,9 @@ export function mountTaskView(
     updateRouteSummary();
   }
 
-  // Section 2: Full-height Single-Column WYSIWYG Detail Editor
   const composeSection = document.createElement("div");
   composeSection.className = "task-compose-section";
 
-  // Detail field with single-column WYSIWYG live Markdown editor
   const detailField = document.createElement("div");
   detailField.className = "task-detail-field";
 
@@ -127,7 +126,6 @@ export function mountTaskView(
   detailBadge.textContent = "Markdown · 所见即所得";
   detailLabelGroup.append(detailLabel, detailBadge);
 
-  // Formatting shortcut toolbar
   const toolsGroup = document.createElement("div");
   toolsGroup.className = "task-md-tools";
 
@@ -139,7 +137,6 @@ export function mountTaskView(
   detailInput.setAttribute("aria-hidden", "true");
   detailInput.setAttribute("tabindex", "-1");
 
-  // Single-column WYSIWYG live container (#task-detail-preview)
   const previewContainer = document.createElement("div");
   previewContainer.id = "task-detail-preview";
   previewContainer.className = "task-markdown-preview task-wysiwyg-canvas";
@@ -149,7 +146,6 @@ export function mountTaskView(
   const beforeWrap = document.createElement("div");
   beforeWrap.className = "task-wysiwyg-slice task-wysiwyg-before";
 
-  // Active inline block editor used inside the single-column flow
   const activeEditor = document.createElement("textarea");
   activeEditor.className = "task-wysiwyg-active-input";
   activeEditor.rows = 1;
@@ -370,7 +366,13 @@ export function mountTaskView(
     detailInput.value = lines.join("\n");
   }
 
-  function refreshLivePreview() {
+  let lastPreviewKey: string | null = null;
+  function previewStateKey(): string {
+    return `${fullSelectMode ? "full" : String(activeLine)}:${String(detailInput.disabled)}:${detailInput.value}`;
+  }
+
+  function refreshLivePreview(force = true) {
+    if (!force && lastPreviewKey === previewStateKey()) return;
     const raw = detailInput.value;
     const lines = raw.split(/\r?\n/);
 
@@ -381,8 +383,9 @@ export function mountTaskView(
       afterWrap.hidden = true;
       tail.hidden = true;
       activeEditor.hidden = false;
-      activeEditor.value = raw;
+      if (activeEditor.value !== raw) activeEditor.value = raw;
       syncActiveEditorAppearance();
+      lastPreviewKey = previewStateKey();
       return;
     }
 
@@ -398,7 +401,7 @@ export function mountTaskView(
       beforeWrap.hidden = beforeWrap.children.length === 0;
 
       activeEditor.hidden = false;
-      activeEditor.value = unit.text;
+      if (activeEditor.value !== unit.text) activeEditor.value = unit.text;
       syncActiveEditorAppearance();
 
       afterWrap.replaceChildren();
@@ -407,6 +410,7 @@ export function mountTaskView(
       }
       afterWrap.hidden = afterWrap.children.length === 0;
       tail.hidden = false;
+      lastPreviewKey = previewStateKey();
       return;
     }
 
@@ -422,15 +426,19 @@ export function mountTaskView(
       beforeWrap.hidden = true;
       activeLine = 0;
       activeEditor.hidden = false;
-      activeEditor.value = "";
+      if (activeEditor.value !== "") activeEditor.value = "";
       syncActiveEditorAppearance();
     }
     tail.hidden = false;
+    lastPreviewKey = previewStateKey();
   }
 
   activeEditor.addEventListener("input", () => {
     syncActiveEditorAppearance();
     commitActiveEditorToBacking();
+    // Mark the current backing value as already reflected in the active editor so a background
+    // gateChanged() -> update() does not reassign activeEditor.value and reset a mid-line caret.
+    lastPreviewKey = previewStateKey();
     saveCurrentDraft();
   });
 
@@ -677,17 +685,20 @@ export function mountTaskView(
   detailField.append(editorBox);
   composeSection.append(detailField);
 
-  // Section 3: Status feedback & action footer
   const footer = document.createElement("div");
   footer.className = "task-footer";
 
   const status = document.createElement("p");
   status.className = "task-dialog-status";
   status.id = "task-dialog-status";
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
 
   const error = document.createElement("p");
   error.className = "setup-error task-dialog-error";
   error.id = "task-dialog-error";
+  error.setAttribute("role", "alert");
+  error.tabIndex = -1;
   error.hidden = true;
 
   const actions = document.createElement("div");
@@ -695,6 +706,7 @@ export function mountTaskView(
 
   let renderedEntries: unknown;
   let notifiedResult: unknown;
+  let focusedError: string | null = null;
 
   const cancelButton = document.createElement("button");
   cancelButton.type = "button";
@@ -847,7 +859,7 @@ export function mountTaskView(
     for (const field of [entrySelect, typeSelect, concreteInput, summaryInput, detailInput, activeEditor])
       field.disabled = !!operation || !controller.canSubmit || state.kind !== "ready";
 
-    refreshLivePreview();
+    refreshLivePreview(false);
     anotherButton.hidden =
       !operation || controller.submitState.kind === "busy" || controller.submitState.kind === "uncertain";
     anotherButton.disabled = !controller.canBeginAnother;
@@ -860,6 +872,7 @@ export function mountTaskView(
     status.classList.toggle("is-done", submission.kind === "done");
     if (submission.kind === "idle") {
       error.hidden = true;
+      focusedError = null;
       submitButton.hidden = false;
       doneButton.hidden = true;
       submitButton.disabled =
@@ -869,12 +882,14 @@ export function mountTaskView(
       submitButton.textContent = "派发并入队";
     } else if (submission.kind === "busy") {
       error.hidden = true;
+      focusedError = null;
       submitButton.hidden = false;
       doneButton.hidden = true;
       submitButton.disabled = true;
       submitButton.textContent = "正在派发……";
     } else if (submission.kind === "done") {
       error.hidden = true;
+      focusedError = null;
       submitButton.hidden = true;
       doneButton.hidden = false;
       const routed = submission.result.routed;
@@ -895,6 +910,10 @@ export function mountTaskView(
     } else {
       error.textContent = submission.message;
       error.hidden = false;
+      if (focusedError !== submission.message) {
+        focusedError = submission.message;
+        error.focus?.();
+      }
       submitButton.hidden = !!operation;
       doneButton.hidden = !operation;
       submitButton.disabled = !controller.canSubmit;
@@ -914,6 +933,8 @@ export function mountTaskView(
     if (!DESKTOP_TASK_TYPE_PATTERN.test(type) || !matches) {
       error.textContent = "请填写符合所选模式的具体事件类型；不能提交通配符。";
       error.hidden = false;
+      focusedError = error.textContent;
+      error.focus?.();
       return;
     }
     const input: DesktopTaskInput = { type, summary: summaryInput.value, detail: detailInput.value };

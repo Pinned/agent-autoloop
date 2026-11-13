@@ -1,6 +1,7 @@
 // Prevent close/Escape from cancelling or resending a pending/uncertain task and losing its draft.
 // The actual task view/controller run on a bounded memory DOM; no browser, files, timers or process.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { createRendererTask } from "../src/renderer/task-controller.ts";
 import { mountTaskDialog } from "../src/renderer/task-view.ts";
@@ -11,7 +12,7 @@ class MemoryElement {
   id = "";
   className = "";
   textContent = "";
-  value = "";
+  private currentValue = "";
   type = "";
   placeholder = "";
   hidden = false;
@@ -19,12 +20,23 @@ class MemoryElement {
   required = false;
   open = false;
   rows = 0;
+  tabIndex = 0;
   scrollHeight = 0;
   style: Record<string, string> = {};
   focused = false;
   selectionStart = 0;
   selectionEnd = 0;
+  attributes = new Map<string, string>();
   children: MemoryElement[] = [];
+  get value(): string {
+    return this.currentValue;
+  }
+  set value(next: string) {
+    this.currentValue = next;
+    // Assigning .value on a real HTMLTextAreaElement moves the caret to the end of the text.
+    this.selectionStart = next.length;
+    this.selectionEnd = next.length;
+  }
   classList = {
     toggle: (name: string, force?: boolean) => {
       const classes = this.className.split(" ").filter(Boolean);
@@ -64,7 +76,9 @@ class MemoryElement {
     this.selectionStart = start;
     this.selectionEnd = end;
   }
-  setAttribute() {}
+  setAttribute(name: string, value: string) {
+    this.attributes.set(name, value);
+  }
   addEventListener(name: string, callback: (event: Record<string, unknown> & { preventDefault(): void }) => void) {
     this.listeners.set(name, [...(this.listeners.get(name) ?? []), callback]);
   }
@@ -472,4 +486,80 @@ test("pressing Enter in WYSIWYG markdown editor renders completed line and prese
     activeAfterEnter.emit("input");
     assert.equal(activeAfterEnter.style.height, "68px");
   });
+});
+
+test("status and error banners carry polite/alert ARIA roles and focus error on failure", async () => {
+  await withView(async (f) => {
+    f.panel.open();
+    await flush();
+    const status = f.body.find((e) => e.id === "task-dialog-status")!;
+    const error = f.body.find((e) => e.id === "task-dialog-error")!;
+    assert.equal(status.attributes.get("role"), "status");
+    assert.equal(status.attributes.get("aria-live"), "polite");
+    assert.equal(error.attributes.get("role"), "alert");
+    assert.equal(error.tabIndex, -1);
+    assert.equal(error.focused, false);
+
+    const summary = f.body.find((e) => e.id === "task-summary")!;
+    summary.value = "有效标题";
+    f.body.find((e) => e.tag === "form")!.emit("submit");
+    f.answer({ version: 3, outcome: "rejected", message: DESKTOP_TASK_MESSAGES.rejected });
+    await flush();
+    assert.equal(error.hidden, false);
+    assert.equal(error.textContent, DESKTOP_TASK_MESSAGES.rejected);
+    assert.equal(error.focused, true);
+  });
+});
+
+test("background gateChanged update during inline editing preserves mid-line caret and rendered slices", async () => {
+  await withView(async (f) => {
+    f.panel.open();
+    await flush();
+    const previewContainer = f.body.find((e) => e.id === "task-detail-preview")!;
+    const activeInput = previewContainer.find((e) => e.className.includes("task-wysiwyg-active-input"))!;
+    activeInput.focus();
+    activeInput.value = "## 第一行";
+    activeInput.emit("input");
+    activeInput.emit("keydown", { key: "Enter", shiftKey: false, metaKey: false, ctrlKey: false });
+
+    const beforeWrap = previewContainer.find((e) => e.className.includes("task-wysiwyg-before"))!;
+    const renderedBeforeBlock = beforeWrap.children[0];
+    assert.ok(renderedBeforeBlock);
+
+    activeInput.value = "第二行内容";
+    activeInput.emit("input");
+    // Place the caret in the middle of the second line (e.g. between "第二" and "行内容")
+    activeInput.setSelectionRange(2, 2);
+    assert.equal(activeInput.selectionStart, 2);
+    assert.equal(activeInput.selectionEnd, 2);
+
+    // A background runtime push notifies gateChanged -> panel.update() while the user is still typing
+    f.setGate(true);
+
+    assert.equal(activeInput.focused, true);
+    assert.equal(activeInput.selectionStart, 2, "mid-line caret must not jump to end on background update()");
+    assert.equal(activeInput.selectionEnd, 2);
+    assert.equal(beforeWrap.children[0], renderedBeforeBlock, "unchanged rendered slice must not be rebuilt");
+  });
+});
+
+test("dispatch-task styles and navigation follow desktop-ui-guide tokens and forced-colors rules", () => {
+  const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
+  const app = readFileSync(new URL("../src/renderer/app.ts", import.meta.url), "utf8");
+
+  // No hardcoded rgba() colors or drop shadows anywhere in style.css
+  assert.doesNotMatch(css, /rgba\(/);
+  assert.doesNotMatch(css, /\.task-dialog::backdrop/);
+
+  // Forced-colors mode gives visible outlines to focus-within containers and active new-task button
+  const forcedColorsBlocks = [...css.matchAll(/@media\s*\(forced-colors:\s*active\)\s*\{([\s\S]*?)\n\}/g)]
+    .map((m) => m[1])
+    .join("\n");
+  assert.match(forcedColorsBlocks, /\.new-task-button\.active/);
+  assert.match(forcedColorsBlocks, /\.task-title-route-bar:focus-within/);
+  assert.match(forcedColorsBlocks, /\.task-editor-box:focus-within/);
+
+  // app.ts marks #new-task with aria-current="page" when dispatch-task owns #main
+  assert.match(app, /newTaskButton\.setAttribute\("aria-current",\s*"page"\)/);
+  assert.match(app, /newTaskButton\.removeAttribute\("aria-current"\)/);
 });
