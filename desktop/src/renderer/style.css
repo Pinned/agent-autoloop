@@ -1791,6 +1791,21 @@ main:has(#task-subpage:not([hidden])) {
   resize: vertical;
   min-height: 60px;
 }
+/* The working directory is picked, not typed: the field shows the chosen folder and the picker
+   button is the only way in. Read-only text still needs the field's own visual (not greyed
+   disabled): the value is a fact the save carries, not an input awaiting one. */
+.rule-field textarea[readonly] {
+  background: var(--panel);
+  color: var(--text);
+  cursor: default;
+}
+.rule-cwd-picker {
+  display: flex;
+}
+.rule-cwd-pick {
+  font-size: 12px;
+  padding: 6px 10px;
+}
 .rule-span2 {
   grid-column: span 2;
 }

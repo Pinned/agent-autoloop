@@ -112,7 +112,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(main, /远程队列不会取消/);
   assert.match(main, /离线持久待同步/);
   assert.doesNotMatch(main, /restartPolicy|controller\.restart/);
-  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 28);
+  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 29);
   // Each handler is checked inside its own block: a cross-handler match would let a missing
   // sender check hide behind the next handler that has one. A long handler may wrap its
   // arguments onto their own lines, so the split tolerates whitespace after the open paren.
@@ -124,6 +124,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   };
   for (const name of [
     "launchCommandCopy",
+    "cwdPick",
     "setupStatus",
     "launchStatus",
     "completeSetup",
@@ -227,6 +228,7 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
     "launchStatus",
     "onNavigate",
     "onRuntimeEvent",
+    "pickWorkingDir",
     "rulesCasGet",
     "rulesCasPut",
     "runtimeGet",

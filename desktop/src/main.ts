@@ -724,6 +724,16 @@ if (ownsAppLock)
         if (args.length !== 0) throw new Error("invalid-request");
         clipboard.writeText(LAUNCH_COMMAND);
       });
+      ipcMain.handle(channels.cwdPick, (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        // No parameters here either: the dialog is the main process's own, so the page cannot
+        // pre-seed a path or ask for a file; it only receives the folder the owner picked.
+        if (args.length !== 0) throw new Error("invalid-request");
+        return dialog
+          .showOpenDialog(window, { properties: ["openDirectory", "createDirectory"] })
+          .then((result) => (result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]))
+          .catch(() => null);
+      });
       async function setupRequest(operation: DesktopSetupOperation, args: unknown[]) {
         let request;
         try {
@@ -973,7 +983,7 @@ if (ownsAppLock)
             result.runtimeEventSeen !== false ||
             result.navigateSeen !== false ||
             result.bridge.join(",") !==
-              "completeSetup,copyLaunchCommand,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,rulesCasGet,rulesCasPut,runtimeGet,runtimeReconnect,runtimeStart,runtimeStop,runtimeUseEmbedded,setTheme,settingsGet,settingsPut,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,taskList,tasksGet,todayState,window,workersGet,workersLocal" ||
+              "completeSetup,copyLaunchCommand,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,pickWorkingDir,rulesCasGet,rulesCasPut,runtimeGet,runtimeReconnect,runtimeStart,runtimeStop,runtimeUseEmbedded,setTheme,settingsGet,settingsPut,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,taskList,tasksGet,todayState,window,workersGet,workersLocal" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||

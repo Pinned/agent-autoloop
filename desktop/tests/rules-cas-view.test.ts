@@ -108,6 +108,9 @@ function fixture(body: Element) {
   let answer!: (value: unknown) => void;
   let version = 10;
   let gets = 0;
+  // The folder picker stands in for the main-process dialog: tests set what the OS "chose".
+  let picked: string | null = null;
+  let picks = 0;
   // Tests may swap the list the read serves (the empty state needs a hub with no entries).
   let served: readonly DesktopRuleEntry[] = [original];
   const controller = createRendererRulesCas({
@@ -122,7 +125,13 @@ function fixture(body: Element) {
       });
     },
   });
-  const view = mountRulesCasView(controller);
+  const view = mountRulesCasView(controller, {
+    goEntry: () => {},
+    pickWorkingDir: () => {
+      picks++;
+      return Promise.resolve(picked);
+    },
+  });
   body.append(view.root as unknown as Element);
   const find = (predicate: (node: Element) => boolean) => {
     const node = all(body).find(predicate);
@@ -150,6 +159,11 @@ function fixture(body: Element) {
       served = value;
     },
     gets: () => gets,
+    // The picker stub: null is a cancelled OS dialog.
+    pick: (value: string | null) => {
+      picked = value;
+    },
+    picks: () => picks,
     button,
     id,
     find,
@@ -562,6 +576,60 @@ test("an empty list shows an empty-state card with a way in, not a bare status s
     // The card's own subtree carries the title and the line (the fixture keeps text on leaves).
     assert.ok(all(empty).some((node) => node.textContent.includes("还没有规则")));
     assert.ok(f.button("＋ 添加规则") !== undefined);
+  }));
+
+test("the working directory is picked, not typed: a choice fills it, a cancel keeps it", () =>
+  dom(async (f) => {
+    f.view.init();
+    await flush();
+    f.button("编辑").click();
+    // The field is read-only from birth: no free-typed path and no paste into it.
+    assert.equal(f.id("cwd").disabled, false);
+    // A cancelled OS dialog changes nothing: the old value stays, one door call happened.
+    f.pick(null);
+    f.button("选择…").click();
+    await flush();
+    assert.equal(f.picks(), 1);
+    assert.equal(f.id("cwd").value, original.cwd);
+    // A chosen folder fills the field, and the confirm saves exactly what was picked.
+    f.pick("/Users/演示/项目");
+    f.button("选择…").click();
+    await flush();
+    assert.equal(f.picks(), 2);
+    assert.equal(f.id("cwd").value, "/Users/演示/项目");
+    f.form().emit("submit");
+    assert.equal(f.inputs.length, 1);
+    assert.deepEqual((f.inputs[0] as { entries: DesktopRuleEntry[] }).entries[0], {
+      ...original,
+      cwd: "/Users/演示/项目",
+    });
+    // A fresh add starts empty and the pick is the only way to fill it.
+    f.answer(ready(19, [{ ...original, cwd: "/Users/演示/项目" }]));
+    await flush();
+    f.button("＋ 添加规则").click();
+    assert.equal(f.id("cwd").value, "");
+    f.pick("/tmp/新目录");
+    f.button("选择…").click();
+    await flush();
+    assert.equal(f.id("cwd").value, "/tmp/新目录");
+  }));
+
+test("the picker button stays idle while a save is in flight", () =>
+  dom(async (f) => {
+    f.view.init();
+    await flush();
+    f.button("编辑").click();
+    f.pick("/新/路径");
+    f.button("选择…").click();
+    await flush();
+    f.form().emit("submit");
+    // The confirm is saving; the picker cannot open a second OS dialog over the flight.
+    assert.equal(f.button("选择…").disabled, true);
+    f.answer(ready(19));
+    await flush();
+    // The save settled and the editor closed with it: no edit session, no OS dialog. The button
+    // waits for the next open, the same lock it held before the form ever appeared.
+    assert.equal(f.button("选择…").disabled, true);
   }));
 
 test("the preview states only what the save hands over for the local slots", () =>

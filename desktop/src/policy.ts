@@ -45,6 +45,12 @@ export const channels = Object.freeze({
   runtimeUseEmbedded: "desktop:runtime:use-embedded",
   /** Copies the one fixed launch command; the sandboxed page has no clipboard of its own. */
   launchCommandCopy: "desktop:launch:copy-command",
+  /**
+   * Opens the OS folder dialog for the rule editor's working directory. The sandboxed page
+   * cannot reach the filesystem, so the main process owns the dialog; the renderer only gets
+   * the chosen folder path (or null when the owner cancelled).
+   */
+  cwdPick: "desktop:cwd:pick",
   todayState: "desktop:state:today",
   /** Agent and channel presence the hub already knows; never a remote environment probe. */
   workersGet: "desktop:workers:get",
@@ -98,6 +104,12 @@ export interface DesktopBridge {
    * the text is fixed here and written by the main process.
    */
   copyLaunchCommand(): Promise<void>;
+  /**
+   * Open the OS folder dialog and return the chosen folder path, or null when cancelled. The
+   * renderer cannot reach the filesystem (sandbox + `connect-src 'none'`), so the main process
+   * owns the dialog; the page never gets to name a path, only to receive one.
+   */
+  pickWorkingDir(): Promise<string | null>;
   /** Read-only today-page data from the local hub while it runs. */
   todayState(): Promise<DesktopTodayResponse>;
   /** Read-only worker and channel presence from the local hub while it runs. */
