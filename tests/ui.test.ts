@@ -347,7 +347,16 @@ test("a rule with a cron is saved as a cron rule, and the reserved source is ref
   // the page read, and the page read the mark — losing it would orphan the desktop's timed entry.
   const withMark = [
     ...shown.rules.filter((rule: any) => rule.name !== "每晚清理"),
-    { name: "每晚清理", when: { cron: "0 23 * * *", local: true }, to: "a1", cwd: "~/x", prompt: "清理。" },
+    {
+      name: "每晚清理",
+      when: { cron: "0 23 * * *", local: true },
+      to: "a1",
+      cwd: "~/x",
+      prompt: "清理。",
+      group: "cleanup",
+      autoGroup: true,
+      pauseOnAsk: true,
+    },
   ];
   const kept = await call("/v1/ui/config/rules", { method: "PUT", body: withMark });
   assert.equal(kept.status, 200);

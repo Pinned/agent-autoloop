@@ -25,7 +25,21 @@ export const DESKTOP_RULES_AGENTS_MAX = 64 as const;
 export const DESKTOP_RULES_RESPONSE_MAX_BYTES = 128 * 1024;
 export const DESKTOP_RULES_VERSION = 2 as const;
 
-const ENTRY_FIELDS = ["name", "types", "cron", "to", "cwd", "prompt", "skill", "parallel", "group", "tell", "emits"];
+const ENTRY_FIELDS = [
+  "name",
+  "types",
+  "cron",
+  "to",
+  "cwd",
+  "prompt",
+  "skill",
+  "parallel",
+  "group",
+  "autoGroup",
+  "pauseOnAsk",
+  "tell",
+  "emits",
+];
 
 export type DesktopRuleEntry = {
   name: string;
@@ -38,6 +52,8 @@ export type DesktopRuleEntry = {
   skill?: string;
   parallel?: number;
   group?: string;
+  autoGroup?: boolean;
+  pauseOnAsk?: boolean;
   tell?: "always" | "needed" | "never";
   emits?: { source: string; types: string[] };
 };
@@ -143,7 +159,13 @@ export function parseDesktopRuleEntry(value: unknown): DesktopRuleEntry {
     (!Number.isInteger(parallel) || (parallel as number) <= 0 || (parallel as number) > DESKTOP_RULES_PARALLEL_MAX)
   )
     throw new Error(`入口「${name}」的 parallel 要是不超过 ${DESKTOP_RULES_PARALLEL_MAX} 的正整数`);
+  for (const field of ["autoGroup", "pauseOnAsk"])
+    if (entry[field] !== undefined && typeof entry[field] !== "boolean")
+      throw new Error(`入口的 ${field} 要是 true 或 false`);
   const group = text("group", true);
+  if (entry.autoGroup === true && group === undefined && !text("cwd")!.startsWith("/"))
+    throw new Error("自动分组需要接单电脑的绝对路径，请填写绝对路径或显式分组。");
+  if (entry.pauseOnAsk === true && (parallel ?? 1) !== 1) throw new Error("待确认暂停第一版只支持组并发 1。");
   const tell = text("tell", true);
   if (tell !== undefined && !["always", "needed", "never"].includes(tell))
     throw new Error(`入口「${name}」的 tell 只能是 always、needed、never`);
@@ -158,6 +180,8 @@ export function parseDesktopRuleEntry(value: unknown): DesktopRuleEntry {
     name,
     ...(cron !== undefined ? { cron } : { types: checkedTypes! }),
     ...(group !== undefined && { group }),
+    ...(entry.autoGroup !== undefined && { autoGroup: entry.autoGroup as boolean }),
+    ...(entry.pauseOnAsk !== undefined && { pauseOnAsk: entry.pauseOnAsk as boolean }),
     ...(tell !== undefined && { tell: tell as DesktopRuleEntry["tell"] }),
     ...(emits !== undefined && { emits }),
     to: text("to")!,

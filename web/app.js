@@ -375,7 +375,9 @@ const SPECS = {
     ["prompt", "提示词", "textarea", "要做的事（和 skill 至少写一个）"],
     ["skill", "Skill（可空）", "text", "Skill 名"],
     ["parallel", "同时跑几个（可空）", "number", "默认 1"],
-    ["group", "分组（可空）", "text", "同组规则并发一致"],
+    ["group", "分组（可空）", "text", "显式分组优先，同组并发一致"],
+    ["autoGroup", "按接单电脑与目录自动分组（需远端绝对路径，不支持 ~/）", "bool", ""],
+    ["pauseOnAsk", "待确认暂停同组（组并发仅支持 1）", "bool", ""],
     ["tell", "收尾时告诉谁", "select", TELL_TEXT],
   ],
   source: [
@@ -505,6 +507,8 @@ function ruleNode(rule) {
     byName.skill,
     byName.parallel,
     byName.group,
+    byName.autoGroup,
+    byName.pauseOnAsk,
     byName.tell,
   );
   article.read = () => {

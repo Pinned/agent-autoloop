@@ -83,7 +83,7 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <rect class="chip" x="268" y="180" width="424" height="40" rx="9"/>
 <rect class="tag" x="276" y="187" width="100" height="26" rx="6"/>
 <text x="326" y="204" class="tn" text-anchor="middle">Zero-cost wait</text>
-<text x="386" y="204" class="td">Exits while waiting for you; 0 tokens, resumes chat</text>
+<text x="386" y="204" class="td">Exits; optional group hold until answered work finishes</text>
 
 <rect class="chip" x="268" y="228" width="424" height="40" rx="9"/>
 <rect class="tag" x="276" y="235" width="100" height="26" rx="6"/>

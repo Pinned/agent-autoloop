@@ -35,6 +35,7 @@ const HELP = `Agent 自动化中台
   agent-autoloop tell <编号> [--task 定时任务名]
                                     直接告诉你一件事，内容从标准输入读
   agent-autoloop stop <第几轮>           停掉一轮
+  agent-autoloop release-hold <占用轮次> <原因>  本人核实后解除事项占用
   agent-autoloop correct <第几轮> <更正的话>
                                     给一轮的会话发本人的更正：正在跑的先停下，接着原会话继续
   agent-autoloop key new <source|worker|channel|owner> <名字>
@@ -222,6 +223,10 @@ async function status() {
     `在跑 ${totals.running} · 排队 ${totals.queued} · 今天做完 ${totals.doneToday} · 等你 ${state.cards.length}`,
   );
   console.log(`${spendLine(state.spending)}\n`);
+  for (const hold of state.holds ?? [])
+    console.log(
+      `事项占用 #${hold.run_id}：${hold.rule}（${hold.lane || "整条规则"}）暂停同组；回答续办收尾后释放。人工释放：agent-autoloop release-hold ${hold.run_id} <核实原因>`,
+    );
   for (const agent of state.agents) console.log(`${agent.online ? "●" : "○"} ${agent.name}（${agent.worker}）`);
   for (const channel of state.channels) console.log(`${channel.online ? "●" : "○"} ${channel.name}`);
   for (const card of state.cards) {
@@ -266,6 +271,15 @@ async function answer(args: string[]) {
         ? "结案了。"
         : "收到，Agent 接着干。",
   );
+}
+
+async function releaseHold(args: string[]) {
+  const [id, ...words] = args;
+  const run = Number(id);
+  if (!Number.isSafeInteger(run) || run < 1 || !words.length)
+    return fail("用法：agent-autoloop release-hold <占用轮次> <原因>");
+  await ownerClient().releaseHold(run, words.join(" "));
+  console.log("事项占用已释放；这不是业务已经完成的证明。");
 }
 
 async function resolve(args: string[]) {
@@ -498,6 +512,7 @@ const commands: Record<string, () => unknown> = {
   conformance: () => checkConformance(args),
   answer: () => answer(args),
   resolve: () => resolve(args),
+  "release-hold": () => releaseHold(args),
   doctor,
   check,
   key: () => key(args),

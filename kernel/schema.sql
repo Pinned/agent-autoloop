@@ -40,6 +40,14 @@ CREATE TABLE runs (
   usage TEXT
 );
 
+CREATE TABLE holds (
+  grp TEXT PRIMARY KEY,
+  rule TEXT NOT NULL,
+  lane TEXT NOT NULL,
+  run_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE run_events (
   run_id INTEGER NOT NULL,
   event_id INTEGER NOT NULL,

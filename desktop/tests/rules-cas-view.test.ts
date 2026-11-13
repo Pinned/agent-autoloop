@@ -495,6 +495,7 @@ test("CR baseline is isolated across cancelled, expired, reopened and add editor
       types: ["task.new"],
       to: "a",
       cwd: "/work/new",
+      autoGroup: true,
     });
   }));
 
@@ -559,6 +560,12 @@ test("form validation, add/remove and explicit clearing use the existing full co
       ["cwd", "~/x"],
     ])
       f.id(name).value = value;
+    // New rules opt into automatic grouping; a remote home cannot be inferred by the hub.
+    assert.equal(f.id("autoGroup").value, "true");
+    f.form().emit("submit");
+    assert.equal(f.inputs.length, 0);
+    assert.ok(f.text().includes("绝对路径"));
+    f.id("cwd").value = "/work/x";
     // A confirmed add is a save in flight: the draft holds both entries until the PUT settles.
     f.form().emit("submit");
     f.button("保存到本机中台").click();

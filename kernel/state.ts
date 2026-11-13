@@ -86,6 +86,7 @@ export function stateOf(now: number, before: number | undefined, rules: Rules, {
     totals: { ...tally(counts), attention: openCards.length },
     cards: openCards.map((card) => view(card)),
     recentCards: recentCards.map((card) => view(card)),
+    holds: all<Row>("SELECT * FROM holds ORDER BY created_at"),
     sources: Object.entries(rules.sources).map(([id, { name }]) => {
       const events = all<Row>("SELECT COUNT(*) AS n FROM events WHERE source = ?", [id])[0].n as number;
       return { id, name, events };

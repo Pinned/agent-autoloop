@@ -83,7 +83,7 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <rect class="chip" x="268" y="180" width="424" height="40" rx="9"/>
 <rect class="tag" x="276" y="187" width="92" height="26" rx="6"/>
 <text x="322" y="204.5" class="tn" text-anchor="middle">挂起零消耗</text>
-<text x="378" y="204.5" class="td">等你拍板时进程直接退出，不烧 Token，回来接着原对话</text>
+<text x="378" y="204.5" class="td">等你拍板进程退出；可保留组占用，回答续办收尾后释放</text>
 
 <rect class="chip" x="268" y="228" width="424" height="40" rx="9"/>
 <rect class="tag" x="276" y="235" width="92" height="26" rx="6"/>

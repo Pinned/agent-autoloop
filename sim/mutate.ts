@@ -7,15 +7,15 @@ import { join } from "node:path";
 const edits: [string, string, string, string][] = [
   ["event-duplicate", "decide.ts", "if (existing) return { event:", "if (false && existing) return { event:"],
   ["source-boundary", "decide.ts", "rule.when.source === source", "true"],
-  ["parallel-lane", "decide.ts", 'const lane = rule.parallel ? subject : ""', 'const lane = ""'],
-  ["group-capacity", "decide.ts", "claimed.filter((other) => other.grp === run.grp).length <", "0 <"],
-  ["lane-exclusion", "decide.ts", "!claimed.some((other) => other.grp === run.grp && other.lane === run.lane)", "true"],
+  ["parallel-lane", "decide.ts", 'rule.parallel ? subject : ""', 'false ? subject : ""'],
+  ["group-capacity", "decide.ts", "occupied.filter((other) => other.grp === run.grp).length <", "0 <"],
   [
-    "worker-boundary",
+    "lane-exclusion",
     "decide.ts",
-    'run.state === "queued" &&\n    agents.includes(ruleNamed(draft, run.rule)?.to ?? "")',
-    'run.state === "queued" &&\n    true',
+    "!occupied.some((other) => other.grp === run.grp && other.lane === run.lane)",
+    "true",
   ],
+  ["worker-boundary", "decide.ts", 'agents.includes(ruleNamed(draft, run.rule)?.to ?? "")', "true"],
   ["retry-delay", "decide.ts", "5 * MINUTE * 2 ** (attempts - 1)", "0 * MINUTE * 2 ** (attempts - 1)"],
   [
     "receipt-replay",
@@ -31,8 +31,8 @@ const edits: [string, string, string, string][] = [
   [
     "answer-wakeup",
     "decide.ts",
-    "if (rule) enqueue(draft, rule, eventId, card.lane,",
-    "if (false) enqueue(draft, rule, eventId, card.lane,",
+    "if (rule)\n    enqueue(\n      draft,\n      rule,\n      eventId,\n      card.lane,",
+    "if (false)\n    enqueue(\n      draft,\n      rule,\n      eventId,\n      card.lane,",
   ],
   ["quiet-delivery", "decide.ts", "if (card.quiet ||", "if (false ||"],
   ["delivery-lease", "decide.ts", "not_before: iso(now + MINUTE)", "not_before: iso(now)"],

@@ -75,6 +75,8 @@ function checkRule(issues: string[], rules: Rules, rule: Rule, names: Set<string
     ["skill", isText, NOT_EMPTY, true],
     ["prompt", isText, NOT_EMPTY, true],
     ["group", isText, NOT_EMPTY, true],
+    ["autoGroup", (value) => typeof value === "boolean", "要是 true 或 false", true],
+    ["pauseOnAsk", (value) => typeof value === "boolean", "要是 true 或 false", true],
     ["parallel", isCount, "要是正整数", true],
     ["tell", (value) => TELLS.includes(value as string), `只能是 ${TELLS.join("、")}`, true],
     ["emits", isObject, "要是一个对象", true],
@@ -106,6 +108,19 @@ function checkRule(issues: string[], rules: Rules, rule: Rule, names: Set<string
       ["source", emittable, `不是已登记的来源：${rule.emits.source}`],
       ["types", isTypes, "要是事件类型的列表"],
     ]);
+  }
+  if (rule.group === undefined && rule.autoGroup === true) {
+    if (typeof rule.cwd !== "string" || !rule.cwd.startsWith("/") || /[\u0000-\u001f\u007f]/.test(rule.cwd)) {
+      issues.push(`${where}自动分组需要接单电脑的绝对路径；请填写绝对路径或显式 group`);
+    } else {
+      // Configuration text is trusted; never expand the hub's home or resolve remote symlinks.
+      const parts: string[] = [];
+      for (const part of rule.cwd.split("/")) {
+        if (part === "..") parts.pop();
+        else if (part && part !== ".") parts.push(part);
+      }
+      rule.group = `auto:${JSON.stringify([rules.agents[rule.to]?.worker, "/" + parts.join("/")])}`;
+    }
   }
   rule.group ??= rule.name;
   rule.tell ??= "needed";
@@ -172,6 +187,10 @@ export function parseRules(json: string, now: number, timezone: string): Rules {
   for (const { group, parallel } of rules.rules) {
     if (limits.has(group) && limits.get(group) !== parallel) issues.push(`组「${group}」里的规则 parallel 要一致`);
     limits.set(group, parallel);
+  }
+  for (const rule of rules.rules) {
+    if (rule.pauseOnAsk && (limits.get(rule.group) ?? 1) !== 1)
+      issues.push(`规则「${rule.name}」的 pauseOnAsk 第一版只支持组并发 1`);
   }
   for (const task of rules.elsewhere) {
     const name = nameOf(task);
