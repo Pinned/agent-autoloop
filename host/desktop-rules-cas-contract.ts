@@ -24,10 +24,12 @@ export type DesktopRulesCasTransportCode = "unavailable" | "no-hub" | "error";
  * classification only — a save in that state is never attempted, and never called incompatible.
  */
 export type DesktopRulesCasGetCode = DesktopRulesCasTransportCode | "incompatible";
-export type DesktopRulesCasPutCode = DesktopRulesCasTransportCode | "invalid" | "busy" | "conflict" | "uncertain";
+export type DesktopRulesCasPutCode =
+  DesktopRulesCasTransportCode | "invalid" | "busy" | "conflict" | "uncertain" | "validation";
 export type DesktopRulesCasOutcome = "not-sent" | "rejected" | "uncertain";
 type Success = { version: 3; ok: true; data: DesktopRulesCasData };
 type PutError =
+  | { code: "validation"; outcome: "rejected"; message: string; issues: string[] }
   | { code: "invalid"; outcome: "not-sent" | "uncertain"; message: string }
   | { code: DesktopRulesCasTransportCode | "busy"; outcome: "not-sent"; message: string }
   | { code: "conflict"; outcome: "rejected"; message: string }
@@ -43,6 +45,7 @@ export const DESKTOP_RULES_CAS_MESSAGES = Object.freeze({
   incompatible:
     "本机中台返回了此应用无法识别的入口数据，通常因为终端里的 agent-autoloop 版本过旧。请升级它并重启，或停止它改用应用内置中台。",
   invalid: "入口或规则版本无效；草稿已保留。若请求已发出，无法确认是否保存，请重新读取核对。",
+  validation: "规则校验未通过，尚未写入；请按提示修改后再保存。",
   busy: "已有入口保存请求正在处理中，本次草稿未发送，请等待结果。",
   conflict: "规则已变化，本次保存被拒绝；请保留草稿，重新读取后核对再保存。",
   uncertain: "无法确认入口是否已保存；请保留草稿并重新读取核对，不要直接重复保存。",
@@ -114,9 +117,38 @@ export function parseDesktopRulesCasGetResponse(value: unknown): DesktopRulesCas
   if (error.message !== DESKTOP_RULES_CAS_MESSAGES[code]) invalid();
   return within({ version: 3, ok: false, error: { code, message: DESKTOP_RULES_CAS_MESSAGES[code] } });
 }
+export function parseRulesValidationIssues(value: unknown): string[] {
+  if (
+    !Array.isArray(value) ||
+    Object.getPrototypeOf(value) !== Array.prototype ||
+    value.length < 1 ||
+    value.length > 8 ||
+    Reflect.ownKeys(value).length !== value.length + 1
+  )
+    invalid();
+  return Array.from({ length: value.length }, (_, index) => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    const issue = descriptor && "value" in descriptor ? descriptor.value : undefined;
+    if (typeof issue !== "string" || !issue.trim() || [...issue].length > 300 || /[\u0000-\u001f\u007f]/.test(issue))
+      invalid();
+    return issue;
+  });
+}
+
 export function parseDesktopRulesCasPutResponse(value: unknown): DesktopRulesCasPutResponse {
   if (peek(value) === true) return success(value);
-  const error = record(failed(value), ["code", "outcome", "message"]);
+  const raw = failed(value);
+  if (raw && typeof raw === "object" && Object.getOwnPropertyDescriptor(raw, "code")?.value === "validation") {
+    const error = record(raw, ["code", "outcome", "message", "issues"]);
+    if (error.outcome !== "rejected" || error.message !== DESKTOP_RULES_CAS_MESSAGES.validation) invalid();
+    const issues = parseRulesValidationIssues(error.issues);
+    return within({
+      version: 3,
+      ok: false,
+      error: { code: "validation", outcome: "rejected", message: DESKTOP_RULES_CAS_MESSAGES.validation, issues },
+    });
+  }
+  const error = record(raw, ["code", "outcome", "message"]);
   if (!pair(error.code, error.outcome)) invalid();
   const code = error.code as DesktopRulesCasPutCode;
   if (error.message !== DESKTOP_RULES_CAS_MESSAGES[code]) invalid();

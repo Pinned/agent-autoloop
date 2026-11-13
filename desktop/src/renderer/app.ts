@@ -216,6 +216,7 @@ function leaveTaskPage() {
 // The automation entry editor is a subpage of the automation page, the same pseudo-page pattern:
 // the view is app-level so the edit survives navigation, and leaving returns to the list.
 function leaveEntryEditor() {
+  if (rules.getState().saving) return;
   rulesPage.closeEditor();
   render("automation");
 }
@@ -490,7 +491,7 @@ function render(id: string, focus = true) {
           id: "automation-entry",
           nav: "编辑规则",
           title: "编辑规则",
-          description: "改动确认后保存到本机中台。",
+          description: "新增直接保存到本机中台；已有规则确认修改后，在列表保存。",
           icon: "automation",
         }
       : pages.find((item) => item.id === id)!;
@@ -549,6 +550,8 @@ function render(id: string, focus = true) {
       copy.prepend(backButton);
       rulesPage.openEditor();
     } else {
+      const actions = main.querySelector<HTMLElement>(".page-head-actions")!;
+      actions.append(rulesPage.addButton);
       rulesPage.closeEditor();
     }
     rulesPage.update();

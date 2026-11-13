@@ -1665,99 +1665,62 @@ main:has(#task-subpage:not([hidden])) {
 .rules-editor-panel .rule-form {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  overflow: hidden;
 }
 .rule-head-bar {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  padding: 6px 10px 6px 14px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--panel);
-}
-.rule-head-bar:focus-within {
-  border-color: var(--blue);
-  box-shadow: 0 0 0 2px var(--accent-bg);
+  padding: 22px 26px;
+  border-bottom: 1px solid var(--soft);
 }
 .rule-name-field {
-  flex: 1 1 240px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
+  display: grid;
+  gap: 7px;
 }
 .rule-name-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
-  white-space: nowrap;
+  font-weight: 500;
 }
 .rule-name-field textarea {
-  flex: 1;
-  min-width: 0;
   width: 100%;
-  height: 28px;
+  min-height: 38px;
+  padding: 8px 12px;
   font: inherit;
   font-size: 15px;
-  font-weight: 600;
-  line-height: 1.4;
-  padding: 4px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
   color: var(--text);
-  resize: none;
-  overflow: hidden;
-  white-space: nowrap;
-}
-/* The borderless title input delegates its focus ring to the bar, so name and trigger read as one header. */
-.rule-name-field textarea:focus-visible {
-  outline: none;
-}
-.rule-head-sep {
-  width: 1px;
-  height: 22px;
-  background: var(--soft);
-  flex-shrink: 0;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  resize: vertical;
 }
 .rule-trigger-field {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 5px;
-  flex-shrink: 0;
+  gap: 12px;
+  margin-bottom: 16px;
 }
-.rule-trigger-field span {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--muted);
-  white-space: nowrap;
-}
-.rule-trigger-field select {
-  font-size: 12px;
-  padding: 4px 30px 4px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--soft);
+.rule-trigger-field button {
+  padding: 6px 16px;
   background: var(--panel2);
+  border: 1px solid var(--soft);
+  border-radius: 6px;
+  color: var(--muted);
 }
-.rule-trigger-field select:hover:not(:disabled) {
-  border-color: var(--border);
+.rule-trigger-field button[aria-pressed="true"] {
+  background: var(--accent-bg);
+  border-color: var(--blue);
+  color: var(--blue);
 }
 .rule-group {
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: var(--panel);
-  padding: 14px 16px 16px;
+  border-bottom: 1px solid var(--soft);
+  padding: 22px 26px;
 }
 .rule-group > h2 {
   margin: 0 0 12px;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
-  letter-spacing: 1.6px;
-  color: var(--muted);
-  text-transform: uppercase;
+  color: var(--text);
 }
 .rule-grid {
   display: grid;
@@ -1801,6 +1764,40 @@ main:has(#task-subpage:not([hidden])) {
 }
 .rule-cwd-picker {
   display: flex;
+  gap: 10px;
+  min-width: 0;
+}
+.rule-cwd-picker textarea[readonly] {
+  flex: 1;
+  min-width: 0;
+  min-height: 38px;
+  height: 38px;
+  resize: none;
+  white-space: pre;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.rule-cwd-copy {
+  justify-self: start;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+}
+.rule-cwd-pick {
+  flex-shrink: 0;
+}
+.rule-fold-summary {
+  margin-left: auto;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.rule-footer-hint {
+  flex: 1 1 240px;
+  margin: 0;
+  font-size: 12px;
 }
 .rule-cwd-pick {
   font-size: 12px;
@@ -1819,7 +1816,7 @@ main:has(#task-subpage:not([hidden])) {
   list-style: none;
   cursor: pointer;
   user-select: none;
-  padding: 6px 2px;
+  padding: 18px 26px;
   font-size: 12px;
   font-weight: 500;
   color: var(--muted);
@@ -1830,21 +1827,16 @@ main:has(#task-subpage:not([hidden])) {
 .rule-advanced summary:hover {
   color: var(--text);
 }
-.rule-advanced-chev {
-  font-size: 10px;
-  color: var(--faint);
+.rule-advanced summary::after {
+  content: "›";
+  color: var(--muted);
   transition: transform 0.12s ease;
 }
-.rule-advanced[open] > summary .rule-advanced-chev {
+.rule-advanced[open] > summary::after {
   transform: rotate(90deg);
 }
-.rule-advanced-filled {
-  font-size: 10px;
-  padding: 1px 7px;
-  border-radius: 999px;
-  border: 1px solid var(--blue);
-  color: var(--blue);
-  background: color-mix(in srgb, var(--blue) 8%, transparent);
+.rule-advanced .rule-group > h2 {
+  display: none;
 }
 .rule-advanced .rule-group {
   margin-top: 4px;
@@ -1855,7 +1847,7 @@ main:has(#task-subpage:not([hidden])) {
   justify-content: flex-end;
   align-items: center;
   gap: 10px;
-  margin-top: 2px;
+  padding: 18px 26px;
 }
 .rule-footer .setup-error {
   margin: 0;
@@ -1884,8 +1876,7 @@ main:has(#task-subpage:not([hidden])) {
   }
 }
 @media (forced-colors: active) {
-  .rule-head-bar:focus-within,
-  .rule-advanced-filled {
+  .rule-advanced summary:focus-visible {
     outline: 2px solid Highlight;
   }
 }

@@ -232,7 +232,7 @@ export function createRendererRulesCas(bridge: RulesCasBridge, onChange?: () => 
           };
         }
         // A stale result cannot label the new draft, but its transport risk is global.
-        if (!response.ok && response.error.outcome !== "not-sent") {
+        if (!response.ok && response.error.outcome !== "not-sent" && response.error.code !== "validation") {
           needsReview = true;
           reviewMessage = response.error.message;
         }
@@ -245,7 +245,14 @@ export function createRendererRulesCas(bridge: RulesCasBridge, onChange?: () => 
           draft = null;
           save = freeze({ kind: "confirmed" });
         } else {
-          save = freeze({ kind: "failed", ...response.error });
+          save = freeze({
+            kind: "failed",
+            ...response.error,
+            message:
+              response.error.code === "validation"
+                ? `${response.error.message}\n${response.error.issues.join("\n")}`
+                : response.error.message,
+          });
         }
         pump();
         notify();

@@ -142,6 +142,7 @@ test("editing a timed entry shows the cron, saves it, and never sends types", ()
     assert.equal(f.id("cron").value, "0 9 * * *");
     f.id("cron").value = "30 8 * * *";
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     assert.equal(f.inputs.length, 1);
     const saved = (f.inputs[0] as { entries: unknown[] }).entries[0] as Record<string, unknown>;
     assert.equal(saved.cron, "30 8 * * *");
@@ -159,9 +160,11 @@ test("a new entry can be timed: the switch asks for a cron instead of types", ()
     trigger.emit("change");
     f.id("name").value = "巡检";
     f.id("to").value = "a";
-    f.id("cwd").value = "~/y";
+    f.id("cwd").value = "/work/y";
     f.id("cron").value = "*/5 * * * *";
+    f.id("prompt").value = "检查运行状态";
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     assert.equal(f.inputs.length, 1);
     const added = (f.inputs[0] as { entries: unknown[] }).entries.at(-1) as Record<string, unknown>;
     assert.equal(added.cron, "*/5 * * * *");
@@ -175,9 +178,27 @@ test("an unchanged timed entry saves nothing; a cron-only change is a real chang
     const editButtons = all(f.body).filter((node) => node.tag === "button" && node.textContent === "编辑");
     editButtons[0].click();
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     assert.equal(f.inputs.length, 0);
     editButtons[0].click();
     f.id("cron").value = "15 9 * * *";
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     assert.equal(f.inputs.length, 1);
+  }));
+
+// Prevent the segmented trigger controls from dropping the inactive trigger's in-progress value.
+test("trigger buttons switch fields without losing their values", () =>
+  dom(async (f) => {
+    f.view.init();
+    await flush();
+    f.button("编辑").click();
+    f.id("cron").value = "15 8 * * *";
+    f.button("事件触发").click();
+    assert.equal(f.id("trigger").value, "event");
+    f.id("types").value = "task.changed";
+    f.button("定时触发").click();
+    assert.equal(f.id("cron").value, "15 8 * * *");
+    f.button("事件触发").click();
+    assert.equal(f.id("types").value, "task.changed");
   }));

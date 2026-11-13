@@ -89,6 +89,7 @@ export function mountRulesCasView(
   nav: RulesCasViewNav = { goEntry: () => {} },
 ): {
   root: HTMLElement;
+  addButton: HTMLButtonElement;
   init(): void;
   update(): void;
   /** The entry editor subpage: shows the in-page form. */
@@ -129,14 +130,11 @@ export function mountRulesCasView(
   draftBar.append(preview, discardButton, saveButton);
   const list = document.createElement("ul");
   list.className = "entry-list";
-  const addRow = document.createElement("li");
-  addRow.className = "entry-add";
   const addButton = document.createElement("button");
   addButton.type = "button";
   addButton.className = "rules-add";
   addButton.textContent = "＋ 添加规则";
   addButton.addEventListener("click", () => openForm(null));
-  addRow.append(addButton);
 
   // The editor is an in-page subpage panel, not a modal: it lives inside this view's own root so a
   // page switch re-attaches it without rebuilding the form, and hiding it never strands focus in a
@@ -148,8 +146,6 @@ export function mountRulesCasView(
   editor.hidden = true;
   const form = document.createElement("form");
   form.className = "rule-form";
-  // One fused head bar carries the name and the trigger kind, the dispatch-task page's pattern:
-  // identity and routing read as one header instead of two full-width form rows.
   const headBar = document.createElement("div");
   headBar.className = "rule-head-bar";
   const nameField = document.createElement("label");
@@ -162,15 +158,16 @@ export function mountRulesCasView(
   nameInput.rows = 1;
   nameInput.setAttribute("placeholder", "一句话概括这条规则做什么");
   nameField.append(nameLabel, nameInput);
-  const headSep = document.createElement("span");
-  headSep.className = "rule-head-sep";
-  headSep.setAttribute("aria-hidden", "true");
-  const triggerField = document.createElement("label");
+  const triggerField = document.createElement("div");
   triggerField.className = "rule-trigger-field";
   const triggerLabel = document.createElement("span");
-  triggerLabel.textContent = "触发";
+  triggerLabel.textContent = "触发方式";
+  triggerField.setAttribute("role", "group");
+  triggerField.setAttribute("aria-label", "触发方式");
   const triggerInput = document.createElement("select");
   triggerInput.id = "rules-trigger";
+  triggerInput.hidden = true;
+  const triggerButtons: HTMLButtonElement[] = [];
   for (const [value, text] of [
     ["event", "事件触发"],
     ["cron", "定时触发"],
@@ -179,9 +176,18 @@ export function mountRulesCasView(
     option.value = value;
     option.textContent = text;
     triggerInput.append(option);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.value = value;
+    button.textContent = text;
+    button.addEventListener("click", () => {
+      triggerInput.value = value;
+      syncTrigger();
+    });
+    triggerButtons.push(button);
   }
-  triggerField.append(triggerLabel, triggerInput);
-  headBar.append(nameField, headSep, triggerField);
+  triggerField.append(triggerLabel, triggerInput, ...triggerButtons);
+  headBar.append(nameField);
 
   function field(label: string, id: string, multiline = true) {
     const wrap = document.createElement("label");
@@ -202,7 +208,7 @@ export function mountRulesCasView(
   const triggerGroup = document.createElement("section");
   triggerGroup.className = "rule-group";
   const triggerGroupTitle = document.createElement("h2");
-  triggerGroupTitle.textContent = "触发";
+  triggerGroupTitle.textContent = "触发条件";
   const triggerGrid = document.createElement("div");
   triggerGrid.className = "rule-grid";
   const { wrap: typesWrap, input: typesInput } = field("事件类型", "types");
@@ -212,16 +218,15 @@ export function mountRulesCasView(
   cronWrap.className += " rule-span2";
   cronInput.setAttribute("placeholder", "cron，比如 0 9 * * *");
   triggerGrid.append(typesWrap, cronWrap);
-  triggerGroup.append(triggerGroupTitle, triggerGrid);
+  triggerGroup.append(triggerGroupTitle, triggerField, triggerGrid);
 
   // Group: execution facts. The executor is a select of the agents the read offered, the same
   // roster the settings page shows: a rule can only name an agent the hub actually has, so a typo
-  // is a missing option, never a bad save. The parallel number is a scheduling fact, so it lives
-  // beside the executor rather than behind the advanced fold.
+  // is a missing option, never a bad save.
   const execGroup = document.createElement("section");
   execGroup.className = "rule-group";
   const execGroupTitle = document.createElement("h2");
-  execGroupTitle.textContent = "执行";
+  execGroupTitle.textContent = "执行位置";
   const execGrid = document.createElement("div");
   execGrid.className = "rule-grid";
   const toField = document.createElement("label");
@@ -236,12 +241,13 @@ export function mountRulesCasView(
   // dialog (a main-process door) is the only way in. A path chosen with the keyboard was a
   // typo the hub only refused at save time; the dialog answers that question before the form.
   cwdInput.setAttribute("readonly", "readonly");
+  (cwdInput as HTMLTextAreaElement).rows = 1;
   const cwdPickRow = document.createElement("span");
   cwdPickRow.className = "rule-cwd-picker";
   const cwdPickButton = document.createElement("button");
   cwdPickButton.type = "button";
   cwdPickButton.className = "rule-cwd-pick";
-  cwdPickButton.textContent = "选择…";
+  cwdPickButton.textContent = "选择文件夹";
   // One dialog at a time: the button is disabled while a save is in flight, the same lock the
   // other list actions hold; a cancelled dialog changes nothing.
   let cwdPicking = false;
@@ -263,38 +269,63 @@ export function mountRulesCasView(
         update();
       });
   });
-  cwdPickRow.append(cwdPickButton);
-  cwdWrap.append(cwdPickRow);
+  cwdPickRow.append(cwdInput, cwdPickButton);
+  let readCwd = () => cwdInput.value;
+  const cwdCopy = document.createElement("button");
+  cwdCopy.type = "button";
+  cwdCopy.className = "rule-cwd-copy";
+  cwdCopy.textContent = "复制完整路径";
+  cwdCopy.addEventListener("click", () => {
+    navigator.clipboard.writeText(readCwd()).then(
+      () => {
+        cwdCopy.textContent = "已复制完整路径";
+      },
+      () => {
+        cwdCopy.textContent = "复制失败，请选中路径复制";
+      },
+    );
+  });
+  cwdWrap.append(cwdPickRow, cwdCopy);
   const { wrap: parallelWrap, input: parallelInput } = field("并行数", "parallel", false);
-  parallelInput.setAttribute("placeholder", "默认 1");
+  parallelInput.setAttribute("placeholder", "留空：整条规则一个事项");
+  const parallelHint = document.createElement("small");
+  parallelHint.textContent =
+    "留空时整条规则合为一个事项；填写后按对象分事项，填 1 也会分开。同组规则的并行设置必须一致。";
+  parallelWrap.append(parallelHint);
   parallelInput.setAttribute("type", "number");
   parallelInput.setAttribute("min", "1");
   parallelInput.setAttribute("max", "64");
-  execGrid.append(toField, cwdWrap, parallelWrap);
+  toField.className += " rule-span2";
+  cwdWrap.className += " rule-span2";
+  execGrid.append(toField, cwdWrap);
   execGroup.append(execGroupTitle, execGrid);
 
-  // The advanced group holds the optional facts. A native <details> owns the toggle, and every
-  // input inside stays mounted at all times — collapsed fields keep their values, and update()
-  // never rebuilds them, so the focus and the draft both survive a background notification.
-  const advanced = document.createElement("details");
-  advanced.className = "rule-advanced";
-  const advancedSummary = document.createElement("summary");
-  const advancedChev = document.createElement("span");
-  advancedChev.className = "rule-advanced-chev";
-  advancedChev.setAttribute("aria-hidden", "true");
-  advancedChev.textContent = "▶";
-  const advancedText = document.createElement("span");
-  advancedText.textContent = "高级";
-  const advancedFilled = document.createElement("span");
-  advancedFilled.className = "rule-advanced-filled";
-  advancedSummary.append(advancedChev, advancedText, advancedFilled);
-  const advancedGroup = document.createElement("section");
-  advancedGroup.className = "rule-group";
-  const advancedGrid = document.createElement("div");
-  advancedGrid.className = "rule-grid";
-  const { wrap: promptWrap, input: promptInput } = field("提示词", "prompt");
+  function groupSection(title: string, ...fields: HTMLElement[]) {
+    const section = document.createElement("section");
+    section.className = "rule-group";
+    const heading = document.createElement("h2");
+    heading.textContent = title;
+    const grid = document.createElement("div");
+    grid.className = "rule-grid";
+    grid.append(...fields);
+    section.append(heading, grid);
+    return section;
+  }
+  function fold(title: string, ...fields: HTMLElement[]) {
+    const element = document.createElement("details");
+    element.className = "rule-advanced";
+    const summary = document.createElement("summary");
+    const label = document.createElement("strong");
+    label.textContent = title;
+    const description = document.createElement("span");
+    description.className = "rule-fold-summary";
+    summary.append(label, description);
+    element.append(summary, groupSection(title, ...fields));
+    return { element, description };
+  }
+  const { wrap: promptWrap, input: promptInput } = field("任务说明", "prompt");
   promptWrap.className += " rule-span2";
-  promptInput.setAttribute("placeholder", "可选");
+  promptInput.setAttribute("placeholder", "收到事件后，需要完成什么？（可选）");
   const { wrap: skillWrap, input: skillInput } = field("技能", "skill");
   skillInput.setAttribute("placeholder", "可选");
   const { wrap: groupWrap, input: groupInput } = field("分组", "group");
@@ -302,7 +333,7 @@ export function mountRulesCasView(
   const tellField = document.createElement("label");
   tellField.className = "rule-field";
   const tellLabel = document.createElement("span");
-  tellLabel.textContent = "收尾通知";
+  tellLabel.textContent = "完成通知";
   const tellInput = document.createElement("select");
   tellInput.id = "rules-tell";
   for (const [value, text] of [
@@ -322,9 +353,28 @@ export function mountRulesCasView(
   const { wrap: emitsTypesWrap, input: emitsTypesInput } = field("输出事件类型", "emits-types");
   emitsTypesWrap.className += " rule-span2";
   emitsTypesInput.setAttribute("placeholder", "可选，空格或逗号分隔");
-  advancedGrid.append(promptWrap, skillWrap, groupWrap, tellField, emitsSourceWrap, emitsTypesWrap);
-  advancedGroup.append(advancedGrid);
-  advanced.append(advancedSummary, advancedGroup);
+  skillWrap.className += " rule-span2";
+  tellField.className += " rule-span2";
+  const contentGroup = groupSection("执行内容", promptWrap, skillWrap);
+  const contentHint = document.createElement("p");
+  contentHint.className = "muted";
+  contentHint.textContent = "非 command 执行体：任务说明和技能至少填写一项；command 执行体可以都留空。";
+  contentGroup.append(contentHint);
+  const noticeGroup = groupSection("完成通知", tellField);
+  const scheduleFold = fold("调度设置", parallelWrap, groupWrap);
+  const schedule = scheduleFold.element;
+  const followupFold = fold("后续事件", emitsSourceWrap, emitsTypesWrap);
+  const followup = followupFold.element;
+  const syncSummaries = () => {
+    scheduleFold.description.textContent = `${parallelInput.value ? `按对象分事项 · 最多同时执行 ${parallelInput.value} 项` : "整条规则一个事项"} · ${groupInput.value || "默认分组"}`;
+    followupFold.description.textContent =
+      emitsSourceInput.value || emitsTypesInput.value
+        ? `${emitsSourceInput.value || "未填来源"} · ${emitsTypesInput.value || "未填类型"}`
+        : "未配置";
+    cwdInput.setAttribute("title", readCwd());
+  };
+  for (const input of [parallelInput, groupInput, emitsSourceInput, emitsTypesInput])
+    input.addEventListener("input", syncSummaries);
 
   const formError = document.createElement("p");
   formError.className = "setup-error";
@@ -338,9 +388,12 @@ export function mountRulesCasView(
   const formSubmit = document.createElement("button");
   formSubmit.type = "submit";
   formSubmit.className = "rule-submit";
-  formSubmit.textContent = "确定";
-  formActions.append(formError, formCancel, formSubmit);
-  form.append(headBar, triggerGroup, execGroup, advanced, formActions);
+  formSubmit.textContent = "保存规则";
+  const footerHint = document.createElement("p");
+  footerHint.className = "muted rule-footer-hint";
+  footerHint.textContent = "确认后返回列表，保存到本机中台才会生效。";
+  formActions.append(footerHint, formError, formCancel, formSubmit);
+  form.append(headBar, triggerGroup, contentGroup, execGroup, noticeGroup, schedule, followup, formActions);
   editor.append(form);
   // The list page and the editor subpage share one root; hidden is the whole switch, so the
   // app-level view is re-attached on return and the editor never rebuilds what the draft holds.
@@ -352,20 +405,18 @@ export function mountRulesCasView(
   emptyTitle.textContent = "还没有规则";
   const emptyLine = document.createElement("p");
   emptyLine.textContent = "添加规则后，匹配的事件或到点的定时会交给执行体推进。";
-  const emptyButton = document.createElement("button");
-  emptyButton.type = "button";
-  emptyButton.textContent = "＋ 添加规则";
-  emptyButton.addEventListener("click", () => openForm(null));
-  emptyCard.append(emptyTitle, emptyLine, emptyButton);
+  emptyCard.append(emptyTitle, emptyLine);
   emptyCard.hidden = true;
   const listPage = document.createElement("section");
   listPage.className = "rules-list-page";
-  listPage.append(refreshButton, status, error, warning, draftBar, emptyCard, list, addRow);
+  listPage.append(addButton, refreshButton, status, error, warning, draftBar, emptyCard, list);
   root.append(listPage, editor);
   let editing: {
     index: number | null;
+    ownsDraft: boolean;
     generation: number;
     revision: number;
+    savingNew?: boolean;
     read(): Record<string, unknown>;
   } | null = null;
   let submitting = false;
@@ -373,9 +424,11 @@ export function mountRulesCasView(
   // bound value survives a switch back) but asks nothing.
   const syncTrigger = () => {
     const timed = triggerInput.value === "cron";
+    for (const button of triggerButtons)
+      button.setAttribute("aria-pressed", String(button.value === triggerInput.value));
     typesWrap.hidden = timed;
     cronWrap.hidden = !timed;
-    triggerGroupTitle.textContent = timed ? "时间表" : "事件类型";
+    triggerGroupTitle.textContent = "触发条件";
   };
   triggerInput.addEventListener("change", syncTrigger);
 
@@ -403,11 +456,14 @@ export function mountRulesCasView(
   }
   /** Leaves the editor subpage without a confirmed change: what "cancel" means on a page, not in a dialog. */
   function dismissEditor() {
+    if (controller.getState().saving) return;
     editor.hidden = true;
     listPage.hidden = false;
+    const ownsDraft = editing?.ownsDraft;
     editing = null;
     const state = controller.getState();
-    if (state.draft && !state.saving && !state.needsReview) controller.cancelEdit();
+    if (ownsDraft && state.draft && !state.saving && !state.needsReview) controller.cancelEdit();
+    update();
     // The host owns the page change: back to the rules list page and its own head.
     nav.backFromEntry?.();
   }
@@ -417,17 +473,19 @@ export function mountRulesCasView(
     listPage.hidden = true;
   }
   function closeEditor() {
-    if (editor.hidden) return;
+    if (editor.hidden || controller.getState().saving) return;
     editor.hidden = true;
     listPage.hidden = false;
     // The submit path lands here after the save (or the no-change cancel) is already settled, so
     // no live flight's draft can be dropped — but the edit session itself always ends with the
     // page it belongs to, exactly like the dialog's close event used to end it.
     editing = null;
+    update();
     nav.backFromEntry?.();
   }
   function openForm(index: number | null) {
     if (controller.getState().saving) return;
+    const ownsDraft = controller.getState().draft === null;
     controller.beginEdit();
     const draft = controller.getState().draft;
     if (!draft) return;
@@ -453,6 +511,7 @@ export function mountRulesCasView(
     const toDefault = source?.to ? source.to : toChoices.length ? toChoices[0] : "";
     const to = text(toInput, toDefault);
     const cwd = text(cwdInput, source?.cwd);
+    readCwd = () => cwd() ?? "";
     const prompt = text(promptInput, source?.prompt);
     const skill = text(skillInput, source?.skill);
     const parallel = bindValue<number | undefined>(
@@ -473,6 +532,7 @@ export function mountRulesCasView(
     // Each reader belongs to this dialog identity, never to a later open or a new draft.
     editing = {
       index,
+      ownsDraft,
       generation: draft.generation,
       revision: draft.revision,
       read() {
@@ -500,6 +560,17 @@ export function mountRulesCasView(
       },
     };
     formError.hidden = true;
+    schedule.open = !source || source.parallel !== undefined || source.group !== undefined;
+    followup.open = source?.emits !== undefined;
+    formSubmit.textContent = index === null ? "保存规则" : "确认修改";
+    footerHint.textContent =
+      index !== null
+        ? "确认后返回列表，保存到本机中台才会生效。"
+        : ownsDraft || draftEqualsBaseline(controller.getState().snapshot?.entries ?? [], draft.entries)
+          ? "直接保存到本机中台，保存成功后返回列表。"
+          : "列表中已有待保存修改，本次会一并保存到本机中台；成功后返回列表。";
+    cwdCopy.textContent = "复制完整路径";
+    syncSummaries();
     // Opening the form is a page change the host owns: the pseudo page renders the subpage head
     // (back button + title) and calls openEditor(). The default nav is a no-op so a headless test
     // harness keeps working; the app always passes the real one.
@@ -514,7 +585,7 @@ export function mountRulesCasView(
     nameInput.select?.();
   }
   saveButton.addEventListener("click", () => {
-    if (!controller.getState().saving && !controller.getState().needsReview) controller.save();
+    if (!editing && !controller.getState().saving && !controller.getState().needsReview) controller.save();
   });
   // An ordinary discard is a cancelEdit; after a conflict or an uncertain save the same button is
   // the recovery door: only discardAndReload clears the review barrier with a fresh read.
@@ -527,20 +598,41 @@ export function mountRulesCasView(
   // never drops a live flight's draft; dismissEditor is the only path that drops an owned draft.
   form.addEventListener("submit", (event) => {
     event.preventDefault();
-    if (!validForm() || submitting) return;
+    if (!validForm() || submitting || (editing?.savingNew && controller.getState().needsReview)) return;
     const target = editing!;
     submitting = true;
     try {
       const raw = target.read();
-      if (target.index === null) controller.addEntry(raw);
-      else controller.updateEntry(target.index, raw);
-      // One confirm is one save, settled before the editor page is left so the dismiss path
-      // cannot drop the flight's draft. A confirm with no actual change saves nothing.
+      const roster = controller.getState().snapshot?.agents ?? [];
+      const agent = roster.find((item) => item.id === raw.to);
+      if (agent && agent.use !== "command" && !String(raw.prompt ?? "").trim() && !String(raw.skill ?? "").trim())
+        throw new Error("此执行体需要任务说明或技能，请至少填写一项。");
+      const group = String(raw.group || raw.name).trim();
+      const entries = controller.getState().draft?.entries ?? [];
+      if (
+        entries.some(
+          (entry, index) =>
+            index !== target.index && (entry.group ?? entry.name) === group && entry.parallel !== raw.parallel,
+        )
+      )
+        throw new Error(`同组「${group}」的并行设置必须一致，留空与填写 1 不同。`);
+      if (target.index === null) {
+        controller.addEntry(raw);
+        target.index = entries.length;
+        target.savingNew = true;
+      } else controller.updateEntry(target.index, raw);
+      target.revision = controller.getState().draft!.revision;
+      if (target.savingNew) {
+        formError.hidden = true;
+        controller.save();
+        return;
+      }
+      // Confirmation stages the complete draft; only the list save button issues the CAS PUT.
+      // A confirm with no actual change leaves no pending draft.
       const state = controller.getState();
       const draft = state.draft;
       if (draft && !state.saving && !state.needsReview) {
         if (draftEqualsBaseline(state.snapshot?.entries ?? [], draft.entries)) controller.cancelEdit();
-        else controller.save();
       }
       closeEditor();
     } catch (failure) {
@@ -596,7 +688,7 @@ export function mountRulesCasView(
     const meta = document.createElement("div");
     meta.className = "entry-meta";
     const parts = [entry.cwd];
-    if (entry.prompt) parts.push(`提示词 ${[...entry.prompt].length} 字`);
+    if (entry.prompt) parts.push(`任务说明 ${[...entry.prompt].length} 字`);
     if (entry.skill) parts.push(`技能 ${entry.skill}`);
     if (entry.parallel !== undefined) parts.push(`并行 ${entry.parallel}`);
     if (entry.group !== undefined) parts.push(`分组 ${entry.group}`);
@@ -693,13 +785,16 @@ export function mountRulesCasView(
     );
     toInput.value = toPrevious;
     addButton.disabled = state.saving || state.reloading;
-    saveButton.disabled = state.saving || state.needsReview;
-    // The draft bar is the failure path only: a save in flight or a save that needs review.
-    // A calm page shows no bar, no warning, no preview — the confirm already did everything.
-    const draftVisible = Boolean(draft) && (state.saving || state.needsReview || state.save.kind === "failed");
+    saveButton.disabled = !draft || editing !== null || state.saving || state.needsReview;
+    // Staged changes and recovery share the same full-list preview and CAS save door.
+    const draftVisible = Boolean(draft) && (state.saving || state.needsReview || !editing);
     warning.hidden = !draftVisible;
     if (!draftVisible) warning.textContent = "";
-    else warning.textContent = "放弃本地修改不会撤回已发出的请求。";
+    else
+      warning.textContent =
+        state.saving || state.needsReview
+          ? "放弃本地修改不会撤回已发出的请求。"
+          : "修改尚未生效，保存到本机中台后才会生效。";
     draftBar.hidden = !draftVisible;
     discardButton.textContent = draftVisible ? "放弃本地修改" : "";
     preview.hidden = !draftVisible;
@@ -710,22 +805,36 @@ export function mountRulesCasView(
     // The picker button locks with the editor's other doors: no OS dialog over a save in flight
     // and no dialog without an edit session. cwdPicking covers the dialog's own open span.
     cwdPickButton.disabled = cwdPicking || state.saving || !editing;
-    // The advanced fold's badge states the optional facts that would be submitted: count only
-    // what a save would carry, not what the inputs merely display. An empty fold stays quiet —
-    // the calm state never advertises work that is not there.
-    if (editing) {
-      const filled = [promptInput, skillInput, groupInput, emitsSourceInput, emitsTypesInput].filter(
-        (input) => input.value.trim().length > 0,
-      ).length;
-      // tell is a select whose "default" carries no fact, so only an explicit choice counts.
-      const tellExplicit = tellInput.value !== "" ? 1 : 0;
-      const total = filled + tellExplicit;
-      advancedFilled.hidden = total === 0;
-      advancedFilled.textContent = total > 0 ? `已填 ${total} 项` : "";
-    } else {
-      advancedFilled.hidden = true;
-      advancedFilled.textContent = "";
+    for (const input of [
+      nameInput,
+      triggerInput,
+      typesInput,
+      cronInput,
+      toInput,
+      cwdInput,
+      promptInput,
+      skillInput,
+      parallelInput,
+      groupInput,
+      tellInput,
+      emitsSourceInput,
+      emitsTypesInput,
+      ...triggerButtons,
+    ])
+      input.disabled = state.saving;
+    formSubmit.disabled = state.saving || Boolean(editing?.savingNew && state.needsReview);
+    formCancel.disabled = state.saving;
+    if (editing?.savingNew && !state.saving) {
+      if (state.save.kind === "confirmed" && !state.draft) {
+        closeEditor();
+        return;
+      }
+      if (state.save.kind === "failed") {
+        formError.textContent = state.save.message;
+        formError.hidden = false;
+      }
     }
+    if (editing) syncSummaries();
     // The submit handler owns the editor while it saves: the revision bump from updateEntry must
     // not close the editor out from under the confirm that is still running.
     if (editing && !validForm() && !state.saving && !submitting) dismissEditor();
@@ -733,6 +842,7 @@ export function mountRulesCasView(
   controller.subscribe(update);
   return {
     root,
+    addButton,
     init() {
       controller.refresh();
       update();

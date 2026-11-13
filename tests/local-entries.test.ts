@@ -2,9 +2,35 @@
 // local entry loses its cron (or turns into an event entry) anywhere between read, check and write.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkedLocalEntry, createLocalEntriesReader, writeLocalEntriesWith } from "../host/local-entries.ts";
-import { parseRules } from "../protocol/rules.ts";
+import {
+  checkedLocalEntry,
+  createLocalEntriesReader,
+  writeLocalEntriesWith,
+  LocalEntriesValidationError,
+} from "../host/local-entries.ts";
+import { parseRules, RulesError } from "../protocol/rules.ts";
 import { EVENT_TYPE } from "../protocol/validate.ts";
+
+// Validation refuses before writing; an identical error after rename cannot claim rejection.
+test("only pre-write complete validation has a structured rejection", () => {
+  const m = memory();
+  assert.throws(() => writeLocalEntriesWith([entry("重复"), entry("重复")], m.io), LocalEntriesValidationError);
+  assert.deepEqual(m.events, ["read", "validate"]);
+  const failure = new LocalEntriesValidationError(["原因".repeat(500), "含\n换行"]);
+  assert.equal([...failure.issues[0]].length, 300);
+  assert.doesNotMatch(failure.issues[1], /\n/);
+  const reloadFailure = new RulesError(["重载失败"]);
+  assert.throws(
+    () =>
+      writeLocalEntriesWith([entry("合法")], {
+        ...m.io,
+        afterRename() {
+          throw reloadFailure;
+        },
+      }),
+    (error) => error === reloadFailure && !(error instanceof LocalEntriesValidationError),
+  );
+});
 
 const parse = (json: string) => parseRules(json, 1_700_000_000_000, "UTC");
 const entry = (name: string, extra = {}) => ({ name, types: ["task.*"], to: "a", cwd: "~/x", ...extra });

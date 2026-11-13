@@ -1,7 +1,7 @@
 // Pure production logic. Filesystem paths, runtime state and side effects belong to adapters.
 import { parseCron } from "../kernel/cron.ts";
 import { InputError } from "../kernel/errors.ts";
-import { TYPE_PATTERN } from "../protocol/rules.ts";
+import { RulesError, TYPE_PATTERN } from "../protocol/rules.ts";
 import {
   matchesRulesDeclaration,
   parseRulesDeclaration,
@@ -161,6 +161,16 @@ export type LocalEntriesWriteIO = {
   afterRename?(): undefined;
 };
 
+export class LocalEntriesValidationError extends InputError {
+  readonly issues: string[];
+  constructor(issues: string[]) {
+    super("规则校验未通过");
+    this.issues = issues
+      .slice(0, 8)
+      .map((issue) => [...issue.replace(/[\u0000-\u001f\u007f]/g, " ")].slice(0, 300).join(""));
+  }
+}
+
 export function writeLocalEntriesWith(entries: Entry[], io: LocalEntriesWriteIO): void {
   const text = io.read();
   if (io.beforeMerge) runSynchronousHook(() => io.beforeMerge!(text));
@@ -190,7 +200,13 @@ export function writeLocalEntriesWith(entries: Entry[], io: LocalEntriesWriteIO)
   });
   if (lastLocal === -1) (whole.rules as Entry[]).push(...replacements);
   const json = `${JSON.stringify(whole, null, 2)}\n`;
-  io.validate(json);
+  try {
+    io.validate(json);
+  } catch (error) {
+    // Only this phase proves no write has started; reload errors must remain uncertain.
+    if (error instanceof RulesError) throw new LocalEntriesValidationError(error.issues);
+    throw error;
+  }
   io.write(json);
   io.rename();
   if (io.afterRename) runSynchronousHook(io.afterRename);

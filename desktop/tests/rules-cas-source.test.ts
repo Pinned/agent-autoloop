@@ -47,6 +47,50 @@ function error(value: unknown) {
   return response.error;
 }
 
+// Only an explicit, bounded write-before-validation rejection permits correction and retry.
+test("structured validation refusal reports reasons without treating legacy 400 as rejected", async () => {
+  const f = fixture({
+    timeoutMs: 1000,
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          error: "规则校验未通过",
+          code: "rules-validation",
+          outcome: "rejected",
+          issues: ["组「处理」里的规则 parallel 要一致"],
+        }),
+        { status: 400 },
+      ),
+  });
+  const result = await f.source.put(input());
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.error.outcome, "rejected");
+    assert.match(JSON.stringify(result), /parallel 要一致/);
+  }
+});
+
+// Do not accept incomplete markers, oversized reasons, control characters or arbitrary server messages.
+test("malformed structured validation remains uncertain and never reflects its text", async () => {
+  const base = { error: "规则校验未通过", code: "rules-validation", outcome: "rejected", issues: ["原因"] };
+  for (const payload of [
+    { ...base, outcome: "uncertain" },
+    { ...base, extra: true },
+    { ...base, issues: [] },
+    { ...base, issues: Array(9).fill("原因") },
+    { ...base, issues: ["中".repeat(301)] },
+    { ...base, issues: ["PRIVATE\nSECRET"] },
+    { ...base, error: "PRIVATE-OWNER" },
+  ]) {
+    const f = fixture({
+      timeoutMs: 1000,
+      fetchImpl: async () => new Response(JSON.stringify(payload), { status: 400 }),
+    });
+    const result = error(await f.source.put(input()));
+    assert.equal(result.outcome, "uncertain");
+  }
+});
+
 test("only running + hub-worker reads config/fetch; invalid state and null/unknown role read zero", async () => {
   for (const state of [
     null,

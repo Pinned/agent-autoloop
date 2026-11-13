@@ -30,6 +30,7 @@ test("an empty parallel field still sends nothing; the default is stated, not se
   // The stated default lives in the field's placeholder, so the label stays short — a bracketed
   // essay on every label was part of the demo feel this page shed. The fact still reaches the
   // owner exactly when the field is empty and the fact matters.
-  assert.match(view, /placeholder.*默认 1/s);
+  assert.match(view, /placeholder.*整条规则一个事项/s);
+  assert.match(view, /填 1 也会分开/);
   assert.doesNotMatch(view, /并行数（/);
 });
