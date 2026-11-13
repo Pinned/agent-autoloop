@@ -259,6 +259,8 @@ test("detail is a subpage: back preserves list nodes/query/scroll and never inve
       .fire();
     assert.equal(all(root).find((x) => x.className === "tasks-list-page")?.hidden, true);
     assert.equal(all(root).find((x) => x.className === "tasks-detail-page")?.hidden, false);
+    // The detail must not inherit the list's enclosing panel; back restores it.
+    assert.equal(root.className, "tasks-panel tasks-subpage-panel");
     assert.equal(scrollHost.scrollTop, 0);
     scrollHost.scrollTop = 900;
     f.pending[0].resolve(validDetail(7));
@@ -284,6 +286,7 @@ test("detail is a subpage: back preserves list nodes/query/scroll and never inve
     all(root)
       .find((x) => x.className === "task-back-button")!
       .fire();
+    assert.equal(root.className, "panel tasks-panel");
     assert.equal(scrollHost.scrollTop, 420);
     assert.deepEqual(transitions, [true, false]);
     assert.equal(list.children[0], first);
