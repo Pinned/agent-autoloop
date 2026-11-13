@@ -934,6 +934,17 @@ export function mountTaskView(
         } catch {
           /* A refresh failure is not a failed submission. */
         }
+        // Erase the submitted DOM values before releasing the operation: close/navigation may cache them.
+        summaryInput.value = "";
+        detailInput.value = "";
+        activeEditor.value = "";
+        concreteInput.value = "";
+        activeLine = 0;
+        fullSelectMode = false;
+        refreshLivePreview();
+        controller.completeAccepted?.();
+        root.hidden = true;
+        onBack?.();
       }
     } else {
       error.textContent = submission.message;

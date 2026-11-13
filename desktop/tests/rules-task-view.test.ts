@@ -1,3 +1,4 @@
+// Accepted dispatch must return once and erase submitted fields before close can cache them again.
 // Prevent wildcard/concrete-type regressions in the production new-task dialog.
 // The rule editor's advanced-field preservation lives in rules-cas-view.test.ts.
 import assert from "node:assert/strict";
@@ -69,6 +70,52 @@ function id(body: Element, name: string): Element {
   assert.ok(found, `missing ${name}`);
   return found;
 }
+
+test("accepted dispatch returns once and close never restores submitted text", () =>
+  dom((body) => {
+    let returns = 0;
+    const drafts: { summary: string; detail: string }[] = [];
+    const control = {
+      entriesState: { kind: "ready", entries: [{ name: "规则", types: ["task.ops"], to: "a" }] },
+      submitState: { kind: "idle" } as unknown,
+      operation: null,
+      canSubmit: true,
+      canBeginAnother: false,
+      busy: false,
+      reset() {},
+      loadEntries() {},
+      submitTask() {},
+      saveDraft(draft: { summary: string; detail: string }) {
+        drafts.push(draft);
+      },
+      completeAccepted() {
+        control.submitState = { kind: "idle" };
+      },
+    };
+    const view = mountTaskDialog(
+      control as unknown as Parameters<typeof mountTaskDialog>[0],
+      () => {},
+      () => {
+        returns++;
+      },
+    );
+    view.open();
+    id(body, "task-summary").value = "已提交标题";
+    id(body, "task-detail").value = "已提交正文";
+    control.submitState = { kind: "uncertain", message: "结果不明" };
+    view.update();
+    assert.equal(returns, 0);
+    assert.equal(id(body, "task-detail").value, "已提交正文");
+    control.submitState = { kind: "done", result: { event: 1, duplicate: false, routed: ["规则"] } };
+    view.update();
+    assert.equal(returns, 1);
+    assert.equal(id(body, "task-summary").value, "");
+    assert.equal(id(body, "task-detail").value, "");
+    view.update();
+    assert.equal(returns, 1);
+    view.close();
+    assert.ok(drafts.every((draft) => !draft.summary && !draft.detail));
+  }));
 
 test("a wildcard needs a matching concrete type, preserves selection on refresh and never guesses a suffix", () =>
   dom((body) => {
