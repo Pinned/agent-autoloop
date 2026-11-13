@@ -40,7 +40,7 @@ export function mountTaskView(
   summaryLabel.textContent = "任务标题";
   const summaryInput = document.createElement("input");
   summaryInput.id = "task-summary";
-  summaryInput.placeholder = "一句话概括任务目标，例如：排查线上支付超时并输出修复方案";
+  summaryInput.placeholder = "输入任务标题";
   summaryInput.required = true;
   summaryField.append(summaryLabel, summaryInput);
 
@@ -77,10 +77,7 @@ export function mountTaskView(
   concreteInput.id = "task-concrete-type";
   concreteInput.className = "task-concrete-input";
   concreteInput.placeholder = "具体类型，如 task.release";
-  const typeHint = document.createElement("span");
-  typeHint.className = "task-type-hint";
-  typeHint.textContent = "中台按此事件类型匹配规则";
-  typeField.append(typeLabel, typeSelect, concreteInput, typeHint);
+  typeField.append(typeLabel, typeSelect, concreteInput);
 
   routeControls.append(entryField, routeSummary, routeDivider, typeField);
   titleRouteBar.append(summaryField, routeControls);
@@ -117,7 +114,6 @@ export function mountTaskView(
     routeDivider.hidden = typeField.hidden;
     concreteInput.hidden = !wildcard;
     concreteInput.required = wildcard;
-    typeHint.hidden = !wildcard;
     if (wildcard) {
       const pattern = typeSelect.value || types[0] || "*";
       concreteInput.placeholder =
@@ -144,10 +140,7 @@ export function mountTaskView(
   const detailLabel = document.createElement("span");
   detailLabel.className = "task-detail-label";
   detailLabel.textContent = "任务详情";
-  const detailBadge = document.createElement("span");
-  detailBadge.className = "task-md-badge";
-  detailBadge.textContent = "Markdown · 所见即所得";
-  detailLabelGroup.append(detailLabel, detailBadge);
+  detailLabelGroup.append(detailLabel);
 
   const toolsGroup = document.createElement("div");
   toolsGroup.className = "task-md-tools";
@@ -172,8 +165,7 @@ export function mountTaskView(
   const activeEditor = document.createElement("textarea");
   activeEditor.className = "task-wysiwyg-active-input";
   activeEditor.rows = 1;
-  activeEditor.placeholder =
-    "直接输入内容，支持 Markdown 实时排版（如 # 标题、- 列表、- [ ] 待办、**粗体**、``` 代码块），回车即刻渲染……";
+  activeEditor.placeholder = "输入任务详情，支持 Markdown";
 
   const afterWrap = document.createElement("div");
   afterWrap.className = "task-wysiwyg-slice task-wysiwyg-after";
@@ -698,13 +690,8 @@ export function mountTaskView(
     }
   });
 
-  const mdHint = document.createElement("p");
-  mdHint.className = "muted task-detail-hint";
-  mdHint.textContent =
-    "单栏所见即所得：输入 # 标题、**粗体**、- 列表、- [ ] 待办、``` 代码块后回车即刻渲染，点击任意已渲染段落可直接原位修改";
-
   refreshLivePreview();
-  editorBox.append(detailHeader, detailInput, previewContainer, mdHint);
+  editorBox.append(detailHeader, detailInput, previewContainer);
   detailField.append(editorBox);
   composeSection.append(detailField);
 
@@ -747,7 +734,7 @@ export function mountTaskView(
   const cancelButton = document.createElement("button");
   cancelButton.type = "button";
   cancelButton.className = "task-cancel-button";
-  cancelButton.textContent = "取消并返回";
+  cancelButton.textContent = "取消";
 
   const primaryGroup = document.createElement("div");
   primaryGroup.className = "task-primary-actions";
@@ -760,7 +747,7 @@ export function mountTaskView(
   const submitButton = document.createElement("button");
   submitButton.type = "submit";
   submitButton.className = "setup-primary task-submit-button";
-  submitButton.textContent = "派发并入队";
+  submitButton.textContent = "派发";
 
   const doneButton = document.createElement("button");
   doneButton.type = "button";
@@ -919,7 +906,7 @@ export function mountTaskView(
         !controller.canSubmit ||
         controller.entriesState.kind !== "ready" ||
         controller.entriesState.entries.length === 0;
-      submitButton.textContent = "派发并入队";
+      submitButton.textContent = "派发";
     } else if (submission.kind === "busy") {
       error.hidden = true;
       focusedError = null;
@@ -958,7 +945,7 @@ export function mountTaskView(
       submitButton.hidden = !!operation;
       doneButton.hidden = !operation;
       submitButton.disabled = !controller.canSubmit;
-      submitButton.textContent = "派发并入队";
+      submitButton.textContent = "派发";
     }
   }
 
