@@ -23,6 +23,7 @@ export type SettingsViewOptions = {
   theme(): Theme;
   setTheme(theme: Theme): void;
   openSetup(): void;
+  agentEditorChanged?(open: boolean): void;
 };
 
 type Tab = "agents" | "sources" | "channels" | "connection" | "general";
@@ -313,6 +314,7 @@ export function mountSettingsView(
     editing = null;
     controller.cancelEdit();
     renderTab();
+    body.querySelector<HTMLButtonElement>("button")?.focus();
   }
 
   function rowFields(session: RowEditing): HTMLElement[] {
@@ -375,7 +377,22 @@ export function mountSettingsView(
       String(session.row.name || "") ||
       String(session.row.id || "") ||
       (session.fresh ? `新增${titleOf(session.section)}` : `${titleOf(session.section)} ${session.rowIndex + 1}`);
-    details.append(summary, ...rowFields(session));
+    const agentPage = session.section === "agents";
+    const container = agentPage ? document.createElement("section") : details;
+    if (agentPage) {
+      container.className = "settings-agent-subpage";
+      const back = button("← 返回");
+      back.className = "task-back-button";
+      back.addEventListener("click", stopEdit);
+      register(back, "cancel");
+      const heading = document.createElement("h2");
+      heading.id = "settings-agent-title";
+      heading.textContent = session.fresh ? "添加 Agent" : "编辑 Agent";
+      const header = document.createElement("header");
+      header.className = "tasks-detail-head";
+      header.append(back, heading);
+      container.append(header, ...rowFields(session));
+    } else container.append(summary, ...rowFields(session));
     const error = document.createElement("p");
     error.className = "setup-error";
     error.hidden = true;
@@ -398,8 +415,8 @@ export function mountSettingsView(
     register(save, "act");
     register(cancel, "cancel");
     if (actions.length > 2) register(actions[2], "act");
-    details.append(error, actionBar(actions));
-    return details;
+    container.append(error, actionBar(actions));
+    return container;
   }
 
   function globalForm(): HTMLElement {
@@ -493,18 +510,25 @@ export function mountSettingsView(
     const entries = state.snapshot[section] as unknown as readonly Record<string, unknown>[];
     const list = document.createElement("ul");
     list.className = "entry-list";
-    const nodes: HTMLElement[] = entries.map((entry, index) =>
-      session && !session.fresh && session.rowIndex === index
-        ? rowForm(session)
-        : readOnlyRow(section, entry, index, busy),
-    );
-    if (session?.fresh) nodes.push(rowForm(session));
+    const agentPage = section === "agents" && session !== null;
+    const nodes: HTMLElement[] = agentPage
+      ? []
+      : entries.map((entry, index) =>
+          session && !session.fresh && session.rowIndex === index
+            ? rowForm(session)
+            : readOnlyRow(section, entry, index, busy),
+        );
+    if (session?.fresh && !agentPage) nodes.push(rowForm(session));
     list.replaceChildren(...nodes);
     const add = button("添加一项");
     add.disabled = busy;
     add.addEventListener("click", () => startRowEdit(section, null));
     register(add, "list");
-    wrap.append(list, actionBar([add]));
+    const listActions = actionBar([add]);
+    list.hidden = !!agentPage;
+    listActions.hidden = !!agentPage;
+    wrap.append(list, listActions);
+    if (agentPage) wrap.append(rowForm(session));
     if (section === "agents") wrap.append(workersList());
     return wrap;
   }
@@ -596,6 +620,7 @@ export function mountSettingsView(
           : generalTab();
     body.replaceChildren(content);
     update();
+    if (editing?.section === "agents") body.querySelector<HTMLInputElement>("input")?.focus();
   }
 
   function update() {
@@ -612,6 +637,10 @@ export function mountSettingsView(
       renderTab();
       return;
     }
+    const agentOpen = editing?.section === "agents";
+    head.hidden = agentOpen;
+    tabs.hidden = agentOpen;
+    options.agentEditorChanged?.(agentOpen);
     const parts: string[] = [];
     if (state.loading) parts.push("正在读取本机配置……");
     if (state.saving) parts.push("正在保存……");

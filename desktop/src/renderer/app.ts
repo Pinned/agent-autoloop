@@ -435,6 +435,12 @@ settingsPage = mountSettingsView(settings, {
   // A stopped machine still knows what it was set up as; the launch record stands in for the
   // runtime until it reports a role of its own.
   role: () => currentRole(),
+  agentEditorChanged: (open) => {
+    if (currentPage !== "settings") return;
+    const head = main.querySelector<HTMLElement>(".page-head");
+    if (head) head.hidden = open;
+    main.setAttribute("aria-labelledby", open ? "settings-agent-title" : "page-title");
+  },
   legacyConfig: () => setup.launch?.completion === "legacy",
   theme: () => theme.preference,
   setTheme: (next) => {
