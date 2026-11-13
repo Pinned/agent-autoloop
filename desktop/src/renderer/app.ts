@@ -337,7 +337,15 @@ const rulesPage = mountRulesCasView(rules, {
 const tasks = createRendererTasks(window.desktop, () => {
   if (currentPage === "tasks") tasksPage?.update();
 });
-const tasksPage = mountTasksView(tasks);
+const tasksPage = mountTasksView(tasks, {
+  scrollHost: main,
+  detailChanged: (open) => {
+    if (currentPage !== "tasks") return;
+    const head = main.querySelector<HTMLElement>(".page-head");
+    if (head) head.hidden = open;
+    main.setAttribute("aria-labelledby", open ? "task-detail-title" : "page-title");
+  },
+});
 // The running runtime's role is what this machine is now; a configured-but-stopped machine still
 // knows what it was set up as, and only then may the launch record stand in for it.
 function currentRole(): Role {
@@ -565,7 +573,10 @@ function render(id: string, focus = true) {
     // The hub's real run history, read-only; the placeholder days are over.
     main.append(tasksPage.root);
     tasksPage.update();
-    tasks.refresh();
+    const detailOpen = tasks.detailState.kind !== "idle";
+    main.querySelector<HTMLElement>(".page-head")!.hidden = detailOpen;
+    main.setAttribute("aria-labelledby", detailOpen ? "task-detail-title" : "page-title");
+    if (tasks.loadState.kind === "loading" && !tasks.busy) tasks.refresh();
   }
   if (id === "workers") {
     const host = document.createElement("div");

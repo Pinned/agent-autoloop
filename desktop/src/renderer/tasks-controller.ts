@@ -174,7 +174,9 @@ export function createRendererTasks(bridge: TasksBridge, onChange: () => void) {
     if (!allowed || wasAllowed !== allowed) closeDetail();
   });
   function openDetail(runId: number) {
-    if (!detailAllowed || load.kind !== "ready" || !load.runs.some((run) => run.id === runId)) return;
+    const listed = load.kind === "ready" && load.runs.some((run) => run.id === runId);
+    const related = detail.kind === "ready" && detail.data.relatedRuns.items.some((run) => run.id === runId);
+    if (!detailAllowed || (!listed && !related)) return;
     if (detail.runId === runId && (detail.kind === "loading" || detail.kind === "ready")) return;
     startDetail(runId);
   }
