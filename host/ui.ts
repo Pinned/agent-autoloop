@@ -8,7 +8,7 @@ import { RULES_FILE } from "./home.ts";
 import * as hub from "./runtime.ts";
 import { requireOwner, uiRead } from "./ui-read.ts";
 import { writeLocalEntries, writeSection, type Entry, type Section } from "./rules-io.ts";
-import { checkedLocalEntriesBody, createLocalEntriesReader } from "./local-entries.ts";
+import { checkedLocalEntriesBody, createLocalEntriesReader, LocalEntriesValidationError } from "./local-entries.ts";
 import { assertRulesBaseline } from "./rules-baseline.ts";
 import { AuthError, Conflict, InputError, NotFound } from "../kernel/errors.ts";
 import { EVENT_TYPE } from "../protocol/validate.ts";
@@ -416,6 +416,11 @@ export async function uiRoutes(request: Request): Promise<Response | null> {
     try {
       return await api(request);
     } catch (error) {
+      if (error instanceof LocalEntriesValidationError)
+        return Response.json(
+          { error: error.message, code: "rules-validation", outcome: "rejected", issues: error.issues },
+          { status: 400, headers: HEADERS },
+        );
       if (error instanceof RulesError)
         return Response.json({ error: error.message, issues: error.issues }, { status: 400, headers: HEADERS });
       return denied(error);

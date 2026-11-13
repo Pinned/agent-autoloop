@@ -87,7 +87,7 @@ const original = {
 const ready = (rulesSeq = 10, entries: readonly DesktopRuleEntry[] = [original]) => ({
   version: 3,
   ok: true,
-  data: { entries, agents: [{ id: "a", name: "<svg onload=evil>", use: "edit" }], seq: 50, rulesSeq },
+  data: { entries, agents: [{ id: "a", name: "<svg onload=evil>", use: "command" }], seq: 50, rulesSeq },
 });
 async function dom(run: (f: ReturnType<typeof fixture>) => Promise<void>) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
@@ -113,10 +113,13 @@ function fixture(body: Element) {
   let picks = 0;
   // Tests may swap the list the read serves (the empty state needs a hub with no entries).
   let served: readonly DesktopRuleEntry[] = [original];
+  let use = "command";
   const controller = createRendererRulesCas({
     rulesGet() {
       gets++;
-      return Promise.resolve(ready(version, served));
+      const response = ready(version, served);
+      response.data.agents[0].use = use;
+      return Promise.resolve(response);
     },
     rulesPut(input) {
       inputs.push(input);
@@ -159,6 +162,9 @@ function fixture(body: Element) {
       served = value;
     },
     gets: () => gets,
+    use: (value: string) => {
+      use = value;
+    },
     // The picker stub: null is a cancelled OS dialog.
     pick: (value: string | null) => {
       picked = value;
@@ -192,6 +198,7 @@ test("production click/submit preserves advanced fields and safely displays host
     f.id("name").value = "新名";
     // One confirm is one save: no standing draft bar, the PUT leaves immediately.
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     assert.equal(f.editorOpen(), false);
     assert.equal(f.inputs.length, 1);
     assert.deepEqual(f.inputs[0], { entries: [{ ...original, name: "新名" }], rulesSeq: 10 });
@@ -211,6 +218,7 @@ test("an unchanged confirm saves nothing and leaves no draft behind", () =>
     await flush();
     f.button("编辑").click();
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     assert.equal(f.editorOpen(), false);
     assert.equal(f.inputs.length, 0);
     assert.equal(f.controller.getState().draft, null);
@@ -225,11 +233,13 @@ test("a confirm mid-save is refused, but the saving PUT keeps the page locked", 
     f.button("编辑").click();
     f.id("name").value = "第一笔";
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     assert.equal(f.inputs.length, 1);
     assert.equal(f.button("编辑").disabled, true);
     // A second confirm during the flight neither sends nor mutates anything.
     f.button("编辑").emit("click");
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     assert.equal(f.inputs.length, 1);
     assert.equal(f.controller.getState().saving, true);
     f.answer(ready(19));
@@ -255,6 +265,7 @@ test("cancel does not submit; the reopen reads the saved values", () =>
     f.controller.cancelEdit();
     f.controller.beginEdit();
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     assert.equal(f.controller.getState().draft?.entries[0].name, original.name);
   }));
 
@@ -266,6 +277,7 @@ for (const code of ["conflict", "uncertain"] as const)
       f.button("编辑").click();
       f.id("name").value = "改动";
       f.form().emit("submit");
+      f.button("保存到本机中台").click();
       f.answer(desktopRulesCasPutFailure(code, code === "conflict" ? "rejected" : "uncertain"));
       await flush();
       assert.ok(f.text().includes(DESKTOP_RULES_CAS_MESSAGES[code]));
@@ -279,6 +291,7 @@ for (const code of ["conflict", "uncertain"] as const)
       f.button("编辑").click();
       f.id("name").value = "仍需核对";
       f.form().emit("submit");
+      f.button("保存到本机中台").click();
       assert.equal(f.inputs.length, 1);
       // The review barrier routes the same discard button to discard-and-reload.
       f.button("放弃本地修改").click();
@@ -318,6 +331,7 @@ test("legal multiline fields round trip without text-input newline loss", () =>
     ])
       assert.equal(f.id(field).value, value);
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     // The pre-seeded edit differs from the baseline, so this confirm saves right away.
     assert.deepEqual(f.inputs[0], { entries: [multiline], rulesSeq: 10 });
     // The hub answers with the saved value, so the reopened editor reads the multiline entry back.
@@ -329,6 +343,7 @@ test("legal multiline fields round trip without text-input newline loss", () =>
     f.id("emits-types").value = "done.one\ndone.two";
     // One confirm sends the PUT directly.
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     assert.deepEqual(f.inputs[1], {
       entries: [
         {
@@ -382,6 +397,7 @@ for (const change of ["none", "other", "restore", "edit"] as const)
         expected = { ...carriageEntry, prompt: "修改\n后的提示", group: "新\n分组" };
       }
       f.form().emit("submit");
+      f.button("保存到本机中台").click();
       assert.equal(f.editorOpen(), false);
       assert.deepEqual(f.controller.getState().draft?.entries[0], expected);
       // The confirm saves whatever the draft holds against the read baseline: the seeded
@@ -401,6 +417,7 @@ test("CR baseline retains optional absence, explicit group and independent emits
     f.id("emits-types").value = "done.new,done.last";
     for (const field of ["prompt", "skill", "parallel", "tell"]) f.id(field).value = "";
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     const expected: DesktopRuleEntry = {
       name: carriageEntry.name,
       types: ["task.one", "task.two"],
@@ -421,11 +438,13 @@ test("CR baseline retains optional absence, explicit group and independent emits
     f.id("emits-source").value = "";
     const before = f.controller.getState().draft;
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     assert.equal(f.editorOpen(), true);
     assert.equal(f.controller.getState().draft, before);
     f.id("emits-types").value = "";
     f.id("group").value = "";
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     const { group: _group, emits: _emits, ...cleared } = expected as typeof original;
     assert.deepEqual(f.controller.getState().draft?.entries[0], cleared);
   }));
@@ -438,14 +457,16 @@ test("CR baseline is isolated across cancelled, expired, reopened and add editor
     f.controller.updateEntry(0, carriageEntry);
     f.button("编辑").click();
     f.id("prompt").value = "未提交";
-    // Cancel owns nothing: the whole draft goes, the page stays as it was read.
+    // Cancel discards this form's typing, not the draft that existed before it opened.
     f.button("取消").click();
-    assert.equal(f.controller.getState().draft, null);
+    assert.deepEqual(f.controller.getState().draft?.entries[0], carriageEntry);
+    f.controller.cancelEdit();
     f.button("编辑").click();
     f.controller.cancelEdit();
     f.controller.beginEdit();
     f.button("编辑").click();
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     // An unchanged confirm leaves the page as read: no PUT, no draft.
     assert.equal(f.controller.getState().draft, null);
     assert.equal(f.inputs.length, 0);
@@ -454,6 +475,7 @@ test("CR baseline is isolated across cancelled, expired, reopened and add editor
     f.controller.updateEntry(0, next);
     f.button("编辑").click();
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     assert.deepEqual(f.controller.getState().draft?.entries[0], next);
     // The confirmed change is a save in flight; a new editor waits for it to settle.
     f.answer(ready(11, [next]));
@@ -463,15 +485,16 @@ test("CR baseline is isolated across cancelled, expired, reopened and add editor
       ["name", "新增"],
       ["types", "task.new"],
       ["to", "a"],
-      ["cwd", "~/new"],
+      ["cwd", "/work/new"],
     ])
       f.id(field).value = value;
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     assert.deepEqual(f.controller.getState().draft?.entries[1], {
       name: "新增",
       types: ["task.new"],
       to: "a",
-      cwd: "~/new",
+      cwd: "/work/new",
     });
   }));
 
@@ -508,6 +531,7 @@ test("obsolete uncertain PUT disables a new draft save without labelling its out
     f.button("编辑").click();
     f.id("name").value = "改动";
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     f.controller.cancelEdit();
     f.controller.beginEdit();
     f.answer(desktopRulesCasPutFailure("uncertain", "uncertain"));
@@ -526,6 +550,7 @@ test("form validation, add/remove and explicit clearing use the existing full co
     await flush();
     f.button("＋ 添加规则").click();
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     assert.equal(f.editorOpen(), true);
     for (const [name, value] of [
       ["name", "添加"],
@@ -536,6 +561,7 @@ test("form validation, add/remove and explicit clearing use the existing full co
       f.id(name).value = value;
     // A confirmed add is a save in flight: the draft holds both entries until the PUT settles.
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     assert.equal(f.inputs.length, 1);
     assert.equal(f.controller.getState().draft?.entries.length, 2);
     f.answer(ready(19));
@@ -545,6 +571,7 @@ test("form validation, add/remove and explicit clearing use the existing full co
     for (const name of ["prompt", "skill", "parallel", "group", "tell", "emits-source", "emits-types"])
       f.id(name).value = "";
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     const { group: _g, emits: _e, prompt: _p, skill: _s, tell: _t, ...clearedEntry } = original;
     const landed: DesktopRuleEntry = { ...clearedEntry, parallel: undefined };
     f.answer(ready(20, [landed]));
@@ -587,17 +614,18 @@ test("the working directory is picked, not typed: a choice fills it, a cancel ke
     assert.equal(f.id("cwd").disabled, false);
     // A cancelled OS dialog changes nothing: the old value stays, one door call happened.
     f.pick(null);
-    f.button("选择…").click();
+    f.button("选择文件夹").click();
     await flush();
     assert.equal(f.picks(), 1);
     assert.equal(f.id("cwd").value, original.cwd);
     // A chosen folder fills the field, and the confirm saves exactly what was picked.
     f.pick("/Users/演示/项目");
-    f.button("选择…").click();
+    f.button("选择文件夹").click();
     await flush();
     assert.equal(f.picks(), 2);
     assert.equal(f.id("cwd").value, "/Users/演示/项目");
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     assert.equal(f.inputs.length, 1);
     assert.deepEqual((f.inputs[0] as { entries: DesktopRuleEntry[] }).entries[0], {
       ...original,
@@ -609,7 +637,7 @@ test("the working directory is picked, not typed: a choice fills it, a cancel ke
     f.button("＋ 添加规则").click();
     assert.equal(f.id("cwd").value, "");
     f.pick("/tmp/新目录");
-    f.button("选择…").click();
+    f.button("选择文件夹").click();
     await flush();
     assert.equal(f.id("cwd").value, "/tmp/新目录");
   }));
@@ -620,16 +648,17 @@ test("the picker button stays idle while a save is in flight", () =>
     await flush();
     f.button("编辑").click();
     f.pick("/新/路径");
-    f.button("选择…").click();
+    f.button("选择文件夹").click();
     await flush();
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     // The confirm is saving; the picker cannot open a second OS dialog over the flight.
-    assert.equal(f.button("选择…").disabled, true);
+    assert.equal(f.button("选择文件夹").disabled, true);
     f.answer(ready(19));
     await flush();
     // The save settled and the editor closed with it: no edit session, no OS dialog. The button
     // waits for the next open, the same lock it held before the form ever appeared.
-    assert.equal(f.button("选择…").disabled, true);
+    assert.equal(f.button("选择文件夹").disabled, true);
   }));
 
 test("the preview states only what the save hands over for the local slots", () =>
@@ -643,6 +672,7 @@ test("the preview states only what the save hands over for the local slots", () 
     assert.equal(preview.hidden, true);
     f.id("name").value = "改动";
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     // The confirm sent the PUT; until it settles the preview says what is being handed over.
     assert.equal(preview.hidden, false);
     assert.equal(preview.textContent, `本次保存将提交 1 条本机规则：修改 1 条。`);
@@ -657,9 +687,241 @@ test("the preview compares every entry field, so an unchanged draft reports no c
     f.button("编辑").click();
     f.id("name").value = "改动";
     f.form().emit("submit");
+    f.button("保存到本机中台").click();
     assert.equal(preview.hidden, false);
     assert.equal(preview.textContent, `本次保存将提交 1 条本机规则：修改 1 条。`);
     f.answer(ready(19, [{ ...original, name: "改动" }]));
     await flush();
     assert.equal(preview.hidden, true);
+  }));
+
+// Prevent instruction-free non-command tasks and loss of omitted-versus-explicit parallel semantics.
+test("non-command requires instructions; omitted parallel survives and draft groups are checked", () =>
+  dom(async (f) => {
+    f.use("claude");
+    f.entries([{ ...original, parallel: undefined }]);
+    f.view.init();
+    await flush();
+    f.button("编辑").click();
+    f.id("prompt").value = "";
+    f.id("skill").value = "";
+    f.form().emit("submit");
+    assert.equal(f.editorOpen(), true);
+    assert.match(f.text(), /至少填写一项/);
+    f.id("prompt").value = "执行任务";
+    f.form().emit("submit");
+    assert.equal(f.controller.getState().draft?.entries[0].parallel, undefined);
+    f.button("＋ 添加规则").click();
+    for (const [field, value] of [
+      ["name", "新增"],
+      ["types", "task.new"],
+      ["cwd", "/tmp/new"],
+      ["prompt", "执行任务"],
+      ["group", "组"],
+      ["parallel", "1"],
+    ])
+      f.id(field).value = value;
+    f.form().emit("submit");
+    assert.equal(f.inputs.length, 0);
+    assert.match(f.text(), /留空与填写 1 不同/);
+    f.id("parallel").value = "";
+    f.form().emit("submit");
+    assert.equal(f.inputs.length, 1);
+    assert.equal((f.inputs[0] as { entries: DesktopRuleEntry[] }).entries[1].parallel, undefined);
+  }));
+
+// Prevent duplicate creation, premature navigation and loss of form input after failed direct saves.
+for (const outcome of ["success", "not-sent", "conflict", "uncertain"] as const)
+  test(`new rule saves directly and preserves the editor until confirmed: ${outcome}`, () =>
+    dom(async (f) => {
+      f.view.init();
+      await flush();
+      f.button("＋ 添加规则").click();
+      assert.equal(f.button("保存规则").disabled, false);
+      for (const [field, value] of [
+        ["name", "新增"],
+        ["types", "task.new"],
+        ["cwd", "/tmp/new"],
+      ])
+        f.id(field).value = value;
+      f.form().emit("submit");
+      assert.equal(f.inputs.length, 1);
+      assert.equal(f.editorOpen(), true);
+      assert.equal(f.button("保存规则").disabled, true);
+      f.form().emit("submit");
+      assert.equal(f.inputs.length, 1);
+      f.answer(
+        outcome === "success"
+          ? ready(11)
+          : desktopRulesCasPutFailure(
+              outcome === "not-sent" ? "unavailable" : outcome,
+              outcome === "conflict" ? "rejected" : outcome,
+            ),
+      );
+      await flush();
+      assert.equal(f.editorOpen(), outcome !== "success");
+      if (outcome !== "success") {
+        assert.equal(f.id("name").value, "新增");
+        assert.equal(f.id("cwd").value, "/tmp/new");
+        if (outcome === "not-sent") {
+          f.form().emit("submit");
+          assert.equal(f.inputs.length, 2);
+          assert.equal((f.inputs[1] as { entries: unknown[] }).entries.length, 2);
+        } else {
+          f.form().emit("submit");
+          assert.equal(f.inputs.length, 1);
+        }
+      }
+    }));
+
+// A complete pre-write rejection permits correction, unlike conflict/uncertain review barriers.
+test("direct save validation rejection shows reasons and retries without adding twice", () =>
+  dom(async (f) => {
+    f.view.init();
+    await flush();
+    f.button("＋ 添加规则").click();
+    for (const [field, value] of [
+      ["name", "新增"],
+      ["types", "task.new"],
+      ["cwd", "/tmp/new"],
+    ])
+      f.id(field).value = value;
+    f.form().emit("submit");
+    f.answer({
+      version: 3,
+      ok: false,
+      error: {
+        code: "validation",
+        outcome: "rejected",
+        message: DESKTOP_RULES_CAS_MESSAGES.validation,
+        issues: ["规则名重复"],
+      },
+    });
+    await flush();
+    assert.equal(f.editorOpen(), true);
+    assert.equal(f.controller.getState().needsReview, false);
+    assert.match(f.find((node) => node.className === "setup-error").textContent, /规则名重复/);
+    f.id("name").value = "新名称";
+    f.form().emit("submit");
+    assert.equal(f.inputs.length, 2);
+    assert.equal((f.inputs[1] as { entries: unknown[] }).entries.length, 2);
+  }));
+
+// Prevent an immediate add from silently submitting earlier staged edits.
+test("new rule explicitly warns that existing drafts are submitted together", () =>
+  dom(async (f) => {
+    f.view.init();
+    await flush();
+    f.button("编辑").click();
+    f.id("name").value = "已修改";
+    f.form().emit("submit");
+    f.button("＋ 添加规则").click();
+    assert.match(f.find((node) => node.className.includes("rule-footer-hint")).textContent, /一并保存/);
+    for (const [field, value] of [
+      ["name", "新增"],
+      ["types", "task.new"],
+      ["cwd", "/tmp/new"],
+    ])
+      f.id(field).value = value;
+    f.form().emit("submit");
+    assert.equal((f.inputs[0] as { entries: DesktopRuleEntry[] }).entries[0].name, "已修改");
+  }));
+
+// Prevent a draft confirmation from issuing a PUT before the owner explicitly saves.
+test("confirmation stages a draft; only final save issues the CAS request", () =>
+  dom(async (f) => {
+    f.view.init();
+    await flush();
+    f.button("编辑").click();
+    f.id("name").value = "待保存";
+    f.form().emit("submit");
+    assert.equal(f.inputs.length, 0);
+    assert.equal(f.editorOpen(), false);
+    assert.ok(f.controller.getState().draft);
+    assert.equal(f.find((node) => node.className === "draft-bar").hidden, false);
+    f.button("保存到本机中台").click();
+    assert.deepEqual(f.inputs[0], { entries: [{ ...original, name: "待保存" }], rulesSeq: 10 });
+  }));
+
+// Prevent cancelling a later form from dropping already confirmed, unsaved work.
+test("cancel a second form keeps the previously confirmed draft", () =>
+  dom(async (f) => {
+    f.view.init();
+    await flush();
+    f.button("编辑").click();
+    f.id("name").value = "第一条修改";
+    f.form().emit("submit");
+    const draft = f.controller.getState().draft;
+    f.button("编辑").click();
+    f.id("name").value = "不要这条修改";
+    f.button("取消").click();
+    assert.equal(f.controller.getState().draft, draft);
+    f.button("保存到本机中台").click();
+    assert.equal((f.inputs[0] as { entries: DesktopRuleEntry[] }).entries[0].name, "第一条修改");
+  }));
+
+// Prevent notification enum loss or resetting configured folds on background updates.
+test("common fields and notification declarations survive independent folds", () =>
+  dom(async (f) => {
+    f.entries([{ name: "简单", types: ["task.*"], to: "a", cwd: "~/x" }]);
+    f.view.init();
+    await flush();
+    f.button("编辑").click();
+    const folds = all(f.body).filter((node) => node.tag === "details");
+    assert.deepEqual(
+      folds.map((node) => node.open),
+      [false, false],
+    );
+    for (const name of ["prompt", "skill", "tell"])
+      assert.equal(
+        folds.some((fold) => all(fold).includes(f.id(name))),
+        false,
+      );
+    assert.deepEqual(
+      f.id("tell").children.map((node) => node.value),
+      ["", "always", "needed", "never"],
+    );
+    folds[0].open = true;
+    f.view.update();
+    assert.equal(folds[0].open, true);
+    f.button("取消").click();
+    f.entries([original]);
+    f.controller.refresh();
+    await flush();
+    f.button("编辑").click();
+    assert.deepEqual(
+      folds.map((node) => node.open),
+      [true, true],
+    );
+  }));
+
+// Prevent display normalization or long-path clipping from altering copied filesystem data.
+test("copy uses the complete original path, not normalized display text", () =>
+  dom(async (f) => {
+    const path = "/Users/demo/" + "long-directory/".repeat(10) + "folder\r\nname";
+    const previous = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    let copied = "";
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        clipboard: {
+          writeText: async (text: string) => {
+            copied = text;
+          },
+        },
+      },
+    });
+    try {
+      f.entries([{ ...original, cwd: path }]);
+      f.view.init();
+      await flush();
+      f.button("编辑").click();
+      f.button("复制完整路径").click();
+      await flush();
+      assert.equal(copied, path);
+      assert.equal(f.inputs.length, 0);
+    } finally {
+      if (previous) Object.defineProperty(globalThis, "navigator", previous);
+      else Reflect.deleteProperty(globalThis, "navigator");
+    }
   }));

@@ -1,5 +1,7 @@
 import {
   DESKTOP_RULES_CAS_MAX_BYTES,
+  DESKTOP_RULES_CAS_MESSAGES,
+  parseRulesValidationIssues,
   parseDesktopRulesCasInput,
   parseDesktopRulesCasData,
   parseDesktopRulesCasGetResponse,
@@ -148,7 +150,8 @@ export function createRulesCasSource(options: RulesCasSourceOptions): RulesCasSo
           () => {},
         );
         const response = await wait(pending);
-        if (response.status !== 200) {
+        const validationReply = method === "PUT" && response.status === 400;
+        if (response.status !== 200 && !validationReply) {
           discard(response.body);
           finish(
             method === "GET"
@@ -170,7 +173,7 @@ export function createRulesCasSource(options: RulesCasSourceOptions): RulesCasSo
           const chunk = await wait(reader.read());
           if (chunk.done) break;
           bytes += chunk.value.byteLength;
-          if (bytes > DESKTOP_RULES_CAS_MAX_BYTES) throw new Error("响应过大");
+          if (bytes > (validationReply ? 8192 : DESKTOP_RULES_CAS_MAX_BYTES)) throw new Error("响应过大");
           text += decoder.decode(chunk.value, { stream: true });
         }
         text += decoder.decode();
@@ -178,8 +181,36 @@ export function createRulesCasSource(options: RulesCasSourceOptions): RulesCasSo
         try {
           payload = JSON.parse(text);
         } catch {
-          // A 200 that is not JSON at all is a broken or foreign server, not an older hub.
-          finish(uncertain);
+          // Legacy 400 bodies carry no proof of a write-before-validation refusal.
+          finish(validationReply ? desktopRulesCasPutFailure("invalid", "uncertain") : uncertain);
+          return;
+        }
+        if (validationReply) {
+          try {
+            const value = payload as Record<string, unknown>;
+            if (
+              !value ||
+              Object.keys(value).sort().join(",") !== "code,error,issues,outcome" ||
+              value.code !== "rules-validation" ||
+              value.outcome !== "rejected" ||
+              value.error !== "规则校验未通过"
+            )
+              throw new Error("拒绝格式无效");
+            finish(
+              parseDesktopRulesCasPutResponse({
+                version: 3,
+                ok: false,
+                error: {
+                  code: "validation",
+                  outcome: "rejected",
+                  message: DESKTOP_RULES_CAS_MESSAGES.validation,
+                  issues: parseRulesValidationIssues(value.issues),
+                },
+              }),
+            );
+          } catch {
+            finish(desktopRulesCasPutFailure("invalid", "uncertain"));
+          }
           return;
         }
         let parsed: Reply;

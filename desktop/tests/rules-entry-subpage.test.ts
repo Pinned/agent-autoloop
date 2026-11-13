@@ -1,10 +1,7 @@
 // The rule editor is a focused subpage, the same pattern the dispatch-task page established: a
 // pseudo page inside #main with its own page head (back button, subpage title), not a modal and
 // not a panel swapped in under the list page's own head. The form itself is grouped so the
-// required facts (name + trigger in one fused head bar, trigger fields, execution facts) are
-// visible without scrolling, while optional facts (prompt, skill, group, tell, emits) collapse
-// behind an "advanced" details element that stays mounted — hidden fields keep their values and
-// lose nothing.
+// common fields stay visible; scheduling and follow-up permissions have separate persistent folds.
 // Failure modes: a reintroduced <dialog>; openForm() swapping panels under the list page head so
 // the subpage head never shows; the advanced group rebuilt on every update so focus is lost; the
 // trigger switch unmounting the inactive field set and silently dropping its value; app.ts wiring
@@ -81,4 +78,16 @@ test("app.ts drives the rule editor as a pseudo subpage with a way back", () => 
   assert.match(app, /page-head-subpage/);
   // The rules page itself is app-level and re-attached on return, so the list keeps its read.
   assert.match(app, /rulesPage\.update\(\)/);
+});
+
+// Prevent hiding the task itself, collapsing configured permissions, or truncating a saved path.
+test("common fields are visible and optional groups have independent summaries", () => {
+  for (const title of ["触发条件", "执行内容", "任务说明", "执行位置", "完成通知", "调度设置", "后续事件"])
+    assert.ok(view.includes(title), title);
+  assert.match(view, /schedule\.open =/);
+  assert.match(view, /followup\.open =/);
+  assert.match(view, /复制完整路径/);
+  assert.match(view, /cwdInput as HTMLTextAreaElement\)\.rows = 1/);
+  assert.match(app, /actions\.append\(rulesPage\.addButton\)/);
+  assert.doesNotMatch(view, /listPage\.append\([^;]*addRow/);
 });
