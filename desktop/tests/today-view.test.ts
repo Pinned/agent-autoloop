@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
 import { mountTodayView } from "../src/renderer/today-view.ts";
 
+// Prevent long cost values from wrapping, losing the full bill, or changing accounting data.
 // The production view only needs these DOM operations. Keep this test independent of
 // Electron and third-party DOM packages; browser layout is verified separately.
 class TestElement {
@@ -126,8 +128,45 @@ test("four independent headline tiles use exact ask/running/doneToday and real U
   assert.equal(byId(f.root, "today-stat-running").textContent, "3");
   assert.equal(byId(f.root, "today-stat-doneToday").textContent, "4");
   assert.match(tiles[2].textContent, /今天完成的轮次（不代表最终交付）/);
-  assert.equal(byId(f.root, "today-stat-spendingToday").textContent, "$0.00123456789");
+  assert.equal(byId(f.root, "today-stat-spendingToday").textContent, "$0.0012346");
+  assert.equal(byId(f.root, "today-stat-spendingToday").attributes.get("title"), "$0.00123456789 USD");
   assert.match(visibleText(f.root), /USD/);
+});
+
+test("cost value keeps a fixed single line without widening the stats grid", () => {
+  const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
+  const rule = css.match(/#today-stat-spendingToday\s*\{([^}]+)\}/)?.[1] ?? "";
+  assert.match(rule, /white-space:\s*nowrap/);
+  assert.match(rule, /overflow:\s*hidden/);
+  assert.match(rule, /text-overflow:\s*ellipsis/);
+});
+
+test("cost display caps numeric digits, abbreviates long bills and retains full amounts on hover", () => {
+  for (const [cost, display, full] of [
+    [12345678, "$12345678", "$12345678"],
+    [12345.678, "$12345.678", "$12345.678"],
+    [12345.6789, "$1.2345679万", "$12345.6789"],
+    [123456789, "$1.2345679亿", "$123456789"],
+    [99999999.99, "$1亿", "$99999999.99"],
+    [0.00000000123456789, "$1.2346e-9", "$0.00000000123456789"],
+    [Number.MIN_VALUE, "$4.9407e-324", `$0.${"0".repeat(323)}5`],
+    [
+      Number.MAX_VALUE,
+      "$1.7977e+300亿",
+      `$${String(Number.MAX_VALUE).split("e")[0].replace(".", "")}${"0".repeat(292)}`,
+    ],
+  ] as const) {
+    const data = snapshot({ spendingToday: { rounds: 1, cost, missingCost: 0 } });
+    const f = fixture({ kind: "ready", snapshot: data });
+    const value = byId(f.root, "today-stat-spendingToday");
+    assert.equal(value.textContent, display);
+    assert.ok(value.textContent.replace(/\D/g, "").length <= 8);
+    assert.equal(value.attributes.get("title"), `${full} USD`);
+    assert.equal(data.spendingToday.cost, cost);
+    f.control.state = { kind: "error", message: "读取失败" };
+    update(f);
+    assert.equal(value.attributes.get("title"), "");
+  }
 });
 
 test("asks and active runs are the page; notices and completed history leave no trace", () => {
@@ -171,9 +210,9 @@ test("partial, all-missing and no-usage costs never claim a fabricated complete 
   });
   assert.equal(byId(zero.root, "today-stat-spendingToday").textContent, "$0");
   for (const [cost, displayed] of [
-    [1e-8, "$0.00000001"],
-    [1.234e-8, "$0.00000001234"],
-    [1e21, "$1000000000000000000000"],
+    [1e-8, "$1e-8"],
+    [1.234e-8, "$1.234e-8"],
+    [1e21, "$1e+13亿"],
   ] as const) {
     const exact = fixture({
       kind: "ready",
