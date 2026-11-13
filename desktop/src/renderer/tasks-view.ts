@@ -462,6 +462,7 @@ export function mountTasksView(
         if (navigation.scrollHost) navigation.scrollHost.scrollTop = 0;
       }
       showingDetail = open;
+      root.className = open ? "tasks-panel tasks-subpage-panel" : "panel tasks-panel";
       listPage.hidden = open;
       detailPage.hidden = !open;
       navigation.detailChanged?.(open);
