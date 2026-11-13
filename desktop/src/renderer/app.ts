@@ -224,7 +224,12 @@ const taskControl = createRendererTask(
   () => taskPanel.update(),
   () => taskGate(),
 );
-const taskPanel = mountTaskDialog(taskControl, () => today.refresh(), leaveTaskPage);
+const taskPanel = mountTaskDialog(
+  taskControl,
+  () => today.refresh(),
+  leaveTaskPage,
+  () => render("automation"),
+);
 const run = createRendererRun(
   window.desktop,
   () => ({ setupLocked: setup.state.kind === "unknown-locked", setupBusy: setup.busy }),

@@ -122,6 +122,10 @@ async function withView(
     createdCalls(): number;
     onCreated(callback: () => void): void;
   }) => Promise<void>,
+  options?: {
+    taskEntries?: () => Promise<unknown>;
+    mountOptions?: { onOpenRules?: () => void };
+  },
 ) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
   const body = new MemoryElement("body");
@@ -138,11 +142,19 @@ async function withView(
     let panel: ReturnType<typeof mountTaskDialog> | undefined;
     const controller = createRendererTask(
       {
-        taskEntries: async () => ({
-          version: 2,
-          ok: true,
-          data: { entries: [{ name: "入口", types: ["task.ops"], to: "worker" }] },
-        }),
+        taskEntries:
+          (options?.taskEntries as
+            | (() => Promise<{
+                version: 2;
+                ok: true;
+                data: { entries: { name: string; types: string[]; to: string }[] };
+              }>)
+            | undefined) ??
+          (async () => ({
+            version: 2,
+            ok: true,
+            data: { entries: [{ name: "入口", types: ["task.ops"], to: "worker" }] },
+          })),
         taskCreate: () => {
           calls++;
           return new Promise<DesktopTaskOutcome>((resolve) => replies.push(resolve));
@@ -151,10 +163,15 @@ async function withView(
       () => panel?.update(),
       () => eligible,
     );
-    panel = mountTaskDialog(controller, () => {
-      createdCalls++;
-      created();
-    });
+    panel = mountTaskDialog(
+      controller,
+      () => {
+        createdCalls++;
+        created();
+      },
+      undefined,
+      options?.mountOptions?.onOpenRules,
+    );
     body.append(panel.root as unknown as MemoryElement);
     await callback({
       controller,
@@ -409,7 +426,7 @@ test("unsubmitted task input is cached before dispatch and restored on reopen", 
   });
 });
 
-test("task subpage has no outer panel card wrapper and combines title with inline routing controls", async () => {
+test("task subpage has no outer panel card wrapper and combines title with progressive rule controls", async () => {
   await withView(async (f) => {
     f.panel.open();
     await flush();
@@ -422,17 +439,39 @@ test("task subpage has no outer panel card wrapper and combines title with inlin
     assert.ok(titleRouteBar.find((e) => e.id === "task-summary"));
     const entrySelect = titleRouteBar.find((e) => e.id === "task-entry")!;
     const typeSelect = titleRouteBar.find((e) => e.id === "task-type")!;
+    const typeField = titleRouteBar.find((e) => e.className.includes("task-type-field"))!;
     assert.ok(entrySelect);
     assert.ok(typeSelect);
     assert.equal(entrySelect.hidden, false);
-    assert.equal(typeSelect.hidden, false);
+    // Single fixed type hides the redundant type dropdown and surfaces the event type in routeSummary.
+    assert.equal(typeField.hidden, true);
+    assert.equal(typeSelect.hidden, true);
     const duplicateTitle = f.body.find((e) => e.tag === "h2" && e.textContent === "派发任务");
     assert.equal(duplicateTitle, undefined);
     const routeSummary = f.body.find((e) => e.id === "task-route-summary");
     assert.ok(routeSummary);
-    assert.match(routeSummary.textContent, /入口/);
-    assert.match(routeSummary.textContent, /worker/);
+    assert.match(routeSummary.textContent, /由 worker 执行/);
+    assert.match(routeSummary.textContent, /事件/);
   });
+});
+
+test("task subpage offers a direct jump to the rules page when no local event rule exists", async () => {
+  let jumped = 0;
+  await withView(
+    async (f) => {
+      f.panel.open();
+      await flush();
+      const jump = f.body.find((e) => e.className.includes("task-open-rules-button"))!;
+      assert.ok(jump);
+      assert.equal(jump.hidden, false);
+      jump.emit("click");
+      assert.equal(jumped, 1);
+    },
+    {
+      taskEntries: async () => ({ version: 2, ok: true, data: { entries: [] } }),
+      mountOptions: { onOpenRules: () => void jumped++ },
+    },
+  );
 });
 
 test("pressing Enter in WYSIWYG markdown editor renders completed line and preserves active input focus on next line", async () => {

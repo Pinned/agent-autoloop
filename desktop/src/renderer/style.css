@@ -912,14 +912,12 @@ main:has(#task-subpage:not([hidden])) {
 .task-form h2 {
   margin: 0;
 }
-/* The borderless title input delegates its focus ring to the bar so title and routing read as one header. */
+/* Two-tier header card: full-width title above, rule & progressive type strip below. */
 .task-title-route-bar {
   flex-shrink: 0;
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  padding: 6px 10px 6px 14px;
+  flex-direction: column;
+  gap: 0;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--panel);
@@ -929,12 +927,12 @@ main:has(#task-subpage:not([hidden])) {
   box-shadow: 0 0 0 2px var(--accent-bg);
 }
 .task-summary-field {
-  flex: 1 1 260px;
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 0;
   margin: 0;
+  padding: 8px 14px;
 }
 .task-summary-label {
   font-size: 12px;
@@ -949,7 +947,7 @@ main:has(#task-subpage:not([hidden])) {
   font: inherit;
   font-size: 15px;
   font-weight: 600;
-  padding: 5px 4px;
+  padding: 4px 2px;
   border: 0;
   border-radius: 4px;
   background: transparent;
@@ -958,24 +956,22 @@ main:has(#task-subpage:not([hidden])) {
 .task-summary-field input:focus-visible {
   outline: none;
 }
-.task-header-sep {
-  width: 1px;
-  height: 22px;
-  background: var(--soft);
-  flex-shrink: 0;
-}
 .task-route-controls {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px 8px;
-  flex-shrink: 0;
+  gap: 8px 10px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--soft);
+  background: var(--panel2);
+  border-bottom-left-radius: 7px;
+  border-bottom-right-radius: 7px;
   min-width: 0;
 }
 .task-route-field {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   margin: 0;
 }
 .task-route-label {
@@ -993,32 +989,54 @@ main:has(#task-subpage:not([hidden])) {
   font-size: 12px;
   padding: 4px 30px 4px 8px;
   border-radius: 6px;
-  border: 1px solid var(--soft);
-  background: var(--panel2);
+  border: 1px solid var(--border);
+  background: var(--panel);
   color: var(--text);
 }
 .task-route-field select:hover:not(:disabled) {
-  border-color: var(--border);
+  border-color: var(--blue);
 }
 .task-concrete-input {
   font: inherit;
+  font-family: var(--mono);
   font-size: 12px;
   padding: 4px 8px;
   border-radius: 6px;
   border: 1px solid var(--border);
-  background: var(--panel2);
+  background: var(--panel);
   color: var(--text);
-  width: 160px;
+  width: 190px;
 }
 .task-route-summary {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  border: 0;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.task-type-hint {
+  font-size: 11px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+.task-status-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.task-open-rules-button {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--accent);
+  cursor: pointer;
+}
+.task-open-rules-button:hover {
+  border-color: var(--accent);
+  background: var(--accent-bg);
 }
 .task-compose-section {
   flex: 1;
