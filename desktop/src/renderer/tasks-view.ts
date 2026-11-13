@@ -6,10 +6,13 @@ import { FEEDBACK_KINDS, RUN_STATES, type RunItem } from "../../../host/desktop-
  * The tasks page: the hub's real run history, newest first, one page at a time. The search box and
  * the status picker are the hub's own query inputs, so narrowing the list asks the hub and never
  * filters the newest page already on screen. All DOM is built with createElement and lists are
- * rebuilt by replaceChildren — no markup injection anywhere. Clicking a run unfolds its story: the
- * events that triggered it, its attempts, its timings.
+ * rebuilt by replaceChildren — no markup injection anywhere. A detail subpage keeps the list mounted;
+ * the hub supplies summaries, events and cards, not an Agent transcript.
  */
-export function mountTasksView(controller: ReturnType<typeof createRendererTasks>): {
+export function mountTasksView(
+  controller: ReturnType<typeof createRendererTasks>,
+  navigation: { scrollHost?: HTMLElement; detailChanged?: (open: boolean) => void } = {},
+): {
   root: HTMLElement;
   init(): void;
   update(): void;
@@ -69,12 +72,57 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
   actions.append(refreshButton, moreButton);
   const list = document.createElement("ul");
   list.className = "run-list";
-  root.append(head, filters, status, error, actions, list);
+  const listPage = document.createElement("div");
+  listPage.className = "tasks-list-page";
+  listPage.append(head, filters, status, error, actions, list);
+  const detailPage = document.createElement("section");
+  detailPage.className = "tasks-detail-page";
+  detailPage.hidden = true;
+  const detailHead = document.createElement("header");
+  detailHead.className = "tasks-detail-head";
+  const back = document.createElement("button");
+  back.type = "button";
+  back.className = "task-back-button";
+  back.textContent = "← 返回";
+  const detailTitle = document.createElement("h2");
+  detailTitle.textContent = "执行详情";
+  detailTitle.id = "task-detail-title";
+  detailHead.append(back, detailTitle);
+  const detailContent = document.createElement("div");
+  const formHost = document.createElement("div");
+  formHost.className = "tasks-detail-forms";
+  const receiptHost = document.createElement("div");
+  receiptHost.setAttribute("role", "status");
+  receiptHost.setAttribute("aria-live", "polite");
+  detailPage.append(detailHead, detailContent, formHost, receiptHost);
+  root.append(listPage, detailPage);
+  let showingDetail = false;
+  let listScroll = 0;
+  let returnTarget: HTMLButtonElement | null = null;
+  let renderedList: unknown = null;
+  let renderedDetail: unknown = null;
+  let renderedFeedback: unknown = null;
+  let renderedSections: unknown = null;
+  let formRun: number | null = null;
+  const forms = new Map<string, HTMLElement>();
+  let activeForms = new Set<string>();
+  function keepForm(key: string, build: () => HTMLElement) {
+    activeForms.add(key);
+    if (!forms.has(key)) {
+      const block = build();
+      forms.set(key, block);
+      formHost.append(block);
+    }
+  }
+  back.addEventListener("click", () => {
+    if (controller.actionState.kind !== "busy") controller.closeDetail();
+  });
   function textLine(parent: HTMLElement, value: string) {
     const line = document.createElement("p");
     line.textContent = value;
     parent.append(line);
   }
+  const writeButtons = new Set<HTMLButtonElement>();
   function actionButton(parent: HTMLElement, className: string, label: string, disabled: boolean, onClick: () => void) {
     const button = document.createElement("button");
     button.type = "button";
@@ -83,6 +131,7 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
     button.disabled = disabled;
     button.addEventListener("click", onClick);
     parent.append(button);
+    if (parent !== receiptHost) writeButtons.add(button);
     return button;
   }
   function actionInput(parent: HTMLElement, label: string, maxLength: number) {
@@ -156,12 +205,19 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
     }
     const stateSnapshot = state;
     const run = data.run;
+    const fresh = () => controller.detailState.kind === "ready" && controller.detailState.runId === runId;
     textLine(
       node,
       `执行 #${run.id} · ${run.rule} → ${run.agent} · ${DESKTOP_TASKS_STATUS_MESSAGES[run.state]} · 尝试 ${run.attempts} 次`,
     );
-    if (run.summary) textLine(node, run.summary);
-    if (run.error) textLine(node, run.error);
+    textLine(
+      node,
+      "完整执行消息未记录到中台，当前接口无法读取 Agent 对话、工具调用或执行机日志。下方只展示已记录的真实资料，不是完整对话。摘要与失败原因最多 500 字，截断时会注明。",
+    );
+    textLine(node, "本轮结果摘要（中台轮次记录）");
+    textLine(node, run.summary || "本轮尚未记录结果摘要。");
+    if (run.error) textLine(node, `失败原因：${run.error}`);
+    if (run.stopping) textLine(node, "正在停止，等待执行机确认进程组结束。");
     const times = [
       run.createdAt && `安排 ${when(run.createdAt)}`,
       run.claimedAt && `领取 ${when(run.claimedAt)}`,
@@ -183,60 +239,62 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
       );
     if (run.truncated) textLine(node, "部分文字已截断。");
     // Run-level writes share the same single window and the same honest receipt below.
-    const runActions = document.createElement("div");
-    runActions.className = "run-actions";
-    const fresh = () => controller.detailState === stateSnapshot;
-    const cancellable = run.state === "queued" || run.state === "claimed" || run.state === "unknown";
-    if (cancellable) {
-      let armed = false;
-      const stop = actionButton(runActions, "cancel-run", "停止执行", !writes, () => {
-        // Two-step confirmation: the second click is the one that may leave this machine.
-        if (!fresh()) return;
-        if (!armed) {
-          armed = true;
-          stop.textContent = "确认停止";
-          textLine(runActions, "停止只结束本机这一轮；时间线与成本记录保留。");
-          return;
-        }
-        controller.submitAction({ action: "cancel", runId: run.id });
-      });
-    }
-    if (run.state !== "queued") {
-      const memo = actionInput(runActions, "更正内容", 4000);
-      actionButton(runActions, "memo-submit", "提交更正", !writes, () => {
-        if (fresh()) controller.submitAction({ action: "memo", runId: run.id, input: { text: memo.value } });
-      });
-      // The kernel may decline a correction it cannot resume; this only promises what it can.
-      textLine(runActions, "更正不会改写本轮：原轮次保留结束记录，新的下一轮并入队列。");
-    }
-    if (runActions.children.length) node.append(runActions);
-    // A rating is about a delivered result only: it records the owner's view and never reruns anything.
-    if (run.state === "done") {
-      const block = document.createElement("div");
-      block.className = "feedback-actions";
-      const kinds = document.createElement("select");
-      kinds.setAttribute("aria-label", "反馈类型");
-      for (const kind of FEEDBACK_KINDS) {
-        const option = document.createElement("option");
-        option.value = kind;
-        option.textContent = kind;
-        kinds.append(option);
+    keepForm(`run-${run.state}`, () => {
+      const runActions = document.createElement("div");
+      runActions.className = "run-actions";
+      const fresh = () => controller.detailState.kind === "ready" && controller.detailState.runId === runId;
+      const cancellable = run.state === "queued" || run.state === "claimed" || run.state === "unknown";
+      if (cancellable) {
+        let armed = false;
+        const stop = actionButton(runActions, "cancel-run", "停止执行", !writes, () => {
+          // Two-step confirmation: the second click is the one that may leave this machine.
+          if (!fresh()) return;
+          if (!armed) {
+            armed = true;
+            stop.textContent = "确认停止";
+            textLine(runActions, "停止只结束本机这一轮；时间线与成本记录保留。");
+            return;
+          }
+          controller.submitAction({ action: "cancel", runId: run.id });
+        });
       }
-      const text = document.createElement("textarea");
-      text.setAttribute("aria-label", "反馈内容");
-      text.setAttribute("placeholder", "告诉我们结果哪里做得好，或哪里需要改善");
-      text.setAttribute("maxlength", "4000");
-      block.append(kinds, text);
-      actionButton(block, "feedback-submit", "记录反馈", !writes, () => {
-        // The select only ever holds the three contract kinds; anything else is a broken DOM, not a draft.
-        const kind = FEEDBACK_KINDS.find((value) => value === kinds.value);
-        if (fresh() && kind)
-          controller.submitAction({ action: "feedback", runId: run.id, input: { kind, text: text.value } });
+      if (run.state !== "queued") {
+        const memo = actionInput(runActions, "更正内容", 4000);
+        actionButton(runActions, "memo-submit", "提交更正", !writes, () => {
+          if (fresh()) controller.submitAction({ action: "memo", runId: run.id, input: { text: memo.value } });
+        });
+        // The kernel may decline a correction it cannot resume; this only promises what it can.
+        textLine(runActions, "更正不会改写本轮：原轮次保留结束记录，新的下一轮并入队列。");
+      }
+      return runActions;
+    });
+    // A rating is about a delivered result only: it records the owner's view and never reruns anything.
+    if (run.state === "done")
+      keepForm("feedback", () => {
+        const block = document.createElement("div");
+        block.className = "feedback-actions";
+        const kinds = document.createElement("select");
+        kinds.setAttribute("aria-label", "反馈类型");
+        for (const kind of FEEDBACK_KINDS) {
+          const option = document.createElement("option");
+          option.value = kind;
+          option.textContent = kind;
+          kinds.append(option);
+        }
+        const text = document.createElement("textarea");
+        text.setAttribute("aria-label", "反馈内容");
+        text.setAttribute("placeholder", "告诉我们结果哪里做得好，或哪里需要改善");
+        text.setAttribute("maxlength", "4000");
+        block.append(kinds, text);
+        actionButton(block, "feedback-submit", "记录反馈", !writes, () => {
+          // The select only ever holds the three contract kinds; anything else is a broken DOM, not a draft.
+          const kind = FEEDBACK_KINDS.find((value) => value === kinds.value);
+          if (fresh() && kind)
+            controller.submitAction({ action: "feedback", runId: run.id, input: { kind, text: text.value } });
+        });
+        textLine(block, "反馈只记录评价，不自动重新执行。如需修改任务，请用“提交更正”开启新一轮。");
+        return block;
       });
-      textLine(block, "反馈只记录评价，不自动重新执行。如需修改任务，请用“提交更正”开启新一轮。");
-      node.append(block);
-    }
-    actionStatus(node);
     textLine(node, "触发事件");
     if (!data.events.items.length) textLine(node, "本批没有触发事件。");
     for (const event of data.events.items) {
@@ -259,31 +317,34 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
       if (card.result !== null) textLine(node, `结果：${card.result}`);
       if (card.truncated) textLine(node, "部分卡片文字已截断。");
       if (card.state !== "open") continue;
-      const fresh = () => controller.detailState === stateSnapshot;
-      const block = document.createElement("div");
-      block.className = "card-actions";
-      if (card.kind === "ask") {
-        card.options.forEach((option, index) =>
-          actionButton(block, "answer-choice", option, !writes, () => {
-            if (fresh()) controller.submitAction({ action: "answer", cardId: card.id, input: { choice: index } });
-          }),
-        );
-        // A free-form answer is the same decision, not a new round.
-        const custom = actionInput(block, `自定义回答（卡片 #${card.id}）`, 4000);
-        actionButton(block, "answer-text", "提交回答", !writes, () => {
-          if (!fresh()) return;
-          controller.submitAction({ action: "answer", cardId: card.id, input: { text: custom.value } });
-        });
-        textLine(block, "回答保持当前轮次；只有中台确认为开放卡片才会生效。");
-      } else {
-        // A notice is closed by a short reason; the hub decides whether it is still open.
-        const reason = actionInput(block, `结案原因（卡片 #${card.id}）`, 1000);
-        actionButton(block, "resolve-submit", "结案", !writes, () => {
-          if (fresh()) controller.submitAction({ action: "resolve", cardId: card.id, input: { reason: reason.value } });
-        });
-        textLine(block, "结案后本轮留在完成列表，记录保留。");
-      }
-      node.append(block);
+      keepForm(`card-${card.id}`, () => {
+        const fresh = () => controller.detailState.kind === "ready" && controller.detailState.runId === runId;
+        const block = document.createElement("div");
+        block.className = "card-actions";
+        if (card.kind === "ask") {
+          card.options.forEach((option, index) =>
+            actionButton(block, "answer-choice", option, !writes, () => {
+              if (fresh()) controller.submitAction({ action: "answer", cardId: card.id, input: { choice: index } });
+            }),
+          );
+          // A free-form answer is the same decision, not a new round.
+          const custom = actionInput(block, `自定义回答（卡片 #${card.id}）`, 4000);
+          actionButton(block, "answer-text", "提交回答", !writes, () => {
+            if (!fresh()) return;
+            controller.submitAction({ action: "answer", cardId: card.id, input: { text: custom.value } });
+          });
+          textLine(block, "回答保持当前轮次；只有中台确认为开放卡片才会生效。");
+        } else {
+          // A notice is closed by a short reason; the hub decides whether it is still open.
+          const reason = actionInput(block, `结案原因（卡片 #${card.id}）`, 1000);
+          actionButton(block, "resolve-submit", "结案", !writes, () => {
+            if (fresh())
+              controller.submitAction({ action: "resolve", cardId: card.id, input: { reason: reason.value } });
+          });
+          textLine(block, "结案后本轮留在完成列表，记录保留。");
+        }
+        return block;
+      });
     }
     sectionControl("cards", "相关卡片");
     textLine(node, "关联执行记录");
@@ -291,7 +352,24 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
     else {
       if (!data.relatedRuns.items.length) textLine(node, "本批没有关联执行记录。");
       for (const related of data.relatedRuns.items) {
-        textLine(node, `执行 #${related.id} · ${related.rule} → ${related.agent} · ${related.summary}`);
+        const round = document.createElement("section");
+        round.className = "related-round";
+        textLine(
+          round,
+          `执行 #${related.id} · ${related.rule} → ${related.agent} · ${DESKTOP_TASKS_STATUS_MESSAGES[related.state]}`,
+        );
+        textLine(round, `本轮结果摘要：${related.summary || "未记录"}`);
+        if (related.error) textLine(round, `失败原因：${related.error}`);
+        const read = document.createElement("button");
+        read.type = "button";
+        read.className = "related-round-open";
+        read.textContent = `查看执行 #${related.id} 的记录`;
+        read.addEventListener("click", () => {
+          if (controller.detailState === stateSnapshot && controller.actionState.kind !== "busy")
+            controller.openDetail(related.id);
+        });
+        round.append(read);
+        node.append(round);
         if (related.truncated) textLine(node, "部分关联记录文字已截断。");
       }
     }
@@ -341,14 +419,13 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
     return `${time.getFullYear()}-${pad(time.getMonth() + 1)}-${pad(time.getDate())} ${pad(time.getHours())}:${pad(time.getMinutes())}`;
   }
 
-  function runNode(run: RunItem, expanded: boolean) {
+  function runNode(run: RunItem) {
     const item = document.createElement("li");
     item.className = "run-item";
     const top = document.createElement("button");
     top.type = "button";
     top.className = "run-head";
-    top.setAttribute("aria-expanded", String(expanded));
-    top.setAttribute("aria-label", `${expanded ? "收起" : "查看"}执行 #${run.id} 详情`);
+    top.setAttribute("aria-label", `查看执行 #${run.id} 详情`);
     const badge = document.createElement("span");
     badge.className = `run-state ${run.state}`;
     badge.textContent = DESKTOP_TASKS_STATUS_MESSAGES[run.state];
@@ -359,8 +436,8 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
     to.textContent = `→ ${run.agent}`;
     top.append(badge, name, to);
     top.addEventListener("click", () => {
-      if (controller.detailState.runId === run.id) controller.closeDetail();
-      else controller.openDetail(run.id);
+      returnTarget = top;
+      controller.openDetail(run.id);
       update();
     });
     const meta = document.createElement("div");
@@ -373,11 +450,55 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
     if (run.summary) parts.push(run.summary);
     meta.textContent = parts.join(" · ");
     item.append(top, meta);
-    if (expanded) item.append(detailNode(run.id));
     return item;
   }
 
   function update() {
+    const detail = controller.detailState;
+    const open = detail.kind !== "idle";
+    if (open !== showingDetail) {
+      if (open) {
+        listScroll = navigation.scrollHost?.scrollTop ?? 0;
+        if (navigation.scrollHost) navigation.scrollHost.scrollTop = 0;
+      }
+      showingDetail = open;
+      listPage.hidden = open;
+      detailPage.hidden = !open;
+      navigation.detailChanged?.(open);
+      if (open) back.focus?.();
+      else {
+        if (navigation.scrollHost) navigation.scrollHost.scrollTop = listScroll;
+        returnTarget?.focus?.({ preventScroll: true });
+      }
+    }
+    if (detail.runId !== null && formRun !== detail.runId) {
+      formRun = detail.runId;
+      forms.clear();
+      writeButtons.clear();
+      formHost.replaceChildren();
+      renderedDetail = null;
+    }
+    if (open) {
+      if (
+        renderedDetail !== detail ||
+        renderedFeedback !== controller.feedbackState ||
+        renderedSections !== controller.sectionState
+      ) {
+        activeForms = new Set();
+        detailContent.replaceChildren(detailNode(detail.runId!));
+        for (const [key, form] of forms) form.hidden = !activeForms.has(key);
+        renderedDetail = detail;
+        renderedFeedback = controller.feedbackState;
+        renderedSections = controller.sectionState;
+      }
+      const action = controller.actionState;
+      const writes =
+        detail.kind === "ready" && action.kind !== "busy" && !(action.kind === "settled" && action.mustReread);
+      for (const button of writeButtons) button.disabled = !writes;
+      back.disabled = action.kind === "busy";
+      receiptHost.replaceChildren();
+      actionStatus(receiptHost);
+    }
     const state = controller.loadState;
     const filter = controller.filter;
     const narrowed = Boolean(filter.q || filter.state);
@@ -399,7 +520,10 @@ export function mountTasksView(controller: ReturnType<typeof createRendererTasks
       status.hidden = false;
     }
     const runs = state.kind === "ready" ? state.runs : [];
-    list.replaceChildren(...runs.map((run) => runNode(run, controller.detailState.runId === run.id)));
+    if (!open && renderedList !== state) {
+      list.replaceChildren(...runs.map(runNode));
+      renderedList = state;
+    }
     // Loading more is offered exactly when the hub said older runs exist.
     moreButton.hidden = !(state.kind === "ready" && state.hasMore);
     const paging = controller.moreState;

@@ -1,4 +1,4 @@
-// Prevent eager reads, duplicate loading, cross-run/late replies and invalid runtime pushes reviving visible details.
+// Prevent lost list position/drafts, fabricated execution messages, duplicate loading, cross-run replies and unsafe writes.
 // Fake bridge and DOM only; no Electron, files, fetch, config or runtime.
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -86,12 +86,28 @@ function fixture() {
     controller,
     pending,
     receive: (value: unknown) => receive(value),
-    mount() {
-      view = mountTasksView(controller);
+    mount(options: Parameters<typeof mountTasksView>[1] = {}) {
+      view = mountTasksView(controller, options);
       return view;
     },
   };
 }
+test("a recorded related round outside the list can be read, arbitrary run ids cannot", async () => {
+  const f = fixture();
+  f.controller.refresh();
+  await flush();
+  f.controller.openDetail(7);
+  const value = validDetail(7);
+  value.data.relatedRuns.items = [run(3)];
+  f.pending[0].resolve(value);
+  await flush();
+  f.controller.openDetail(999);
+  assert.equal(f.pending.length, 1);
+  f.controller.openDetail(3);
+  assert.equal(f.pending.length, 2);
+  assert.equal(f.pending[1].id, 3);
+});
+
 test("details are lazy, duplicate open is single-flight, switching and collapse ignore late replies", async () => {
   const f = fixture();
   f.controller.refresh();
@@ -222,6 +238,63 @@ class Element {
   }
 }
 const all = (node: Element): Element[] => [node, ...node.children.flatMap(all)];
+
+test("detail is a subpage: back preserves list nodes/query/scroll and never invents a transcript", async () => {
+  const scrollHost = { scrollTop: 420 } as HTMLElement;
+  const transitions: boolean[] = [];
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", { configurable: true, value: { createElement: () => new Element() } });
+  try {
+    const f = fixture();
+    const view = f.mount({ scrollHost, detailChanged: (open) => transitions.push(open) });
+    view.init();
+    await flush();
+    const root = view.root as unknown as Element;
+    const list = all(root).find((x) => x.className === "run-list")!;
+    const first = list.children[0];
+    const search = all(root).find((x) => x.className === "tasks-search")!;
+    search.value = "草稿查询";
+    all(first)
+      .find((x) => x.className === "run-head")!
+      .fire();
+    assert.equal(all(root).find((x) => x.className === "tasks-list-page")?.hidden, true);
+    assert.equal(all(root).find((x) => x.className === "tasks-detail-page")?.hidden, false);
+    assert.equal(scrollHost.scrollTop, 0);
+    scrollHost.scrollTop = 900;
+    f.pending[0].resolve(validDetail(7));
+    await flush();
+    assert.match(root.textContent, /完整执行消息未记录到中台/);
+    assert.match(root.textContent, /本轮结果摘要/);
+    const memo = all(root).find((x) => x.attributes.get("aria-label") === "更正内容")!;
+    memo.value = "未提交的更正";
+    view.update();
+    assert.equal(
+      all(root).find((x) => x.attributes.get("aria-label") === "更正内容"),
+      memo,
+    );
+    assert.equal(memo.value, "未提交的更正");
+    f.controller.reread();
+    f.pending[1].resolve(validDetail(7));
+    await flush();
+    assert.equal(
+      all(root).find((x) => x.attributes.get("aria-label") === "更正内容"),
+      memo,
+    );
+    assert.equal(memo.value, "未提交的更正");
+    all(root)
+      .find((x) => x.className === "task-back-button")!
+      .fire();
+    assert.equal(scrollHost.scrollTop, 420);
+    assert.deepEqual(transitions, [true, false]);
+    assert.equal(list.children[0], first);
+    assert.equal(search.value, "草稿查询");
+    assert.equal(f.controller.detailState.kind, "idle");
+    assert.equal(all(root).find((x) => x.className === "tasks-list-page")?.hidden, false);
+  } finally {
+    if (previous) Object.defineProperty(globalThis, "document", previous);
+    else Reflect.deleteProperty(globalThis, "document");
+  }
+});
 test("visible detail uses text, honest first-page/truncation/association labels and retry", async () => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
   Object.defineProperty(globalThis, "document", { configurable: true, value: { createElement: () => new Element() } });

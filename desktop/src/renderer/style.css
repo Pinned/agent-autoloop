@@ -1932,11 +1932,45 @@ main:has(#task-subpage:not([hidden])) {
 .run-meta {
   font-size: 11px;
 }
+.tasks-detail-page {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tasks-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.tasks-detail-head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.tasks-detail-head .task-back-button {
+  border-radius: 999px;
+}
 .run-detail {
-  border-top: 1px dashed var(--border);
-  padding-top: 8px;
   display: grid;
   gap: 6px;
+}
+.run-detail p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.related-round,
+.tasks-detail-forms > div {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  margin-top: 14px;
+  background: var(--panel2);
+  min-width: 0;
+}
+.tasks-detail-forms input,
+.tasks-detail-forms textarea {
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .run-events {
   list-style: none;
