@@ -219,6 +219,9 @@ function leaveEntryEditor() {
   rulesPage.closeEditor();
   render("automation");
 }
+function openEntryEditor() {
+  render("automation-entry");
+}
 const taskControl = createRendererTask(
   window.desktop,
   () => taskPanel.update(),
@@ -318,10 +321,12 @@ const rules = createRendererRulesCas(
     rulesPut: (input) => window.desktop.rulesCasPut(input),
   },
   () => {
-    if (currentPage === "automation") rulesPage?.update();
+    if (currentPage === "automation" || currentPage === "automation-entry") rulesPage?.update();
   },
 );
-const rulesPage = mountRulesCasView(rules);
+// Opening a form is a real page change (the automation-entry pseudo page renders the subpage head
+// with the back button); leaving returns to the list. The view owns only the panel swap.
+const rulesPage = mountRulesCasView(rules, { goEntry: openEntryEditor, backFromEntry: leaveEntryEditor });
 // The tasks page is app-level too: page switches only re-attach the list and re-read page one.
 const tasks = createRendererTasks(window.desktop, () => {
   if (currentPage === "tasks") tasksPage?.update();
@@ -478,9 +483,9 @@ function render(id: string, focus = true) {
     : isAutomationEntry
       ? {
           id: "automation-entry",
-          nav: "编辑入口",
-          title: "编辑入口",
-          description: "确认即保存到本机中台。",
+          nav: "编辑规则",
+          title: "编辑规则",
+          description: "改动确认后保存到本机中台。",
           icon: "automation",
         }
       : pages.find((item) => item.id === id)!;
@@ -527,13 +532,16 @@ function render(id: string, focus = true) {
     // page the user is on, and the back button returns to the list.
     main.append(rulesPage.root);
     if (id === "automation-entry") {
-      const actions = main.querySelector<HTMLElement>(".page-head-actions")!;
+      // The subpage head mirrors the dispatch-task shape: back button first, 18px title.
+      const head = main.querySelector<HTMLElement>(".page-head")!;
+      head.classList.add("page-head-subpage");
+      const copy = main.querySelector<HTMLElement>(".page-head-copy")!;
       const backButton = document.createElement("button");
       backButton.textContent = "← 返回";
       backButton.type = "button";
       backButton.className = "task-back-button";
       backButton.addEventListener("click", leaveEntryEditor);
-      actions.append(backButton);
+      copy.prepend(backButton);
       rulesPage.openEditor();
     } else {
       rulesPage.closeEditor();

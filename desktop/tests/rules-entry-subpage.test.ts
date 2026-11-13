@@ -1,11 +1,14 @@
-// The automation entry editor used to be a <dialog> appended to document.body, so opening it
-// stacked a modal over the page and an ESC dismissed the whole edit. The dispatch-task subpage
-// already established the pattern the app uses for focused work: a pseudo page inside #main with
-// a back button, sharing the page head's title slot. These cases pin that the editor follows it —
-// the dialog element is gone, the form lives inside the view's own panel, and the view exposes
-// open/close so app.ts can drive it as a subpage without re-mounting it.
-// Failure modes: a reintroduced <dialog>; the form appended to document.body; a subpage that
-// rebuilds the whole view (losing the draft) on every open; app.ts wiring that forgets to return.
+// The rule editor is a focused subpage, the same pattern the dispatch-task page established: a
+// pseudo page inside #main with its own page head (back button, subpage title), not a modal and
+// not a panel swapped in under the list page's own head. The form itself is grouped so the
+// required facts (name + trigger in one fused head bar, trigger fields, execution facts) are
+// visible without scrolling, while optional facts (prompt, skill, group, tell, emits) collapse
+// behind an "advanced" details element that stays mounted — hidden fields keep their values and
+// lose nothing.
+// Failure modes: a reintroduced <dialog>; openForm() swapping panels under the list page head so
+// the subpage head never shows; the advanced group rebuilt on every update so focus is lost; the
+// trigger switch unmounting the inactive field set and silently dropping its value; app.ts wiring
+// that forgets the back button or re-mounts the view on every open.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -14,7 +17,7 @@ const read = (file: string) => readFileSync(new URL(`../src/renderer/${file}`, i
 const view = read("rules-cas-view.ts");
 const app = read("app.ts");
 
-test("the entry editor is an in-page panel, not a modal dialog over the page", () => {
+test("the rule editor is an in-page panel, not a modal dialog over the page", () => {
   // The dialog (and with it the modal backdrop and the body-level stacking) is gone entirely.
   assert.doesNotMatch(view, /document\.createElement\("dialog"\)/);
   assert.doesNotMatch(view, /showModal|dialog\.close/);
@@ -33,13 +36,37 @@ test("the editor panel mounts once and is shown or hidden as a subpage", () => {
   assert.match(view, /hidden = (true|false)/);
 });
 
-test("app.ts drives the automation entry editor as a pseudo subpage with a way back", () => {
+test("openForm navigates to the subpage pseudo id instead of swapping panels in place", () => {
+  // The list page's own head no longer hosts the editor: opening a form asks app.ts to render the
+  // automation-entry pseudo page, which swaps the page head (back button + "编辑规则") and shows
+  // the editor panel. The view exposes a nav callback so app.ts owns the page change.
+  assert.match(view, /openForm\(index[^)]*\)/);
+  assert.match(view, /nav\.goEntry\(\)|goEntry\(\)/);
+  // The view never rewrites the list page head itself.
+  assert.doesNotMatch(view, /page-head/);
+});
+
+test("the form groups its fields; optional facts collapse behind a details element", () => {
+  // One fused head bar carries the name input and the trigger select, the dispatch-task pattern.
+  assert.match(view, /rule-head-bar/);
+  assert.match(view, /createElement\("input"\)/);
+  // The trigger field sets swap by hidden, never by unmounting: a switch back keeps the value.
+  assert.match(view, /syncTrigger/);
+  // The advanced group is a native details element so the browser owns the toggle; it stays
+  // mounted with its inputs at all times.
+  assert.match(view, /createElement\("details"\)/);
+  assert.match(view, /rule-advanced/);
+});
+
+test("app.ts drives the rule editor as a pseudo subpage with a way back", () => {
   // The pseudo page id and the back button follow the dispatch-task pattern: a fixed id, an
-  // open() call on entry, and a return to the automation page the user came from.
+  // open() call on entry, and a return to the rules page the user came from.
   assert.match(app, /automation-entry/);
   assert.match(app, /rulesPage\.openEditor\(\)/);
   assert.match(app, /rulesPage\.closeEditor\(\)/);
   assert.match(app, /leaveEntryEditor/);
+  // The subpage head shape matches the dispatch-task subpage: 18px title, back button first.
+  assert.match(app, /page-head-subpage/);
   // The rules page itself is app-level and re-attached on return, so the list keeps its read.
   assert.match(app, /rulesPage\.update\(\)/);
 });

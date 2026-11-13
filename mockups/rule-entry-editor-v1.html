@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>原型 · 规则编辑子页面（方案 A）</title>
+<style>
+  /* ─── 设计令牌：从 desktop/src/renderer/style.css 原样拷贝 ─── */
+  :root {
+    --bg: #f4f6fa;
+    --panel: #fff;
+    --sidebar: #edf1f7;
+    --panel2: #eef2f8;
+    --accent-bg: #e2ecff;
+    --text: #1b2639;
+    --muted: #526079;
+    --faint: #596780;
+    --border: #cad3e2;
+    --soft: #dfe5ef;
+    --blue: #255bb7;
+    --accent: #2869d7;
+    --green: #197543;
+    --amber: #865309;
+    --red: #b3342c;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b0e14;
+    --panel: #11151d;
+    --sidebar: #0d1118;
+    --panel2: #151a24;
+    --accent-bg: #18263e;
+    --text: #e7eaf2;
+    --muted: #a0a9bc;
+    --faint: #8994aa;
+    --border: #283143;
+    --soft: #1c2432;
+    --blue: #78a7ff;
+    --accent: #4c8dff;
+    --green: #6cdaa0;
+    --amber: #f5be6c;
+    --red: #ff8b84;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); }
+  button {
+    font: inherit;
+    color: var(--text);
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 14px;
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--blue); }
+  button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--blue);
+    outline-offset: 3px;
+  }
+  input, textarea, select {
+    font: inherit;
+    color: var(--text);
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    width: 100%;
+  }
+  input::placeholder, textarea::placeholder { color: var(--faint); }
+
+  /* ─── 演示画布 ─── */
+  .stage {
+    display: flex;
+    gap: 28px;
+    flex-wrap: wrap;
+    padding: 30px 28px;
+  }
+  .frame {
+    width: 1080px;
+    max-width: 100%;
+    height: 760px;
+    display: flex;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--sidebar);
+  }
+  .sidebar {
+    width: 184px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--soft);
+    padding: 56px 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .sidebar .note { margin-top: auto; font-size: 11px; color: var(--faint); }
+  .sidebar button {
+    text-align: left;
+    background: transparent;
+    border: 0;
+    border-radius: 6px;
+    padding: 6px 10px;
+    color: var(--muted);
+  }
+  .sidebar button.active { background: var(--accent-bg); color: var(--text); font-weight: 600; }
+  main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    padding: 14px 20px 16px;
+    overflow: auto;
+    scrollbar-gutter: stable;
+  }
+  .page-head-copy { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+  .page-head-copy h1 { font-size: 18px; line-height: 1.3; margin: 0; }
+  .page-head-copy p { margin: 0; font-size: 12px; color: var(--muted); }
+  .task-back-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+  }
+  .task-back-button:hover { color: var(--text); border-color: var(--blue); background: var(--accent-bg); }
+
+  /* ─── 表单区 ─── */
+  .rule-form {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  /* 融合顶栏：名称 + 触发方式切换（分段控件形态，同派发页 select） */
+  .rule-head-bar {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    padding: 6px 10px 6px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+  }
+  .rule-head-bar:focus-within { border-color: var(--blue); box-shadow: 0 0 0 2px var(--accent-bg); }
+  .rule-name-field { flex: 1 1 240px; display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .rule-name-field span { font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+  .rule-name-field input {
+    flex: 1; min-width: 0; width: 100%;
+    font-size: 15px; font-weight: 600;
+    padding: 5px 4px; border: 0; border-radius: 4px; background: transparent;
+  }
+  .rule-name-field input:focus-visible { outline: none; }
+  .head-sep { width: 1px; height: 22px; background: var(--soft); flex-shrink: 0; }
+  .rule-trigger-field { display: flex; align-items: center; gap: 5px; }
+  .rule-trigger-field span { font-size: 12px; font-weight: 500; color: var(--muted); }
+  .rule-trigger-field select {
+    width: auto;
+    font-size: 12px;
+    padding: 4px 30px 4px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--soft);
+  }
+  /* 分组面板 */
+  .rule-group {
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--panel);
+    padding: 14px 16px 16px;
+  }
+  .rule-group > h2 {
+    margin: 0 0 12px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 1.2px;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+  .rule-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+  .rule-grid .span2 { grid-column: span 2; }
+  .field { display: grid; gap: 6px; }
+  .field > span { font-size: 12px; color: var(--muted); }
+  .field input[type="number"] { width: 90px; }
+  .field .hint { font-size: 11px; color: var(--faint); }
+  /* 高级折叠 */
+  .rule-advanced { margin-top: 2px; }
+  .rule-advanced summary {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    list-style: none;
+    cursor: pointer;
+    user-select: none;
+    padding: 8px 2px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+  }
+  .rule-advanced summary::-webkit-details-marker { display: none; }
+  .rule-advanced summary:hover { color: var(--text); }
+  .rule-advanced summary .chev { transition: transform 0.12s ease; font-size: 10px; color: var(--faint); }
+  .rule-advanced[open] summary .chev { transform: rotate(90deg); }
+  .rule-advanced summary .filled {
+    font-size: 10px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    background: var(--panel2);
+  }
+  .rule-advanced[open] summary .filled { color: var(--blue); border-color: var(--blue); background: color-mix(in srgb, var(--blue) 8%, transparent); }
+  .rule-advanced .rule-group { margin-top: 4px; }
+  /* 页脚动作 */
+  .rule-footer { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 2px; }
+  .rule-footer .spacer { flex: 1; }
+  .rule-cancel { background: transparent; color: var(--muted); }
+  .rule-cancel:hover { color: var(--text); background: var(--panel); }
+  .rule-submit { border-color: var(--blue); background: var(--accent-bg); font-weight: 600; }
+  .setup-error {
+    margin: 0;
+    padding: 10px 12px;
+    font-size: 12px;
+    border-left: 3px solid var(--red);
+    border-radius: 6px;
+    background: var(--panel);
+  }
+  /* 顶栏切换提示 */
+  .stage-toolbar { position: fixed; right: 18px; bottom: 16px; display: flex; gap: 8px; align-items: center; z-index: 9; }
+  .stage-toolbar .label { font-size: 11px; color: var(--muted); }
+  .stage-toolbar button { padding: 5px 10px; font-size: 12px; }
+  .stage-toolbar button.on { border-color: var(--blue); background: var(--accent-bg); }
+  .frame-title { width: 100%; margin-bottom: -14px; font-size: 12px; color: var(--faint); }
+  @media (max-width: 1120px) { .frame { height: auto; } }
+</style>
+</head>
+<body>
+<div class="stage">
+  <p class="frame-title">① 事件触发 · 高级已填（默认收起）</p>
+  <div class="frame">
+    <nav class="sidebar">
+      <button>⚡ 今天</button>
+      <button>☰ 任务</button>
+      <button class="active">⚙ 规则</button>
+      <button>🖥 执行机</button>
+      <button>⚙ 设置</button>
+      <p class="note">本机中台 · 在线</p>
+    </nav>
+    <main>
+      <header class="page-head" style="margin-bottom:10px">
+        <div class="page-head-copy">
+          <button class="task-back-button" type="button">← 返回</button>
+          <h1>编辑规则</h1>
+          <p>改动确认后保存到本机中台。</p>
+        </div>
+      </header>
+      <form class="rule-form">
+        <div class="rule-head-bar">
+          <label class="rule-name-field"><span>规则名称</span>
+            <input value="修复线上问题" placeholder="一句话概括这条规则做什么" />
+          </label>
+          <span class="head-sep" aria-hidden="true"></span>
+          <label class="rule-trigger-field"><span>触发</span>
+            <select><option selected>事件触发</option><option>定时触发</option></select>
+          </label>
+        </div>
+        <section class="rule-group">
+          <h2>触发</h2>
+          <div class="rule-grid">
+            <label class="field span2"><span>事件类型</span>
+              <input value="task.release task.*" placeholder="空格或逗号分隔，可用 x.* 通配" />
+            </label>
+          </div>
+        </section>
+        <section class="rule-group">
+          <h2>执行</h2>
+          <div class="rule-grid">
+            <label class="field"><span>执行体</span>
+              <select><option selected>claude</option><option>codex</option></select>
+            </label>
+            <label class="field"><span>工作目录</span>
+              <input value="~/work" placeholder="Agent 在哪个目录干活" />
+            </label>
+            <label class="field"><span>并行数</span>
+              <input type="number" min="1" max="64" placeholder="默认 1" />
+            </label>
+          </div>
+        </section>
+        <details class="rule-advanced">
+          <summary><span class="chev">▶</span>高级<span class="filled">已填 3 项</span></summary>
+          <section class="rule-group">
+            <div class="rule-grid">
+              <label class="field span2"><span>提示词</span>
+                <textarea rows="3" placeholder="可选">先看日志再改，改动要小步提交。</textarea>
+              </label>
+              <label class="field"><span>技能</span><input placeholder="可选" value="排查技能" /></label>
+              <label class="field"><span>分组</span><input placeholder="可选，留空随规则名" value="修复组" /></label>
+              <label class="field"><span>收尾通知</span>
+                <select><option selected>默认（需要才说）</option><option>总是</option><option>需要才说（显式）</option><option>从不</option></select>
+              </label>
+              <label class="field"><span>输出事件来源</span><input placeholder="可选" value="app" /></label>
+              <label class="field span2"><span>输出事件类型</span>
+                <input placeholder="可选，空格或逗号分隔" value="done.release" />
+              </label>
+            </div>
+          </section>
+        </details>
+        <div class="rule-footer">
+          <button type="button" class="rule-cancel">取消</button>
+          <button type="submit" class="rule-submit">确定</button>
+        </div>
+      </form>
+    </main>
+  </div>
+
+  <p class="frame-title">② 定时触发 · 高级全空（未展开）</p>
+  <div class="frame">
+    <nav class="sidebar">
+      <button>⚡ 今天</button>
+      <button>☰ 任务</button>
+      <button class="active">⚙ 规则</button>
+      <button>🖥 执行机</button>
+      <button>⚙ 设置</button>
+      <p class="note">本机中台 · 在线</p>
+    </nav>
+    <main>
+      <header class="page-head" style="margin-bottom:10px">
+        <div class="page-head-copy">
+          <button class="task-back-button" type="button">← 返回</button>
+          <h1>添加规则</h1>
+          <p>改动确认后保存到本机中台。</p>
+        </div>
+      </header>
+      <form class="rule-form">
+        <div class="rule-head-bar">
+          <label class="rule-name-field"><span>规则名称</span>
+            <input placeholder="一句话概括这条规则做什么" />
+          </label>
+          <span class="head-sep" aria-hidden="true"></span>
+          <label class="rule-trigger-field"><span>触发</span>
+            <select><option>事件触发</option><option selected>定时触发</option></select>
+          </label>
+        </div>
+        <section class="rule-group">
+          <h2>触发</h2>
+          <div class="rule-grid">
+            <label class="field span2"><span>时间表（cron）</span>
+              <input value="0 9 * * *" placeholder="cron，比如 0 9 * * *" />
+            </label>
+          </div>
+        </section>
+        <section class="rule-group">
+          <h2>执行</h2>
+          <div class="rule-grid">
+            <label class="field"><span>执行体</span>
+              <select><option selected>claude</option><option>codex</option></select>
+            </label>
+            <label class="field"><span>工作目录</span>
+              <input placeholder="Agent 在哪个目录干活" />
+            </label>
+            <label class="field"><span>并行数</span>
+              <input type="number" min="1" max="64" placeholder="默认 1" />
+            </label>
+          </div>
+        </section>
+        <details class="rule-advanced">
+          <summary><span class="chev">▶</span>高级<span class="filled" hidden>已填 0 项</span></summary>
+          <section class="rule-group">
+            <div class="rule-grid">
+              <label class="field span2"><span>提示词</span>
+                <textarea rows="3" placeholder="可选"></textarea>
+              </label>
+              <label class="field"><span>技能</span><input placeholder="可选" /></label>
+              <label class="field"><span>分组</span><input placeholder="可选，留空随规则名" /></label>
+              <label class="field"><span>收尾通知</span>
+                <select><option selected>默认（需要才说）</option><option>总是</option><option>需要才说（显式）</option><option>从不</option></select>
+              </label>
+              <label class="field"><span>输出事件来源</span><input placeholder="可选" /></label>
+              <label class="field span2"><span>输出事件类型</span>
+                <input placeholder="可选，空格或逗号分隔" />
+              </label>
+            </div>
+          </section>
+        </details>
+        <div class="rule-footer">
+          <button type="button" class="rule-cancel">取消</button>
+          <button type="submit" class="rule-submit">确定</button>
+        </div>
+      </form>
+    </main>
+  </div>
+</div>
+
+<div class="stage-toolbar">
+  <span class="label">原型预览 · 方案 A</span>
+  <button id="theme-toggle">切换深浅主题</button>
+  <button id="advanced-toggle">展开/收起高级（两个样例同步）</button>
+</div>
+<script>
+  document.getElementById("theme-toggle").addEventListener("click", () => {
+    const root = document.documentElement;
+    root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
+  });
+  document.getElementById("advanced-toggle").addEventListener("click", () => {
+    const anyOpen = [...document.querySelectorAll("details")].some((node) => node.open);
+    for (const node of document.querySelectorAll("details")) node.open = !anyOpen;
+  });
+</script>
+</body>
+</html>

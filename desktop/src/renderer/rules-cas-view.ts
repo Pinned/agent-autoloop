@@ -65,12 +65,23 @@ function previewText(rows: readonly RowKind[]): string {
   if (added) parts.push(`新增 ${added} 条`);
   if (changed) parts.push(`修改 ${changed} 条`);
   if (removed) parts.push(`删除 ${removed} 条`);
-  if (!parts.length) return `本次保存将提交的本机入口与当前一致（共 ${total} 条）。`;
-  if (total === 0 && removed) return `本次保存将提交 0 条本机入口：删除全部 ${removed} 条。`;
-  return `本次保存将提交 ${total} 条本机入口：${parts.join("、")}。`;
+  if (!parts.length) return `本次保存将提交的本机规则与当前一致（共 ${total} 条）。`;
+  if (total === 0 && removed) return `本次保存将提交 0 条本机规则：删除全部 ${removed} 条。`;
+  return `本次保存将提交 ${total} 条本机规则：${parts.join("、")}。`;
 }
 
-export function mountRulesCasView(controller: ReturnType<typeof createRendererRulesCas>): {
+/** The subpage navigation the view needs from its host: app.ts owns the page change. */
+export type RulesCasViewNav = {
+  /** Open the editor as the automation-entry pseudo page (subpage head with a back button). */
+  goEntry(): void;
+  /** Return to the rules list page; optional because a test harness may not navigate. */
+  backFromEntry?(): void;
+};
+
+export function mountRulesCasView(
+  controller: ReturnType<typeof createRendererRulesCas>,
+  nav: RulesCasViewNav = { goEntry: () => {} },
+): {
   root: HTMLElement;
   init(): void;
   update(): void;
@@ -117,41 +128,41 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
   const addButton = document.createElement("button");
   addButton.type = "button";
   addButton.className = "rules-add";
-  addButton.textContent = "＋ 添加入口";
+  addButton.textContent = "＋ 添加规则";
   addButton.addEventListener("click", () => openForm(null));
   addRow.append(addButton);
 
-  // The editor is an in-page panel, not a modal: it lives inside this view's own root so a page
-  // switch re-attaches it without rebuilding the form, and hiding it never strands focus in a
-  // removed backdrop. The list page and the editor swap by hidden, the same one-root contract
-  // the dispatch-task subpage already uses.
+  // The editor is an in-page subpage panel, not a modal: it lives inside this view's own root so a
+  // page switch re-attaches it without rebuilding the form, and hiding it never strands focus in a
+  // removed backdrop. Opening asks app.ts to render the automation-entry pseudo page, which swaps
+  // the page head (back button + subpage title); the list page and the editor swap by hidden, the
+  // same one-root contract the dispatch-task subpage already uses.
   const editor = document.createElement("section");
   editor.className = "panel rules-editor-panel";
   editor.hidden = true;
   const form = document.createElement("form");
-  form.className = "task-form";
-  const formTitle = document.createElement("h2");
-  formTitle.textContent = "入口";
-  form.append(formTitle);
-  function field(label: string, id: string, multiline = true) {
-    const wrap = document.createElement("label");
-    wrap.className = "setup-field";
-    const span = document.createElement("span");
-    span.textContent = label;
-    // Contract text can contain newlines; text inputs silently strip them even without an edit.
-    const input = multiline ? document.createElement("textarea") : document.createElement("input");
-    input.id = `rules-${id}`;
-    wrap.append(span, input);
-    form.append(wrap);
-    return input;
-  }
-  const nameInput = field("名称", "name");
-  // The trigger kind decides what the form asks for: an event entry lists types, a timed one
-  // names a cron. The two field sets swap by hidden, the same one-root language as the page swap.
+  form.className = "rule-form";
+  // One fused head bar carries the name and the trigger kind, the dispatch-task page's pattern:
+  // identity and routing read as one header instead of two full-width form rows.
+  const headBar = document.createElement("div");
+  headBar.className = "rule-head-bar";
+  const nameField = document.createElement("label");
+  nameField.className = "rule-name-field";
+  const nameLabel = document.createElement("span");
+  nameLabel.className = "rule-name-label";
+  nameLabel.textContent = "规则名称";
+  const nameInput = document.createElement("textarea");
+  nameInput.id = "rules-name";
+  nameInput.rows = 1;
+  nameInput.setAttribute("placeholder", "一句话概括这条规则做什么");
+  nameField.append(nameLabel, nameInput);
+  const headSep = document.createElement("span");
+  headSep.className = "rule-head-sep";
+  headSep.setAttribute("aria-hidden", "true");
   const triggerField = document.createElement("label");
-  triggerField.className = "setup-field";
+  triggerField.className = "rule-trigger-field";
   const triggerLabel = document.createElement("span");
-  triggerLabel.textContent = "触发方式";
+  triggerLabel.textContent = "触发";
   const triggerInput = document.createElement("select");
   triggerInput.id = "rules-trigger";
   for (const [value, text] of [
@@ -164,35 +175,93 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
     triggerInput.append(option);
   }
   triggerField.append(triggerLabel, triggerInput);
-  form.append(triggerField);
-  const typesInput = field("事件类型", "types");
+  headBar.append(nameField, headSep, triggerField);
+
+  function field(label: string, id: string, multiline = true) {
+    const wrap = document.createElement("label");
+    wrap.className = "rule-field";
+    const span = document.createElement("span");
+    span.textContent = label;
+    // Contract text can contain newlines; text inputs silently strip them even without an edit,
+    // so a text field is a textarea unless the contract itself is single-line (cron, parallel).
+    const input = multiline ? document.createElement("textarea") : document.createElement("input");
+    input.id = `rules-${id}`;
+    wrap.append(span, input);
+    return { wrap, input };
+  }
+
+  // Group: the trigger's own facts. The trigger kind decides which field the group asks for: an
+  // event rule lists types, a timed one names a cron. The two fields swap by hidden — both stay
+  // mounted so a switch back keeps the value — the same one-root language as the page swap.
+  const triggerGroup = document.createElement("section");
+  triggerGroup.className = "rule-group";
+  const triggerGroupTitle = document.createElement("h2");
+  triggerGroupTitle.textContent = "触发";
+  const triggerGrid = document.createElement("div");
+  triggerGrid.className = "rule-grid";
+  const { wrap: typesWrap, input: typesInput } = field("事件类型", "types");
+  typesWrap.className += " rule-span2";
   typesInput.setAttribute("placeholder", "空格或逗号分隔，可用 x.* 通配");
-  const cronInput = field("时间表", "cron", false);
+  const { wrap: cronWrap, input: cronInput } = field("时间表（cron）", "cron", false);
+  cronWrap.className += " rule-span2";
   cronInput.setAttribute("placeholder", "cron，比如 0 9 * * *");
+  triggerGrid.append(typesWrap, cronWrap);
+  triggerGroup.append(triggerGroupTitle, triggerGrid);
+
+  // Group: execution facts. The executor is a select of the agents the read offered, the same
+  // roster the settings page shows: a rule can only name an agent the hub actually has, so a typo
+  // is a missing option, never a bad save. The parallel number is a scheduling fact, so it lives
+  // beside the executor rather than behind the advanced fold.
+  const execGroup = document.createElement("section");
+  execGroup.className = "rule-group";
+  const execGroupTitle = document.createElement("h2");
+  execGroupTitle.textContent = "执行";
+  const execGrid = document.createElement("div");
+  execGrid.className = "rule-grid";
   const toField = document.createElement("label");
-  toField.className = "setup-field";
+  toField.className = "rule-field";
   const toLabel = document.createElement("span");
   toLabel.textContent = "执行体";
-  // A select of the agents the read offered, the same roster the settings page shows: an entry can
-  // only name an agent the hub actually has, so a typo is a missing option, never a bad save.
   const toInput = document.createElement("select");
   toInput.id = "rules-to";
   toField.append(toLabel, toInput);
-  form.append(toField);
-  const cwdInput = field("工作目录", "cwd");
-  const promptInput = field("提示词", "prompt", true);
-  promptInput.setAttribute("placeholder", "可选");
-  const skillInput = field("技能", "skill");
-  skillInput.setAttribute("placeholder", "可选");
-  const parallelInput = field("并行数", "parallel", false);
+  const { wrap: cwdWrap, input: cwdInput } = field("工作目录", "cwd");
+  const { wrap: parallelWrap, input: parallelInput } = field("并行数", "parallel", false);
   parallelInput.setAttribute("placeholder", "默认 1");
   parallelInput.setAttribute("type", "number");
   parallelInput.setAttribute("min", "1");
   parallelInput.setAttribute("max", "64");
-  const groupInput = field("分组", "group");
+  execGrid.append(toField, cwdWrap, parallelWrap);
+  execGroup.append(execGroupTitle, execGrid);
+
+  // The advanced group holds the optional facts. A native <details> owns the toggle, and every
+  // input inside stays mounted at all times — collapsed fields keep their values, and update()
+  // never rebuilds them, so the focus and the draft both survive a background notification.
+  const advanced = document.createElement("details");
+  advanced.className = "rule-advanced";
+  const advancedSummary = document.createElement("summary");
+  const advancedChev = document.createElement("span");
+  advancedChev.className = "rule-advanced-chev";
+  advancedChev.setAttribute("aria-hidden", "true");
+  advancedChev.textContent = "▶";
+  const advancedText = document.createElement("span");
+  advancedText.textContent = "高级";
+  const advancedFilled = document.createElement("span");
+  advancedFilled.className = "rule-advanced-filled";
+  advancedSummary.append(advancedChev, advancedText, advancedFilled);
+  const advancedGroup = document.createElement("section");
+  advancedGroup.className = "rule-group";
+  const advancedGrid = document.createElement("div");
+  advancedGrid.className = "rule-grid";
+  const { wrap: promptWrap, input: promptInput } = field("提示词", "prompt");
+  promptWrap.className += " rule-span2";
+  promptInput.setAttribute("placeholder", "可选");
+  const { wrap: skillWrap, input: skillInput } = field("技能", "skill");
+  skillInput.setAttribute("placeholder", "可选");
+  const { wrap: groupWrap, input: groupInput } = field("分组", "group");
   groupInput.setAttribute("placeholder", "可选，留空随规则名");
   const tellField = document.createElement("label");
-  tellField.className = "setup-field";
+  tellField.className = "rule-field";
   const tellLabel = document.createElement("span");
   tellLabel.textContent = "收尾通知";
   const tellInput = document.createElement("select");
@@ -209,46 +278,30 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
     tellInput.append(option);
   }
   tellField.append(tellLabel, tellInput);
-  form.append(tellField);
-  const emitsSourceInput = field("输出事件来源", "emits-source");
+  const { wrap: emitsSourceWrap, input: emitsSourceInput } = field("输出事件来源", "emits-source");
   emitsSourceInput.setAttribute("placeholder", "可选");
-  const emitsTypesInput = field("输出事件类型", "emits-types");
+  const { wrap: emitsTypesWrap, input: emitsTypesInput } = field("输出事件类型", "emits-types");
+  emitsTypesWrap.className += " rule-span2";
   emitsTypesInput.setAttribute("placeholder", "可选，空格或逗号分隔");
-  const fields = [
-    nameInput,
-    typesInput,
-    cronInput,
-    toInput,
-    cwdInput,
-    promptInput,
-    skillInput,
-    parallelInput,
-    groupInput,
-    tellInput,
-    emitsSourceInput,
-    emitsTypesInput,
-  ];
-  // Only the field set the chosen trigger asks for is visible; the other stays mounted (so its
-  // bound value survives a switch back) but asks nothing.
-  const syncTrigger = () => {
-    const timed = triggerInput.value === "cron";
-    typesInput.parentElement!.hidden = timed;
-    cronInput.parentElement!.hidden = !timed;
-  };
-  triggerInput.addEventListener("change", syncTrigger);
+  advancedGrid.append(promptWrap, skillWrap, groupWrap, tellField, emitsSourceWrap, emitsTypesWrap);
+  advancedGroup.append(advancedGrid);
+  advanced.append(advancedSummary, advancedGroup);
+
   const formError = document.createElement("p");
   formError.className = "setup-error";
   formError.hidden = true;
   const formActions = document.createElement("div");
-  formActions.className = "setup-actions";
+  formActions.className = "rule-footer";
   const formCancel = document.createElement("button");
   formCancel.type = "button";
+  formCancel.className = "rule-cancel";
   formCancel.textContent = "取消";
   const formSubmit = document.createElement("button");
   formSubmit.type = "submit";
+  formSubmit.className = "rule-submit";
   formSubmit.textContent = "确定";
-  formActions.append(formCancel, formSubmit);
-  form.append(formError, formActions);
+  formActions.append(formError, formCancel, formSubmit);
+  form.append(headBar, triggerGroup, execGroup, advanced, formActions);
   editor.append(form);
   // The list page and the editor subpage share one root; hidden is the whole switch, so the
   // app-level view is re-attached on return and the editor never rebuilds what the draft holds.
@@ -257,12 +310,12 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
   const emptyCard = document.createElement("div");
   emptyCard.className = "today-empty rules-empty";
   const emptyTitle = document.createElement("h3");
-  emptyTitle.textContent = "还没有入口";
+  emptyTitle.textContent = "还没有规则";
   const emptyLine = document.createElement("p");
-  emptyLine.textContent = "添加入口后，匹配的事件或到点的定时会交给执行体推进。";
+  emptyLine.textContent = "添加规则后，匹配的事件或到点的定时会交给执行体推进。";
   const emptyButton = document.createElement("button");
   emptyButton.type = "button";
-  emptyButton.textContent = "＋ 添加入口";
+  emptyButton.textContent = "＋ 添加规则";
   emptyButton.addEventListener("click", () => openForm(null));
   emptyCard.append(emptyTitle, emptyLine, emptyButton);
   emptyCard.hidden = true;
@@ -277,9 +330,18 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
     read(): Record<string, unknown>;
   } | null = null;
   let submitting = false;
+  // Only the field set the chosen trigger asks for is visible; the other stays mounted (so its
+  // bound value survives a switch back) but asks nothing.
+  const syncTrigger = () => {
+    const timed = triggerInput.value === "cron";
+    typesWrap.hidden = timed;
+    cronWrap.hidden = !timed;
+    triggerGroupTitle.textContent = timed ? "时间表" : "事件类型";
+  };
+  triggerInput.addEventListener("change", syncTrigger);
 
   function bindValue<T>(
-    input: (typeof fields)[number],
+    input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
     original: T,
     displayed: string,
     changed: (value: string) => T,
@@ -307,6 +369,8 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
     editing = null;
     const state = controller.getState();
     if (state.draft && !state.saving && !state.needsReview) controller.cancelEdit();
+    // The host owns the page change: back to the rules list page and its own head.
+    nav.backFromEntry?.();
   }
   function openEditor() {
     if (editor.hidden === false) return;
@@ -321,6 +385,7 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
     // no live flight's draft can be dropped — but the edit session itself always ends with the
     // page it belongs to, exactly like the dialog's close event used to end it.
     editing = null;
+    nav.backFromEntry?.();
   }
   function openForm(index: number | null) {
     if (controller.getState().saving) return;
@@ -332,7 +397,7 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
       editing = null;
       return;
     }
-    const text = (input: (typeof fields)[number], value: string | undefined) =>
+    const text = (input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string | undefined) =>
       bindValue<string | undefined>(input, value, value ?? "", (next) => next);
     const name = text(nameInput, source?.name);
     const timed = source?.cron !== undefined;
@@ -396,7 +461,15 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
       },
     };
     formError.hidden = true;
+    // Opening the form is a page change the host owns: the pseudo page renders the subpage head
+    // (back button + title) and calls openEditor(). The default nav is a no-op so a headless test
+    // harness keeps working; the app always passes the real one.
+    nav.goEntry();
     openEditor();
+    // The keyboard starts on the name, selected so typing replaces it — the dispatch page's
+    // first-field courtesy. The test fixture's elements have no focus API, so this is best-effort.
+    nameInput.focus?.();
+    nameInput.select?.();
   }
   saveButton.addEventListener("click", () => {
     if (!controller.getState().saving && !controller.getState().needsReview) controller.save();
@@ -429,7 +502,7 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
       }
       closeEditor();
     } catch (failure) {
-      formError.textContent = failure instanceof Error ? failure.message : "入口不合规";
+      formError.textContent = failure instanceof Error ? failure.message : "规则不合规";
       formError.hidden = false;
     } finally {
       submitting = false;
@@ -541,7 +614,7 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
     const entries = draft?.entries ?? baseline;
     const rows = draft ? alignRows(baseline, entries) : entries.map(() => "same" as const);
     status.textContent = state.loading
-      ? "正在读取任务入口。"
+      ? "正在读取规则。"
       : state.saving
         ? "正在保存……"
         : state.save.kind === "confirmed"
@@ -592,6 +665,22 @@ export function mountRulesCasView(controller: ReturnType<typeof createRendererRu
     // Refresh is visible only when the error path offers a re-read as the recovery.
     const needsRefresh = Boolean(state.loadError) || state.needsReview || state.save.kind === "failed";
     refreshButton.hidden = !needsRefresh;
+    // The advanced fold's badge states the optional facts that would be submitted: count only
+    // what a save would carry, not what the inputs merely display. An empty fold stays quiet —
+    // the calm state never advertises work that is not there.
+    if (editing) {
+      const filled = [promptInput, skillInput, groupInput, emitsSourceInput, emitsTypesInput].filter(
+        (input) => input.value.trim().length > 0,
+      ).length;
+      // tell is a select whose "default" carries no fact, so only an explicit choice counts.
+      const tellExplicit = tellInput.value !== "" ? 1 : 0;
+      const total = filled + tellExplicit;
+      advancedFilled.hidden = total === 0;
+      advancedFilled.textContent = total > 0 ? `已填 ${total} 项` : "";
+    } else {
+      advancedFilled.hidden = true;
+      advancedFilled.textContent = "";
+    }
     // The submit handler owns the editor while it saves: the revision bump from updateEntry must
     // not close the editor out from under the confirm that is still running.
     if (editing && !validForm() && !state.saving && !submitting) dismissEditor();
