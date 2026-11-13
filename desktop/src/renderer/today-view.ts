@@ -37,6 +37,22 @@ function dollars(cost: number): string {
   return `$${decimal}`;
 }
 
+function compactDollars(cost: number): string {
+  const full = dollars(cost);
+  if (full.replace(/\D/g, "").length <= 8) return full;
+  let divisor = cost >= 1e8 ? 1e8 : cost >= 1e4 ? 1e4 : 1;
+  let amount = cost / divisor;
+  // Promote a rounded 10000万 to 亿 rather than showing a misleading unit boundary.
+  if (divisor === 1e4 && Number(amount.toPrecision(8)) >= 1e4) {
+    divisor = 1e8;
+    amount = cost / divisor;
+  }
+  const decimals = Math.max(0, 8 - String(Math.trunc(amount)).length);
+  const rounded = Number(amount.toFixed(decimals));
+  const number = rounded === 0 || rounded >= 1e8 ? amount.toExponential(4).replace(/\.?0+e/, "e") : String(rounded);
+  return `$${number}${divisor === 1e8 ? "亿" : divisor === 1e4 ? "万" : ""}`;
+}
+
 /** A read-only snapshot: no invented answers, no per-task links, only asks and active runs. */
 export function mountTodayView(
   root: HTMLElement,
@@ -150,6 +166,7 @@ export function mountTodayView(
     content.replaceChildren();
     stats.hidden = state.kind !== "ready";
     for (const value of Object.values(values)) value.textContent = "—";
+    values.spendingToday.setAttribute("title", "");
     if (state.kind === "loading") {
       status.textContent = "正在读取今天数据。";
       return;
@@ -168,7 +185,9 @@ export function mountTodayView(
     values.running.textContent = String(snapshot.totals.running);
     values.doneToday.textContent = String(snapshot.totals.doneToday);
     const { rounds, cost, missingCost } = snapshot.spendingToday;
-    values.spendingToday.textContent = rounds && missingCost < rounds ? dollars(cost) : "—";
+    const reported = rounds > 0 && missingCost < rounds;
+    values.spendingToday.textContent = reported ? compactDollars(cost) : "—";
+    values.spendingToday.setAttribute("title", reported ? `${dollars(cost)} USD` : "");
     hints.spendingToday.textContent = !rounds
       ? "USD · 暂无用量"
       : missingCost === rounds

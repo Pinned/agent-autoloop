@@ -620,6 +620,11 @@ main {
   color: var(--text);
   overflow-wrap: anywhere;
 }
+#today-stat-spendingToday {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .today-stat-label {
   font-size: 11px;
   color: var(--muted);
