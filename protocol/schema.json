@@ -2,6 +2,36 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:agent-autoloop:protocol:v1",
   "$defs": {
+    "ruleSchedulingOptions": {
+      "type": "object",
+      "properties": {
+        "group": { "type": "string", "minLength": 1 },
+        "autoGroup": { "type": "boolean" },
+        "pauseOnAsk": { "type": "boolean" },
+        "parallel": { "type": "integer", "minimum": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["pauseOnAsk"], "properties": { "pauseOnAsk": { "const": true } } },
+          "then": { "properties": { "parallel": { "const": 1 } } }
+        }
+      ],
+      "description": "Optional rule scheduling fields; absolute auto-group paths and cross-rule parallel consistency are checked by parseRules.",
+      "additionalProperties": true
+    },
+    "hold": {
+      "type": "object",
+      "properties": {
+        "grp": { "type": "string" },
+        "rule": { "type": "string" },
+        "lane": { "type": "string" },
+        "run_id": { "type": "integer", "minimum": 1 },
+        "created_at": { "type": "string" },
+        "cards": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "uniqueItems": true }
+      },
+      "required": ["grp", "rule", "lane", "run_id", "created_at"],
+      "additionalProperties": false
+    },
     "protocolDescription": {
       "type": "object",
       "properties": {

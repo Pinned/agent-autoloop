@@ -139,7 +139,7 @@ function checkedRule(given: unknown): Entry {
   const rule = fields(
     given,
     "规则",
-    ["name", "when", "to", "cwd", "skill", "prompt", "group", "parallel", "tell", "emits"],
+    ["name", "when", "to", "cwd", "skill", "prompt", "group", "parallel", "autoGroup", "pauseOnAsk", "tell", "emits"],
     ["name", "when", "to", "cwd"],
   );
   const name = textOf(rule.name);
@@ -176,6 +176,11 @@ function checkedRule(given: unknown): Entry {
   }
   const parallel = numberOrUndefined(rule.parallel, `规则「${name}」的 parallel`);
   if (parallel !== undefined) entry.parallel = parallel;
+  for (const field of ["autoGroup", "pauseOnAsk"]) {
+    if (rule[field] === undefined) continue;
+    if (typeof rule[field] !== "boolean") throw new InputError(`规则「${name}」的 ${field} 要是 true 或 false`);
+    entry[field] = rule[field];
+  }
   if (rule.tell !== undefined && rule.tell !== "") {
     if (!TELLS.includes(rule.tell as string))
       throw new InputError(`规则「${name}」的 tell 只能是 always、needed、never`);

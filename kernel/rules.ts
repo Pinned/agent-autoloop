@@ -10,7 +10,14 @@ type EventFilter = { source: string; types: string[] };
 // `local: true` marks a cron rule the desktop's timed entries own, the way `source: "local"` marks
 // its event entries; the mark decides which slots an entry-list save replaces, never when it runs.
 type When = EventFilter | { cron: string; local?: true };
-type RuleOptions = { skill?: string; prompt?: string; parallel?: number; emits?: EventFilter };
+type RuleOptions = {
+  skill?: string;
+  prompt?: string;
+  parallel?: number;
+  emits?: EventFilter;
+  autoGroup?: boolean;
+  pauseOnAsk?: boolean;
+};
 /** Without parallel a rule's group runs one at a time; with it, each subject is its own thread, that many at once. */
 export type Rule = RuleOptions & { name: string; when: When; to: string; cwd: string; group: string; tell: Tell };
 /** A scheduled task that runs elsewhere (say, in the Claude app): the hub neither starts nor records it. */

@@ -18,6 +18,8 @@ Most of us use command-line agents like Claude Code or Codex by babysitting a te
 - **Connect a new agent in one line.** No SDK, no agent source code to fork. Any CLI tool that takes a prompt and prints a final reply can plug in.
 - **Quiet by default, cards when you need to decide.** Cards reach you on Feishu, DingTalk, WeCom, Slack, Discord, or desktop notifications. Use the CLI or local console to see progress.
 
+Opt into `autoGroup: true` to group rules by worker and absolute working directory; explicit `group` wins and legacy rules still default to their names. Optional `pauseOnAsk: true` requires group concurrency 1: asking exits the process but retains a factual thread hold until a successful answered continuation finishes. Closing a card, failure or cancellation does not release it. Owners can inspect `status` and explicitly `release-hold <origin-run> <reason>` after verification; running or uncertain executions prevent release. See the [protocol](docs/protocol.md#自动分组与待确认占用) for path and compatibility boundaries.
+
 ## Get started
 
 Works on macOS and Linux. You need Node 24, Git, curl, and at least one command-line agent already signed in; no GitHub account required. You can also hand the [installation guide](INSTALL.md) to your agent and let it install everything for you.

@@ -15,6 +15,8 @@ function sameEntry(left: DesktopRuleEntry, right: DesktopRuleEntry): boolean {
     left.skill !== right.skill ||
     left.parallel !== right.parallel ||
     left.group !== right.group ||
+    left.autoGroup !== right.autoGroup ||
+    left.pauseOnAsk !== right.pauseOnAsk ||
     left.tell !== right.tell ||
     left.cron !== right.cron ||
     (left.types?.length ?? 0) !== (right.types?.length ?? 0) ||
@@ -361,7 +363,33 @@ export function mountRulesCasView(
   contentHint.textContent = "非 command 执行体：任务说明和技能至少填写一项；command 执行体可以都留空。";
   contentGroup.append(contentHint);
   const noticeGroup = groupSection("完成通知", tellField);
-  const scheduleFold = fold("调度设置", parallelWrap, groupWrap);
+  function booleanSetting(title: string, id: string) {
+    const wrap = document.createElement("label");
+    wrap.className = "rule-field";
+    const label = document.createElement("span");
+    label.textContent = title;
+    const input = document.createElement("select");
+    input.id = id;
+    for (const [value, text] of [
+      ["", "未配置"],
+      ["true", "启用"],
+      ["false", "关闭"],
+    ]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = text;
+      input.append(option);
+    }
+    wrap.append(label, input);
+    return { wrap, input };
+  }
+  const autoGroup = booleanSetting("按接单电脑和目录自动分组", "rules-autoGroup");
+  const pauseOnAsk = booleanSetting("待确认时暂停同组其他事项", "rules-pauseOnAsk");
+  const groupHint = document.createElement("small");
+  groupHint.textContent =
+    "显式分组优先。自动分组需要接单电脑的绝对路径，不支持 ~/，不解析符号链接；待确认暂停只支持组并发 1。";
+  autoGroup.wrap.append(groupHint);
+  const scheduleFold = fold("调度设置", parallelWrap, groupWrap, autoGroup.wrap, pauseOnAsk.wrap);
   const schedule = scheduleFold.element;
   const followupFold = fold("后续事件", emitsSourceWrap, emitsTypesWrap);
   const followup = followupFold.element;
@@ -521,6 +549,12 @@ export function mountRulesCasView(
       (next) => (next.trim() ? Number(next) : undefined),
     );
     const group = text(groupInput, source?.group);
+    const booleanValue = (input: HTMLSelectElement, value: boolean | undefined) =>
+      bindValue<boolean | undefined>(input, value, value === undefined ? "" : String(value), (next) =>
+        next === "" ? undefined : next === "true",
+      );
+    const readAutoGroup = booleanValue(autoGroup.input, source ? source.autoGroup : true);
+    const readPauseOnAsk = booleanValue(pauseOnAsk.input, source?.pauseOnAsk);
     const tell = text(tellInput, source?.tell);
     const emitsSource = text(emitsSourceInput, source?.emits?.source);
     const emitsTypes = bindValue(
@@ -552,6 +586,8 @@ export function mountRulesCasView(
           skill: skill(),
           parallel: parallel(),
           group: group(),
+          autoGroup: readAutoGroup(),
+          pauseOnAsk: readPauseOnAsk(),
           tell: tell(),
           ...((outputSource?.trim() || outputTypes.length) && {
             emits: { source: outputSource, types: outputTypes },
@@ -560,7 +596,12 @@ export function mountRulesCasView(
       },
     };
     formError.hidden = true;
-    schedule.open = !source || source.parallel !== undefined || source.group !== undefined;
+    schedule.open =
+      !source ||
+      source.parallel !== undefined ||
+      source.group !== undefined ||
+      source.autoGroup !== undefined ||
+      source.pauseOnAsk !== undefined;
     followup.open = source?.emits !== undefined;
     formSubmit.textContent = index === null ? "保存规则" : "确认修改";
     footerHint.textContent =
@@ -692,6 +733,8 @@ export function mountRulesCasView(
     if (entry.skill) parts.push(`技能 ${entry.skill}`);
     if (entry.parallel !== undefined) parts.push(`并行 ${entry.parallel}`);
     if (entry.group !== undefined) parts.push(`分组 ${entry.group}`);
+    else if (entry.autoGroup) parts.push("按接单电脑和目录自动分组");
+    if (entry.pauseOnAsk) parts.push("待确认暂停同组");
     if (entry.tell !== undefined) parts.push(`通知 ${entry.tell}`);
     if (entry.emits) parts.push(`输出 ${entry.emits.source}: ${entry.emits.types.join("、")}`);
     meta.textContent = parts.join(" · ");
@@ -816,6 +859,8 @@ export function mountRulesCasView(
       skillInput,
       parallelInput,
       groupInput,
+      autoGroup.input,
+      pauseOnAsk.input,
       tellInput,
       emitsSourceInput,
       emitsTypesInput,

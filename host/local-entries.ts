@@ -59,7 +59,7 @@ export function createLocalEntriesReader(options: LocalEntriesReaderOptions) {
         to: rule.to,
         cwd: rule.cwd,
       };
-      for (const field of ["prompt", "skill", "parallel", "group", "tell", "emits"])
+      for (const field of ["prompt", "skill", "parallel", "group", "autoGroup", "pauseOnAsk", "tell", "emits"])
         if (rule[field] !== undefined)
           entry[field] = field === "emits" ? JSON.parse(JSON.stringify(rule[field])) : rule[field];
       return entry;
@@ -73,7 +73,23 @@ export function checkedLocalEntry(given: unknown): Entry {
   if (!isObject(given)) throw new InputError("每个入口要是一个对象");
   const entry = given;
   for (const name of Object.keys(entry))
-    if (!["name", "types", "cron", "to", "cwd", "prompt", "skill", "parallel", "group", "tell", "emits"].includes(name))
+    if (
+      ![
+        "name",
+        "types",
+        "cron",
+        "to",
+        "cwd",
+        "prompt",
+        "skill",
+        "parallel",
+        "group",
+        "autoGroup",
+        "pauseOnAsk",
+        "tell",
+        "emits",
+      ].includes(name)
+    )
       throw new InputError(`入口有不认识的字段 ${name}`);
   const text = (name: string, optional = false) => {
     const value = entry[name];
@@ -100,6 +116,9 @@ export function checkedLocalEntry(given: unknown): Entry {
     checkedTypes = types;
   } else if (types !== undefined) throw new InputError(`入口「${name}」的 types 和 cron 只能选一个`);
   else if (parseCron(cron) === null) throw new InputError(`入口「${name}」的 cron 不是有效的写法`);
+  for (const field of ["autoGroup", "pauseOnAsk"])
+    if (entry[field] !== undefined && typeof entry[field] !== "boolean")
+      throw new InputError(`入口的 ${field} 要是 true 或 false`);
   const parallel = entry.parallel;
   if (parallel !== undefined && (!Number.isInteger(parallel) || (parallel as number) <= 0))
     throw new InputError(`入口「${name}」的 parallel 要是正整数`);
@@ -129,6 +148,8 @@ export function checkedLocalEntry(given: unknown): Entry {
     to: text("to")!,
     cwd: text("cwd")!,
     ...(text("group", true) && { group: text("group", true) }),
+    ...(entry.autoGroup !== undefined && { autoGroup: entry.autoGroup }),
+    ...(entry.pauseOnAsk !== undefined && { pauseOnAsk: entry.pauseOnAsk }),
     ...(tell !== undefined && { tell }),
     ...(emits !== undefined && { emits }),
     ...(text("prompt", true) && { prompt: text("prompt", true) }),
@@ -187,7 +208,7 @@ export function writeLocalEntriesWith(entries: Entry[], io: LocalEntriesWriteIO)
       to: entry.to,
       cwd: entry.cwd,
     };
-    for (const field of ["prompt", "skill", "parallel", "group", "tell", "emits"])
+    for (const field of ["prompt", "skill", "parallel", "group", "autoGroup", "pauseOnAsk", "tell", "emits"])
       if (entry[field] !== undefined) rule[field] = entry[field];
     return rule;
   });

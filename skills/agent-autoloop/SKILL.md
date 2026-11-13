@@ -25,6 +25,8 @@ description: 配置 Agent 自动化中台：加规则、接新的事件插件、
 ```
 
 - 同一个对象的事件要分开处理、互不等待，就写 `parallel`。
+- `autoGroup: true` 按接单电脑和绝对目录自动分组，显式 group 优先；旧规则缺省仍是规则名。自动模式不能用 ~/，不解析符号链接，路径别名用显式 group。
+- `pauseOnAsk: true` 在提问退出进程后保留事项占用，第一版组并发只能是 1，同组 parallel 声明必须一致。回答续办 done 且关联 ask 收尾后才释放，失败、取消、失联、关卡片和规则变更不放行。status 列出占用；本人核实后可 release-hold <占用轮次> <原因>，运行中或状态不确定时拒绝。
 - 默认的先问清单是 `askFirst`，用户说什么事必须先问他，就改这里。
 - 用户在别的地方定时跑的任务（Claude、Codex 应用里），写进 `elsewhere`，只在 `agent-autoloop status` 里列出来；它们要找用户时运行 `agent-autoloop tell <编号> --task <任务名>`，内容从标准输入传。
 

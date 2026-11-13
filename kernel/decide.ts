@@ -99,6 +99,31 @@ function assignQueued(draft: Draft, run: Row) {
   put(draft, "runs", run.id, { agent: rule.to, rules_version: config.version, ...session });
 }
 const threadOf = (run: Row) => ({ rule: run.rule, lane: run.lane, grp: run.grp });
+const sameThread = (a: Row, b: Row) => a.rule === b.rule && a.lane === b.lane;
+const threadAsks = (draft: Draft, thread: Row) =>
+  rows(draft.view, "cards", { rule: thread.rule, lane: thread.lane, kind: "ask", state: ["open", "decided"] });
+const holdsOf = (draft: Draft) => rows(draft.view, "holds");
+function canResumeHold(draft: Draft, run: Row, hold: Row) {
+  if (!sameThread(run, hold)) return false;
+  const events = eventsOf(draft.view, run.id).map((event) => event.id);
+  return threadAsks(draft, hold).some((card) => events.includes(card.answer_event));
+}
+function releaseHold(draft: Draft, id: number, reason: unknown) {
+  const hold = holdsOf(draft).find((item) => item.run_id === id);
+  if (!hold) throw new NotFound("没有这项占用");
+  if (typeof reason !== "string" || !reason.trim() || [...reason].length > 1000)
+    throw new InputError("请说明释放原因，最多 1000 字");
+  if (rows(draft.view, "runs", { rule: hold.rule, lane: hold.lane, state: ["claimed", "unknown"] }).length)
+    throw new Conflict("事项还在运行或执行状态不确定，不能释放占用");
+  set(draft, "holds", hold.grp, null);
+  notify(draft, `hold:${id}:released:${draft.seq}`, "本人已释放事项占用", reason.trim(), {
+    ...threadOf(hold),
+    run: id,
+    fyi: true,
+    once: true,
+  });
+  return { ok: true };
+}
 const hopsOf = (draft: Draft, run: Row) => Math.max(0, ...eventsOf(draft.view, run.id).map((event) => event.hops ?? 0));
 
 function closeCard(draft: Draft, card: Row, result: string, by: string | null = null) {
@@ -133,14 +158,17 @@ const notify = (draft: Draft, key: string, title: string, text: string, extra: R
   createCard(draft, { key, kind: "notice", title, text, ...extra });
 
 /** A queued run of this rule and subject takes the event, so what comes in while it waits is handled together. */
-function enqueue(draft: Draft, rule: Rule, event: number, subject: string, resume?: string | null) {
-  const lane = rule.parallel ? subject : "";
+function enqueue(draft: Draft, rule: Rule, event: number, subject: string, resume?: string | null, thread?: Row) {
+  const hold = holdsOf(draft).find((item) => item.rule === rule.name && item.lane === subject);
+  const lane = thread?.lane ?? hold?.lane ?? (rule.parallel ? subject : "");
+  const group = thread?.grp ?? hold?.grp ?? rule.group;
   const rulesVersion = draft.view.get("config", "rules")!.version;
   const stamps = { not_before: draft.at, created_at: draft.at, rules_version: rulesVersion };
   const isSameQueued = (run: Row) => run.rule === rule.name && run.lane === lane && run.state === "queued";
   const run =
     rows(draft.view, "runs", { rule: rule.name, lane, state: "queued" }).find(isSameQueued) ??
-    add(draft, "runs", { rule: rule.name, agent: rule.to, grp: rule.group, lane, state: "queued", ...stamps });
+    add(draft, "runs", { rule: rule.name, agent: rule.to, grp: group, lane, state: "queued", ...stamps });
+  if (thread || hold) put(draft, "runs", run.id, { grp: group });
   put(draft, "run_events", `${run.id}:${event}`, { run_id: run.id, event_id: event });
   if (resume) put(draft, "runs", run.id, { resume });
 }
@@ -212,7 +240,11 @@ function sweep(draft: Draft) {
       for (const run of rows(draft.view, "runs", { state: "claimed" }).filter(inDoubt)) {
         put(draft, "runs", run.id, { state: "unknown" });
         const agent = configuration(draft.view, run.rules_version).agents[run.agent].name;
-        const words = `交给 ${agent} 后超过 5 分钟没有回音，不确定做没做完；后续新任务照常处理。`;
+        const protectedRun =
+          configuration(draft.view, run.rules_version).rules.find((rule) => rule.name === run.rule)?.pauseOnAsk ||
+          holdsOf(draft).some((hold) => sameThread(hold, run));
+        const next = protectedRun ? "同组占用继续保留，不能猜进程已经退出。" : "后续新任务照常处理。";
+        const words = `交给 ${agent} 后超过 5 分钟没有回音，不确定做没做完；${next}`;
         notify(draft, `run:${run.id}:unknown`, run.rule, words, threadOf(run));
       }
     }
@@ -235,14 +267,29 @@ function claimNext(draft: Draft, worker: string, claim: string) {
   const agents = agentsOf(draft.view, worker);
   const runs = rows(draft.view, "runs", { state: ["queued", "claimed"] });
   const claimed = runs.filter((run) => run.state === "claimed");
+  const uncertain = rows(draft.view, "runs", { state: "unknown" }).filter(
+    (run) =>
+      configuration(draft.view, run.rules_version).rules.find((rule) => rule.name === run.rule)?.pauseOnAsk ||
+      holdsOf(draft).some((hold) => sameThread(hold, run)),
+  );
+  const occupied = [...claimed, ...uncertain];
   const groupLimit = (group: string) => draft.rules.rules.find((rule) => rule.group === group)?.parallel ?? 1;
+  const holds = holdsOf(draft);
+  const heldByOther = (run: Row) =>
+    holds.some((hold) => {
+      const currentGroup = ruleNamed(draft, hold.rule)?.group;
+      const shares =
+        run.grp === hold.grp || run.rule === hold.rule || ruleNamed(draft, run.rule)?.group === currentGroup;
+      return shares && !canResumeHold(draft, run, hold);
+    });
   const claimable = (run: Row) =>
     run.state === "queued" &&
+    !heldByOther(run) &&
     agents.includes(ruleNamed(draft, run.rule)?.to ?? "") &&
     Date.parse(run.not_before) <= draft.now &&
     ruleNamed(draft, run.rule) &&
-    !claimed.some((other) => other.grp === run.grp && other.lane === run.lane) &&
-    claimed.filter((other) => other.grp === run.grp).length < groupLimit(run.grp);
+    !occupied.some((other) => other.grp === run.grp && other.lane === run.lane) &&
+    occupied.filter((other) => other.grp === run.grp).length < groupLimit(run.grp);
   // The same claim again means the answer got lost: it gets back the run it already has.
   const held = claimed.find((run) => run.claim === claim && workerOf(draft.view, run) === worker);
   const run = held ?? runs.find(claimable);
@@ -316,8 +363,11 @@ function applyReceipt(draft: Draft, run: Row, result: Result) {
   closeOpen(draft, (key) => key === `run:${id}:unknown`, "结果回来了");
   const eventIds = eventsOf(draft.view, id).map((event) => event.id);
   const isAnswered = (card: Row) => card.state === "decided" && eventIds.includes(card.answer_event);
-  for (const card of rows(draft.view, "cards", { answer_event: eventIds, state: "decided" }).filter(isAnswered)) {
-    put(draft, "cards", card.id, { state: "done", result: summary, closed_at: draft.at, version: card.version + 1 });
+  const hold = holdsOf(draft).find((item) => sameThread(item, run));
+  const answered = rows(draft.view, "cards", { answer_event: eventIds, state: "decided" }).filter(isAnswered);
+  for (const card of answered) {
+    if (!hold || result.outcome === "done")
+      put(draft, "cards", card.id, { state: "done", result: summary, closed_at: draft.at, version: card.version + 1 });
   }
   for (const item of result.resolve ?? []) {
     const card = openInScope(draft.view, run).find((card) => card.id === item.card);
@@ -325,6 +375,27 @@ function applyReceipt(draft: Draft, run: Row, result: Result) {
     else rejected.push({ card: item.card, reason: "不在本轮核对范围" });
   }
   for (const ask of result.ask ?? []) cardFromReceipt(draft, run, "ask", ask);
+  const claimedRule = configuration(draft.view, run.rules_version).rules.find((item) => item.name === run.rule);
+  if (claimedRule?.pauseOnAsk && threadAsks(draft, run).some((card) => card.state === "open")) {
+    if (!draft.view.get("holds", run.grp))
+      put(draft, "holds", run.grp, {
+        ...threadOf(run),
+        run_id: run.id,
+        created_at: draft.at,
+        cards: threadAsks(draft, run).map((card) => card.id),
+      });
+  }
+  if (hold) {
+    const pending = [...new Set([...(hold.cards ?? []), ...threadAsks(draft, hold).map((card) => card.id)])];
+    const unfinished = pending.filter((cardId) => {
+      const card = draft.view.get("cards", cardId)!;
+      return (
+        card.state !== "done" && !(result.outcome === "done" && card.state === "closed" && card.by === `第 ${id} 轮`)
+      );
+    });
+    if (result.outcome === "done" && answered.length && !unfinished.length) set(draft, "holds", hold.grp, null);
+    else put(draft, "holds", hold.grp, { cards: unfinished });
+  }
   for (const notice of result.notice ?? []) cardFromReceipt(draft, run, "notice", notice);
   if (rule?.tell === "always" && result.outcome === "done") {
     const once = { fyi: true, once: true, ...threadOf(run), source: sourceOf(draft.view, id), run: id };
@@ -393,7 +464,15 @@ function answer(draft: Draft, id: number, given: Row) {
   const eventId = recordEvent(draft, card.source ?? SCHEDULE, event, rule ? [rule.name] : []);
   const decision = { choice: given.choice ?? null, answer: text, by: given.by ?? null, decided_at: draft.at };
   put(draft, "cards", id, { state: "decided", ...decision, answer_event: eventId, version: card.version + 1 });
-  if (rule) enqueue(draft, rule, eventId, card.lane, card.agent === rule.to ? card.session : null);
+  if (rule)
+    enqueue(
+      draft,
+      rule,
+      eventId,
+      card.lane,
+      card.agent === rule.to ? card.session : null,
+      holdsOf(draft).find((hold) => sameThread(hold, card)),
+    );
   return { changed: true, state: "decided" };
 }
 
@@ -564,6 +643,7 @@ const HANDLERS: Record<string, (draft: Draft, ...args: any[]) => unknown> = {
     put(draft, "runs", id, { session: session ?? run.session, link: link ?? run.link, seen_at: draft.at });
   },
   finish,
+  releaseHold,
   cancel(draft, id) {
     const run = draft.view.get("runs", id);
     if (!run) throw new NotFound("没有这一轮");
