@@ -58,7 +58,10 @@ function markCurrent() {
     if (button.dataset.page === active) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   }
-  newTaskButton.classList.toggle("active", pageOwnsMain() && currentPage === "dispatch-task");
+  const dispatchActive = pageOwnsMain() && currentPage === "dispatch-task";
+  newTaskButton.classList.toggle("active", dispatchActive);
+  if (dispatchActive) newTaskButton.setAttribute("aria-current", "page");
+  else newTaskButton.removeAttribute("aria-current");
 }
 let navigationDisabled = false;
 // Which shell the window may show. The launch record decides; the first frame is "checking", which
