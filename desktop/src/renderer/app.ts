@@ -325,8 +325,13 @@ const rules = createRendererRulesCas(
   },
 );
 // Opening a form is a real page change (the automation-entry pseudo page renders the subpage head
-// with the back button); leaving returns to the list. The view owns only the panel swap.
-const rulesPage = mountRulesCasView(rules, { goEntry: openEntryEditor, backFromEntry: leaveEntryEditor });
+// with the back button); leaving returns to the list. The view owns only the panel swap. The
+// folder picker rides the same nav bundle: the sandboxed page cannot reach the filesystem.
+const rulesPage = mountRulesCasView(rules, {
+  goEntry: openEntryEditor,
+  backFromEntry: leaveEntryEditor,
+  pickWorkingDir: () => window.desktop.pickWorkingDir(),
+});
 // The tasks page is app-level too: page switches only re-attach the list and re-read page one.
 const tasks = createRendererTasks(window.desktop, () => {
   if (currentPage === "tasks") tasksPage?.update();

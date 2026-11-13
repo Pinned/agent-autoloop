@@ -58,6 +58,18 @@ test("the form groups its fields; optional facts collapse behind a details eleme
   assert.match(view, /rule-advanced/);
 });
 
+test("the working directory is a read-only field written by the picker button only", () => {
+  // The renderer is sandboxed (connect-src 'none'), so the folder picker is a main-process door:
+  // the field itself stays read-only text — no free-typed path, no paste — and the only way in
+  // is the "选择…" button next to it, which calls the bridge and fills what the OS dialog chose.
+  assert.match(view, /pickWorkingDir|pickCwd/);
+  assert.match(view, /rules-cwd-pick|cwdPick/);
+  // The input is created read-only, not made read-only later by a state push that could forget.
+  assert.match(view, /cwdInput\.setAttribute\("readonly"/);
+  // The picker result fills the same field the save reads; a cancelled dialog changes nothing.
+  assert.match(view, /cwdInput\.value = /);
+});
+
 test("app.ts drives the rule editor as a pseudo subpage with a way back", () => {
   // The pseudo page id and the back button follow the dispatch-task pattern: a fixed id, an
   // open() call on entry, and a return to the rules page the user came from.

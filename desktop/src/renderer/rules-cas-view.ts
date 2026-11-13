@@ -76,6 +76,12 @@ export type RulesCasViewNav = {
   goEntry(): void;
   /** Return to the rules list page; optional because a test harness may not navigate. */
   backFromEntry?(): void;
+  /**
+   * Open the OS folder dialog for the working directory; resolves to the chosen folder path or
+   * null when the owner cancelled. The sandboxed page cannot reach the filesystem, so the host
+   * owns the door. Optional so a headless harness can omit it.
+   */
+  pickWorkingDir?(): Promise<string | null>;
 };
 
 export function mountRulesCasView(
@@ -226,6 +232,39 @@ export function mountRulesCasView(
   toInput.id = "rules-to";
   toField.append(toLabel, toInput);
   const { wrap: cwdWrap, input: cwdInput } = field("工作目录", "cwd");
+  // The working directory is picked, never typed: the field is read-only and the OS folder
+  // dialog (a main-process door) is the only way in. A path chosen with the keyboard was a
+  // typo the hub only refused at save time; the dialog answers that question before the form.
+  cwdInput.setAttribute("readonly", "readonly");
+  const cwdPickRow = document.createElement("span");
+  cwdPickRow.className = "rule-cwd-picker";
+  const cwdPickButton = document.createElement("button");
+  cwdPickButton.type = "button";
+  cwdPickButton.className = "rule-cwd-pick";
+  cwdPickButton.textContent = "选择…";
+  // One dialog at a time: the button is disabled while a save is in flight, the same lock the
+  // other list actions hold; a cancelled dialog changes nothing.
+  let cwdPicking = false;
+  cwdPickButton.addEventListener("click", () => {
+    const state = controller.getState();
+    if (cwdPicking || state.saving || !editing) return;
+    const door = nav.pickWorkingDir;
+    if (!door) return;
+    cwdPicking = true;
+    cwdPickButton.disabled = true;
+    door()
+      .then((chosen) => {
+        // The edit session may have ended while the OS dialog was open; a late answer is dropped.
+        if (chosen !== null && editing) cwdInput.value = chosen;
+      })
+      .catch(() => {})
+      .finally(() => {
+        cwdPicking = false;
+        update();
+      });
+  });
+  cwdPickRow.append(cwdPickButton);
+  cwdWrap.append(cwdPickRow);
   const { wrap: parallelWrap, input: parallelInput } = field("并行数", "parallel", false);
   parallelInput.setAttribute("placeholder", "默认 1");
   parallelInput.setAttribute("type", "number");
@@ -466,6 +505,9 @@ export function mountRulesCasView(
     // harness keeps working; the app always passes the real one.
     nav.goEntry();
     openEditor();
+    // The edit session exists only now: the doors that lock without one (the picker button)
+    // re-derive their state, since no controller change follows this assignment to notify them.
+    update();
     // The keyboard starts on the name, selected so typing replaces it — the dispatch page's
     // first-field courtesy. The test fixture's elements have no focus API, so this is best-effort.
     nameInput.focus?.();
@@ -665,6 +707,9 @@ export function mountRulesCasView(
     // Refresh is visible only when the error path offers a re-read as the recovery.
     const needsRefresh = Boolean(state.loadError) || state.needsReview || state.save.kind === "failed";
     refreshButton.hidden = !needsRefresh;
+    // The picker button locks with the editor's other doors: no OS dialog over a save in flight
+    // and no dialog without an edit session. cwdPicking covers the dialog's own open span.
+    cwdPickButton.disabled = cwdPicking || state.saving || !editing;
     // The advanced fold's badge states the optional facts that would be submitted: count only
     // what a save would carry, not what the inputs merely display. An empty fold stays quiet —
     // the calm state never advertises work that is not there.
