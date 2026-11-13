@@ -1,3 +1,4 @@
+// Agent editing must be a subpage, never an inline disclosure; updates must retain its input nodes.
 // The settings page shows only the groups this machine can actually change. A pure worker does
 // not own the hub's sources or notification channels: offering those tabs would promise a save
 // the hub refuses. The row has to follow the role while the page stays mounted, because the
@@ -369,6 +370,32 @@ test("removing a row is an explicit act inside the form, and saves the section w
     await flush();
   });
   assert.deepEqual(r.puts[0].value, []);
+});
+
+test("Agent edit and add use a subpage and keep the same inputs during updates", async () => {
+  const f = fixture(() => "hub-worker", loadedBridge());
+  await withDocumentAcross(async () => {
+    f.view.init();
+    await flush();
+  });
+  click(find(f.root, "编辑")!);
+  const page = all(f.root).find((node) => node.className === "settings-agent-subpage");
+  assert.ok(page);
+  assert.equal(
+    all(page).some((node) => node.tagName === "details"),
+    false,
+  );
+  assert.ok(find(page, "← 返回"));
+  const name = byId(f.root, "settings-agents-0-name")!;
+  type(name, "尚未保存");
+  refresh(f.view);
+  assert.equal(byId(f.root, "settings-agents-0-name"), name);
+  assert.equal(name.value, "尚未保存");
+  click(find(page, "← 返回")!);
+  assert.equal(byId(f.root, "settings-agents-0-name"), undefined);
+  assert.equal(f.tabs.children.find((node) => node.className.includes("active"))!.dataset.tab, "agents");
+  click(find(f.root, "添加一项")!);
+  assert.ok(all(f.root).find((node) => node.className === "settings-agent-subpage"));
 });
 
 test("an invalid row is named in the form, never sent", async () => {
