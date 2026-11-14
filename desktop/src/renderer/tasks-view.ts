@@ -1,6 +1,8 @@
 import { DESKTOP_TASKS_MESSAGES, DESKTOP_TASKS_STATUS_MESSAGES } from "../../../host/desktop-tasks-contract.ts";
 import type { createRendererTasks } from "./tasks-controller.ts";
-import { FEEDBACK_KINDS, RUN_STATES, type RunItem } from "../../../host/desktop-task-query-contract.ts";
+import { FEEDBACK_KINDS, RUN_STATES } from "../../../host/desktop-task-query-contract.ts";
+import type { TaskHistoryResponse } from "../../../host/desktop-task-history-contract.ts";
+type DisplayRun = Extract<TaskHistoryResponse<"list">, { ok: true }>["data"]["items"][number];
 
 /**
  * The tasks page: the hub's real run history, newest first, one page at a time. The search box and
@@ -419,7 +421,7 @@ export function mountTasksView(
     return `${time.getFullYear()}-${pad(time.getMonth() + 1)}-${pad(time.getDate())} ${pad(time.getHours())}:${pad(time.getMinutes())}`;
   }
 
-  function runNode(run: RunItem) {
+  function runNode(run: DisplayRun) {
     const item = document.createElement("li");
     item.className = "run-item";
     const top = document.createElement("button");
@@ -430,11 +432,12 @@ export function mountTasksView(
     badge.className = `run-state ${run.state}`;
     badge.textContent = DESKTOP_TASKS_STATUS_MESSAGES[run.state];
     const name = document.createElement("strong");
-    name.textContent = run.rule;
+    name.className = "run-title";
+    name.textContent = run.preview?.title || "未记录任务标题";
     const to = document.createElement("span");
     to.className = "entry-to";
-    to.textContent = `→ ${run.agent}`;
-    top.append(badge, name, to);
+    to.textContent = `${run.rule} → ${run.agent}`;
+    top.append(name, badge);
     top.addEventListener("click", () => {
       returnTarget = top;
       controller.openDetail(run.id);
@@ -446,10 +449,34 @@ export function mountTasksView(
     const created = when(run.createdAt);
     if (created) parts.push(created);
     if (run.attempts > 1) parts.push(`第 ${run.attempts} 次尝试`);
-    if (run.stopping) parts.push("正在停止");
-    if (run.summary) parts.push(run.summary);
     meta.textContent = parts.join(" · ");
-    item.append(top, meta);
+    const description = document.createElement("p");
+    description.className = "run-task-detail";
+    description.textContent = (run.preview?.detail || "未记录任务详情").replace(/\s+/g, " ");
+    const result = document.createElement("div");
+    result.className = "run-result";
+    textLine(
+      result,
+      `执行结果：${run.summary || (run.stopping ? "正在停止" : DESKTOP_TASKS_STATUS_MESSAGES[run.state])}`,
+    );
+    if (run.error) textLine(result, `失败原因：${run.error}`);
+    if (run.truncated || run.preview?.truncated) textLine(result, "部分文字已被中台截断，请进入详情核对已记录内容。");
+    item.append(top, description, result);
+    for (const card of run.preview?.decisions.items ?? []) {
+      const decision = document.createElement("section");
+      decision.className = "run-decision";
+      const heading = document.createElement("strong");
+      heading.textContent = `待你决策：${card.title}`;
+      decision.append(heading);
+      textLine(decision, card.text);
+      card.options.forEach((option, index) => textLine(decision, `${index + 1}. ${option}`));
+      if (card.recommend !== null) textLine(decision, `建议选项：${card.recommend + 1}`);
+      if (card.truncated) textLine(decision, "部分决策文字已被中台截断。");
+      item.append(decision);
+    }
+    if (run.preview?.decisions.hasMore) textLine(item, "还有待决策内容，请进入详情查看并回答。");
+    meta.append(to);
+    item.append(meta);
     return item;
   }
 

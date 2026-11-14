@@ -1,5 +1,6 @@
 // Guards against post-LIMIT filtering, cross-event matches, numeric link cursors, card duplicates,
 // guessed thread identity, oversized/raw DTOs, hostile descriptors, skipped budget rows and writes.
+// List previews must keep event titles separate from results and exclude answered or unrelated decisions.
 // All fixtures use empty/evolve with SQLite :memory:; no runtime, services, filesystem or network.
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -65,6 +66,83 @@ function fixture(entries: [Table, Row][]): View {
 }
 const link = (run_id: number, event_id: number): [Table, Row] => ["run_events", { run_id, event_id }];
 const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+
+test("list previews separate latest trigger text from results and show only this run's open asks", () => {
+  const view = fixture([
+    ["runs", run(7, { summary: "执行结果" })],
+    ["events", event(1, { summary: "旧任务" })],
+    ["events", event(2, { summary: "任务标题", detail: "任务详情" })],
+    link(7, 1),
+    link(7, 2),
+    ["cards", card(10, { run_id: 7, title: "待决定" })],
+    ["cards", card(11, { run_id: 7, state: "decided" })],
+    ["cards", card(12, { run_id: 8 })],
+    ["cards", card(13, { run_id: 7, kind: "notice" })],
+  ]);
+  try {
+    const item = listRuns(view).items[0] as any;
+    assert.equal(item.summary, "执行结果");
+    assert.equal(item.preview.title, "任务标题");
+    assert.equal(item.preview.detail, "任务详情");
+    assert.deepEqual(
+      item.preview.decisions.items.map((x: any) => x.id),
+      [10],
+    );
+    assert.equal(item.preview.decisions.hasMore, false);
+  } finally {
+    view.db.close();
+  }
+});
+
+test("list decision preview is bounded and reports omitted decisions and projection truncation", () => {
+  const view = fixture([
+    ["runs", run(7)],
+    ...Array.from({ length: 5 }, (_, i): [Table, Row] => [
+      "cards",
+      card(20 + i, { run_id: 7, text: "界".repeat(2001) }),
+    ]),
+  ]);
+  try {
+    const item = listRuns(view).items[0];
+    assert.equal(item.preview!.decisions.items.length, 3);
+    assert.equal(item.preview!.decisions.hasMore, true);
+    assert.ok(item.preview!.decisions.items.every((x) => x.truncated && [...x.text].length === 2000));
+    const dto = { items: [item], hasMore: false, nextBefore: null };
+    assert.throws(() =>
+      parseRunList({
+        ...dto,
+        items: [
+          {
+            ...item,
+            preview: {
+              ...item.preview,
+              decisions: {
+                ...item.preview!.decisions,
+                items: [{ ...item.preview!.decisions.items[0], state: "decided" }],
+              },
+            },
+          },
+        ],
+      }),
+    );
+    assert.throws(() => parseRunList({ ...dto, items: [{ ...item, preview: { ...item.preview, unexpected: true } }] }));
+    assert.throws(() =>
+      parseRunList({
+        ...dto,
+        items: [
+          {
+            ...item,
+            get preview() {
+              throw new Error("getter must not execute");
+            },
+          },
+        ],
+      }),
+    );
+  } finally {
+    view.db.close();
+  }
+});
 
 test("empty committed view returns bounded empty pages and missing detail", () => {
   const view = empty();

@@ -19,6 +19,16 @@ export type RunItem = {
   stopping: boolean;
   usage: Usage | null;
   truncated: boolean;
+  preview?: {
+    title: string;
+    detail: string;
+    truncated: boolean;
+    decisions: {
+      items: readonly (Omit<CardItem, "options"> & { options: readonly string[] })[];
+      hasMore: boolean;
+      nextCursor: string | null;
+    };
+  };
 };
 export type EventItem = {
   id: number;
@@ -245,8 +255,22 @@ export function parseRunItem(value: unknown): RunItem {
     "stopping",
     "usage",
     "truncated",
+    ...(value !== null && typeof value === "object" && Object.hasOwn(value, "preview") ? ["preview"] : []),
   ]);
+  let preview: RunItem["preview"];
+  if (Object.hasOwn(item, "preview")) {
+    const data = record(item.preview, ["title", "detail", "truncated", "decisions"]);
+    const decisions = parseRunCards(data.decisions, runId(item.id));
+    if (decisions.items.some((card) => card.kind !== "ask" || card.state !== "open")) invalid();
+    preview = {
+      title: text(data.title, 500),
+      detail: text(data.detail, 2000),
+      truncated: boolean(data.truncated),
+      decisions,
+    };
+  }
   return {
+    ...(preview ? { preview } : {}),
     id: runId(item.id),
     rule: text(item.rule, 200),
     agent: text(item.agent, 200),

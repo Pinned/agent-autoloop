@@ -1,5 +1,6 @@
 // Prevent lost list position/drafts, fabricated execution messages, duplicate loading, cross-run replies and unsafe writes.
 // Fake bridge and DOM only; no Electron, files, fetch, config or runtime.
+// List rows must not replace task titles with routing or hide the pending decision behind a detail click.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createRendererTasks, type TasksActionState } from "../src/renderer/tasks-controller.ts";
@@ -238,6 +239,58 @@ class Element {
   }
 }
 const all = (node: Element): Element[] => [node, ...node.children.flatMap(all)];
+
+test("list rows distinguish title, one-line detail, result and untruncated decisions without detail reads", async () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", { configurable: true, value: { createElement: () => new Element() } });
+  const value = {
+    ...run(7),
+    summary: "完成结果",
+    preview: {
+      title: "<任务标题>",
+      detail: "第一行\n第二行",
+      truncated: false,
+      decisions: {
+        items: [{ ...openCard(3), title: "如何处理？", text: "需要完整显示的问题", options: ["保留", "修改"] }],
+        hasMore: false,
+        nextCursor: null,
+      },
+    },
+  };
+  try {
+    let reads = 0,
+      view: ReturnType<typeof mountTasksView> | undefined;
+    const controller = createRendererTasks(
+      {
+        taskList: async () => ({
+          version: 1,
+          ok: true,
+          data: { items: [value, { ...run(6), state: "queued", summary: "" }], hasMore: false, nextBefore: null },
+        }),
+        taskDetail: async () => {
+          reads++;
+          return detail(7);
+        },
+      } as unknown as Parameters<typeof createRendererTasks>[0],
+      () => view?.update(),
+    );
+    view = mountTasksView(controller);
+    view.init();
+    await flush();
+    const root = view.root as unknown as Element;
+    const rows = all(root).find((x) => x.className === "run-list")!.children;
+    const byClass = (row: Element, name: string) => all(row).find((x) => x.className === name)!;
+    assert.equal(byClass(rows[0], "run-title").textContent, "<任务标题>");
+    assert.equal(byClass(rows[0], "run-task-detail").textContent, "第一行 第二行");
+    assert.match(byClass(rows[0], "run-result").textContent, /完成结果/);
+    assert.match(byClass(rows[0], "run-decision").textContent, /如何处理？.*需要完整显示的问题.*保留.*修改/);
+    assert.match(byClass(rows[1], "run-result").textContent, /排队|等待/);
+    assert.equal(reads, 0);
+  } finally {
+    if (previous) Object.defineProperty(globalThis, "document", previous);
+    else Reflect.deleteProperty(globalThis, "document");
+  }
+});
 
 test("detail is a subpage: back preserves list nodes/query/scroll and never invents a transcript", async () => {
   const scrollHost = { scrollTop: 420 } as HTMLElement;

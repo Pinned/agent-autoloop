@@ -8,7 +8,6 @@ import {
 import {
   type FeedbackItem,
   type FeedbackKind,
-  type RunItem,
   type RunListInput,
   type RunState,
   type Section,
@@ -96,7 +95,7 @@ export type TasksLoadState =
   | { readonly kind: "error"; readonly message: string }
   | {
       readonly kind: "ready";
-      readonly runs: readonly RunItem[];
+      readonly runs: Extract<TaskHistoryResponse<"list">, { ok: true }>["data"]["items"];
       readonly hasMore: boolean;
       readonly nextBefore: number | null;
     };
