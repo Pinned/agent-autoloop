@@ -391,7 +391,16 @@ export function mountSettingsView(
       const header = document.createElement("header");
       header.className = "tasks-detail-head";
       header.append(back, heading);
-      container.append(header, ...rowFields(session));
+      const fields = rowFields(session);
+      const group = (title: string, fields: HTMLElement[]) => {
+        const section = document.createElement("section");
+        section.className = "settings-agent-group";
+        const heading = document.createElement("h3");
+        heading.textContent = title;
+        section.append(heading, ...fields);
+        return section;
+      };
+      container.append(header, group("基本信息", fields.slice(0, 2)), group("运行配置", fields.slice(2)));
     } else container.append(summary, ...rowFields(session));
     const error = document.createElement("p");
     error.className = "setup-error";
@@ -638,8 +647,10 @@ export function mountSettingsView(
       return;
     }
     const agentOpen = editing?.section === "agents";
+    root.className = agentOpen ? "settings-panel settings-agent-subpage-panel" : "panel settings-panel";
     head.hidden = agentOpen;
     tabs.hidden = agentOpen;
+    status.hidden = agentOpen && !state.loading && !state.saving && state.save.kind !== "confirmed";
     options.agentEditorChanged?.(agentOpen);
     const parts: string[] = [];
     if (state.loading) parts.push("正在读取本机配置……");
