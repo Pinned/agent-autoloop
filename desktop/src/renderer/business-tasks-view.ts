@@ -165,18 +165,22 @@ export function mountBusinessTasksView(
   const detailHead = el("header", "", "tasks-detail-head");
   const detailHeading = el("div", "", "business-detail-heading");
   detailHeading.append(title, badge);
-  detailHead.append(detailHeading, metadata);
+  detailHead.append(back, detailHeading, metadata);
   const original = el("section", "", "business-original"),
     progress = el("section"),
     final = el("section"),
-    decisions = el("section"),
+    decisions = el("section", "", "business-decisions"),
     timeline = el("ol", "", "business-timeline"),
     timelineStatus = el("p", "", "muted");
   const readDetail = button("重新读取此任务", () => controller.refreshDetail()),
     timelineMore = button("加载更早的处理记录", () => controller.moreTimeline());
   const actionStatus = el("p", "", "rules-status");
   actionStatus.setAttribute("role", "status");
-  const runActions = el("section"),
+  let stopControls = el("section"),
+    memoControls = el("section"),
+    feedbackControls = el("section"),
+    stoppingText = el("p");
+  const runActions = el("section", "", "business-run-actions"),
     diagnosis = el("details"),
     diagnosisText = el("p", "", "muted");
   diagnosis.append(el("summary", "执行与诊断资料"), diagnosisText);
@@ -294,9 +298,9 @@ export function mountBusinessTasksView(
       executionHistory.append(round);
     }
   }
+  const timelineHeading = el("h3", "处理记录（最新在前）");
   back.className = "task-back-button";
   detailPage.append(
-    back,
     detailHead,
     readDetail,
     timelineStatus,
@@ -308,7 +312,7 @@ export function mountBusinessTasksView(
     executionHistory,
     original,
     final,
-    el("h3", "处理记录（最新在前）"),
+    timelineHeading,
     timeline,
     timelineMore,
     diagnosis,
@@ -317,6 +321,10 @@ export function mountBusinessTasksView(
   let formsKey = "",
     runFormsKey = "";
   const controls: HTMLButtonElement[] = [];
+  const decisionEmpty = el("p", "没有已记录的开放提问。", "muted");
+  const decisionMore = el("p", "还有未展示的开放提问，请在执行诊断或原通道查看；不能把这一页当作全部。", "muted");
+  const decisionForms = new Map<string, HTMLElement>();
+  let decisionTask = "";
   function draftArea(key: string, label: string) {
     const area = el("textarea");
     area.value = controller.drafts.get(key) ?? "";
@@ -443,6 +451,10 @@ export function mountBusinessTasksView(
     processTab.disabled = tab === "process";
     originalTab.disabled = tab === "original";
     resultTab.disabled = tab === "result";
+    processTab.setAttribute("aria-pressed", String(tab === "process"));
+    originalTab.setAttribute("aria-pressed", String(tab === "original"));
+    resultTab.setAttribute("aria-pressed", String(tab === "result"));
+    timelineHeading.hidden = !data || tab !== "process";
     executionHistory.hidden = tab !== "process" || !data;
     if (data?.task.latestRunId && !history.rounds.has(data.task.latestRunId)) {
       expanded.add(data.task.latestRunId);
@@ -538,10 +550,22 @@ export function mountBusinessTasksView(
     const formKey = `${task.key}/${task.decisions.items.map((c) => `${c.id}:${c.options.join("|")}`).join(",")}`;
     if (formKey !== formsKey) {
       formsKey = formKey;
-      controls.length = 0;
-      decisions.replaceChildren(el("h3", "当前需要你决定"));
+      if (decisionTask !== task.key) {
+        decisionTask = task.key;
+        controls.length = 0;
+        decisionForms.clear();
+        decisions.replaceChildren(el("h3", "当前需要你决定"), decisionEmpty, decisionMore);
+      }
+      for (const form of decisionForms.values()) form.hidden = true;
       for (const card of task.decisions.items) {
+        const identity = `${card.id}/${JSON.stringify(card.options)}`;
+        const existing = decisionForms.get(identity);
+        if (existing) {
+          existing.hidden = false;
+          continue;
+        }
         const form = el("section", "", "business-decision");
+        decisionForms.set(identity, form);
         form.append(el("h4", card.title), el("p", card.text));
         if (card.truncated) form.append(el("p", "此问题当前仅显示部分，不代表原文已完整展示。", "muted"));
         const choice = el("select");
@@ -569,9 +593,8 @@ export function mountBusinessTasksView(
         form.append(send);
         decisions.append(form);
       }
-      if (!task.decisions.items.length) decisions.append(el("p", "没有已记录的开放提问。", "muted"));
-      if (task.decisions.hasMore)
-        decisions.append(el("p", "还有未展示的开放提问，请在执行诊断或原通道查看；不能把这一页当作全部。", "muted"));
+      decisionEmpty.hidden = task.decisions.items.length > 0;
+      decisionMore.hidden = !task.decisions.hasMore;
     }
     actionStatus.textContent = controller.actionMessage;
     for (const control of controls)
@@ -583,37 +606,47 @@ export function mountBusinessTasksView(
         !!controller.detailError;
     const run = controller.run?.run;
     runActions.hidden = !run;
-    const nextRunKey = `${task.key}/${run?.id}/${run?.state}/${run?.stopping}`;
+    const nextRunKey = `${task.key}/${run?.id}`;
     if (nextRunKey !== runFormsKey) {
       runFormsKey = nextRunKey;
       runActions.replaceChildren();
       if (run) {
-        if (run.stopping && ["claimed", "unknown"].includes(run.state))
-          runActions.append(el("p", "正在停止，等待执行进程退出。", "business-stopping"));
-        if (!run.stopping && ["queued", "claimed", "unknown"].includes(run.state)) {
-          const confirm = el("section");
-          confirm.hidden = true;
-          const yes = button("再次确认：停止本轮执行", () => {
-            confirm.hidden = true;
+        stoppingText = el("p", "正在停止，等待执行进程退出。", "business-stopping");
+        runActions.append(stoppingText);
+        {
+          const stopGroup = el("section", "", "business-stop-controls");
+          const explanation = el("p", "停止只结束所选这一轮；时间线与成本记录保留。", "muted");
+          explanation.hidden = true;
+          let armed = false;
+          const stop = button("停止执行", () => {
+            if (!armed) {
+              armed = true;
+              stop.textContent = "确认停止";
+              explanation.hidden = false;
+              return;
+            }
+            armed = false;
+            stop.textContent = "停止执行";
+            explanation.hidden = true;
             controller.submitAction({ version: 1, action: "cancel", runId: run.id, input: {} });
           });
-          confirm.append(
-            el("p", "停止只作用于这一轮，不代表业务任务已完成。确定要停止吗？"),
-            yes,
+          stopGroup.append(
+            stop,
+            explanation,
             button("不停止", () => {
-              confirm.hidden = true;
+              armed = false;
+              stop.textContent = "停止执行";
+              explanation.hidden = true;
             }),
           );
-          runActions.append(
-            button("请求停止本轮", () => {
-              confirm.hidden = false;
-            }),
-            confirm,
-          );
+          stopControls = stopGroup;
+          runActions.append(stopControls);
         }
-        if (run.state !== "queued") {
+        {
           const text = draftArea(`${task.key}/memo/${run.id}`, "更正说明");
-          runActions.append(
+          memoControls = el("section", "", "business-operation");
+          runActions.append(memoControls);
+          memoControls.append(
             el("h3", "更正说明"),
             text,
             button("提交更正", () =>
@@ -621,7 +654,7 @@ export function mountBusinessTasksView(
             ),
           );
         }
-        if (run.state === "done") {
+        {
           const rating = el("select");
           rating.setAttribute("aria-label", "验收反馈类型");
           for (const kind of FEEDBACK_KINDS) {
@@ -630,7 +663,9 @@ export function mountBusinessTasksView(
             rating.append(option);
           }
           const text = draftArea(`${task.key}/feedback/${run.id}`, "验收反馈说明");
-          runActions.append(
+          feedbackControls = el("section", "", "business-operation");
+          runActions.append(feedbackControls);
+          feedbackControls.append(
             el("h3", "验收反馈（记录评价，不自动判定任务完成）"),
             rating,
             text,
@@ -646,6 +681,10 @@ export function mountBusinessTasksView(
         }
       }
     }
+    stoppingText.hidden = !run?.stopping || !["claimed", "unknown"].includes(run.state);
+    stopControls.hidden = !run || run.stopping || !["queued", "claimed", "unknown"].includes(run.state);
+    memoControls.hidden = !run || run.state === "queued";
+    feedbackControls.hidden = run?.state !== "done";
     for (const control of runActions.querySelectorAll("button"))
       control.disabled =
         !controller.runReady ||
@@ -676,7 +715,8 @@ export function mountBusinessTasksView(
       timeline.append(row);
     }
     if (!data.timeline.items.length) timeline.append(el("li", "没有可关联的历史记录，不补造处理或验收结论。"));
-    timelineMore.hidden = !data.timeline.hasMore;
+    timeline.hidden = diagnosis.hidden = tab !== "process";
+    timelineMore.hidden = tab !== "process" || !data.timeline.hasMore;
     timelineMore.disabled = controller.detailBusy;
     diagnosisText.textContent = run
       ? `最新执行 #${run.id} · ${run.agent} · ${run.state} · ${run.error || "未记录执行错误"}`

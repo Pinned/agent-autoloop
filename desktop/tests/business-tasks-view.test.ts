@@ -244,6 +244,70 @@ test("task list has one outer page heading and no compatibility essay", async ()
   });
 });
 
+test("detail title shares the back row and stopping uses one armed button without replacing the memo", async () => {
+  const run = {
+    id: 2,
+    rule: "r",
+    agent: "a",
+    state: "claimed",
+    attempts: 1,
+    createdAt: null,
+    claimedAt: null,
+    finishedAt: null,
+    notBefore: null,
+    summary: "",
+    error: "",
+    stopping: false,
+    usage: null,
+    truncated: false,
+  };
+  const page = { items: [], hasMore: false, nextCursor: null };
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      for (let i = 0; i < 4; i++) await flush();
+      const head = all(root).find((x) => x.className === "tasks-detail-head")!;
+      assert.ok(all(head).some((x) => x.className === "task-back-button"));
+      const memo = all(root).find((x) => x.tag === "textarea" && !x.hidden)!;
+      memo.value = "保留草稿";
+      memo.focus();
+      memo.listeners.get("input")?.();
+      const stop = all(root).find((x) => x.tag === "button" && x.textContent === "停止执行")!;
+      assert.ok(stop);
+      stop.fire();
+      assert.equal(stop.textContent, "确认停止");
+      assert.equal(controller.actionBusy, false);
+      assert.ok(root.textContent.includes("时间线与成本记录保留"));
+      run.stopping = true;
+      controller.refreshDetail();
+      for (let i = 0; i < 4; i++) await flush();
+      assert.ok(all(root).includes(memo), "state updates cannot remove a focused operation input");
+      assert.equal(memo.value, "保留草稿");
+      assert.equal(memo.focused, true);
+    },
+    item,
+    { run, association: { kind: "unavailable" }, events: page, cards: page, relatedRuns: page },
+  );
+});
+
+test("a newly arriving decision leaves an existing answer input mounted", async () => {
+  const shown = { ...item, decisions: { items: [{ ...card, options: [] as string[] }], hasMore: false } };
+  await withView(async (controller, root) => {
+    controller.open("task:1");
+    await flush();
+    const answer = all(root).find((x) => x.tag === "textarea")!;
+    answer.value = "未提交回答";
+    answer.focus();
+    answer.listeners.get("input")?.();
+    shown.decisions.items.push({ ...card, id: 5, options: [] });
+    controller.refreshDetail();
+    await flush();
+    assert.ok(all(root).includes(answer));
+    assert.equal(answer.value, "未提交回答");
+    assert.equal(answer.focused, true);
+  }, shown);
+});
+
 // A cancel acknowledgement is not process exit and must not grant another cancel.
 test("claimed stopping keeps truthful waiting feedback and blocks repeated stop", async () => {
   const run = {
@@ -353,6 +417,24 @@ test("list owns no outer panel surface and previews have distinct two/three-line
   assert.match(outer, /background:\s*none;/);
   assert.match(rule(".business-card-head h3 {"), /-webkit-line-clamp:\s*2;/);
   assert.match(rule(".business-tasks-panel .tasks-run-detail {"), /-webkit-line-clamp:\s*3;/);
+});
+
+// Detail layout must remain readable at the guide's viewport and use both theme palettes.
+test("detail surfaces, compact heading and selected tabs follow shared theme and contrast rules", () => {
+  const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
+  const rule = (selector: string) => css.slice(css.indexOf(selector)).split("}")[0];
+  const surface = rule(".business-tasks-panel:has(.tasks-detail-page:not([hidden])) {");
+  assert.match(surface, /background:\s*transparent;/);
+  assert.match(surface, /border:\s*0;/);
+  assert.match(surface, /padding:\s*0;/);
+  assert.match(rule("main:has(.tasks-detail-page:not([hidden])) {"), /padding:\s*14px 20px 16px;/);
+  assert.match(rule(".business-tasks-panel .tasks-detail-head {"), /display:\s*flex;/);
+  assert.match(rule(".tasks-detail-head h2 {"), /font-size:\s*18px;/);
+  assert.match(rule(".task-detail-tabs {"), /flex-wrap:\s*wrap;/);
+  assert.match(rule(".business-operation textarea,\n.business-operation select {"), /max-width:\s*100%;/);
+  const contrast = css.slice(css.lastIndexOf("@media (forced-colors: active)"));
+  assert.match(contrast, /\.task-detail-tabs button\[aria-pressed="true"\]/);
+  assert.match(contrast, /outline:\s*2px solid Highlight;/);
 });
 
 // Available trigger details must not be replaced by their summary or called an original requirement.

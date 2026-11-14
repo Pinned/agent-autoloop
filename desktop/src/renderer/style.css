@@ -1165,13 +1165,29 @@ main:has(#task-subpage:not([hidden])) {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+.business-tasks-panel:has(.tasks-detail-page:not([hidden])) {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+}
 .business-tasks-panel .tasks-detail-head {
-  display: block;
-  margin: 16px 0 20px;
-  padding: 22px 24px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--panel);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 0 0 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.business-detail-heading {
+  min-width: 0;
+  flex: 1;
+}
+.business-tasks-panel .tasks-detail-head > p {
+  flex-basis: 100%;
 }
 .business-tasks-panel .tasks-detail-head > p {
   margin: 10px 0 0;
@@ -1187,8 +1203,7 @@ main:has(#task-subpage:not([hidden])) {
   .business-detail-heading {
     flex-wrap: wrap;
   }
-  .business-tasks-panel .tasks-run-card,
-  .business-tasks-panel .tasks-detail-head {
+  .business-tasks-panel .tasks-run-card {
     padding: 18px;
   }
 }
@@ -1196,10 +1211,39 @@ main:has(#task-subpage:not([hidden])) {
 .business-tasks-panel .tasks-detail-page > h3,
 .business-tasks-panel .tasks-detail-page > details,
 .business-tasks-panel .tasks-detail-page > ol {
-  margin: 24px 0;
+  margin: 14px 0;
+}
+.business-operation {
+  border-top: 1px solid var(--soft);
+  padding: 12px 0;
+  min-width: 0;
+}
+.business-operation textarea,
+.business-operation select {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.business-operation textarea {
+  min-height: 90px;
+  resize: vertical;
+}
+.business-operation h3 {
+  font-size: 13px;
+  margin: 0 0 8px;
+}
+.business-stop-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.business-stop-controls p {
+  flex-basis: 100%;
+  margin: 0;
 }
 .business-tasks-panel .business-original {
-  padding: 20px;
+  padding: 14px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -2203,10 +2247,17 @@ main:has(.tasks-detail-page:not([hidden])) {
 }
 .task-detail-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   border-bottom: 1px solid var(--border);
   padding: 12px 0;
   margin-bottom: 16px;
+}
+.task-detail-tabs button[aria-pressed="true"] {
+  background: var(--accent-bg);
+  color: var(--text);
+  border-color: var(--accent);
+  opacity: 1;
 }
 .agent-history-round {
   border: 1px solid var(--border);
@@ -2426,6 +2477,7 @@ main:has(.tasks-detail-page:not([hidden])) {
   .sidebar nav button.active,
   .new-task-button.active,
   .settings-tab.active,
+  .task-detail-tabs button[aria-pressed="true"],
   .task-title-route-bar:focus-within,
   .task-editor-box:focus-within {
     outline: 2px solid Highlight;

@@ -112,7 +112,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(main, /远程队列不会取消/);
   assert.match(main, /离线持久待同步/);
   assert.doesNotMatch(main, /restartPolicy|controller\.restart/);
-  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 30);
+  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 31);
   // Each handler is checked inside its own block: a cross-handler match would let a missing
   // sender check hide behind the next handler that has one. A long handler may wrap its
   // arguments onto their own lines, so the split tolerates whitespace after the open paren.
@@ -148,6 +148,20 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   // Detail has its own unit: the channel delegates, and that unit checks the same pinned sender
   // before it parses anything.
   assert.match(blockOf("taskDetail"), /=> detailIpc\.read\(event, args\)\)/);
+  // Local history is the added fixed read door, not an arbitrary filesystem bridge.
+  assert.match(blockOf("agentHistory"), /=> agentHistoryIpc\.read\(event, args\)\)/);
+  assert.match(
+    main,
+    /const agentHistoryIpc = createAgentHistoryIpc\(\{\s*assertSender: \(event\) => assertSender\(event as Parameters<typeof assertSender>\[0\], window\.webContents, page\),\s*presentation,/,
+  );
+  const historyIpc = read("../src/agent-history-ipc.ts");
+  assert.match(historyIpc, /async read\([^)]*\)[^{]*\{\s*options\.assertSender\(event\);/);
+  assert.match(historyIpc, /args\.length !== 1/);
+  assert.match(historyIpc, /parseAgentHistoryInput\(args\[0\]\)/);
+  assert.match(historyIpc, /acquireTaskLease\(\)/);
+  assert.match(historyIpc, /checkTaskLease\(own\)/);
+  assert.match(historyIpc, /return canRead\(\) \? result : failure\(\)/);
+  assert.match(historyIpc, /releaseTaskLease\(lease\)/);
   // The list door has its own unit too, and it deliberately holds no presentation lease: the
   // query source already classifies unavailable/no-hub, and a pure read must not be aborted by
   // every unrelated runtime transition.
@@ -220,6 +234,7 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
   const source = read("../src/preload.ts");
   const methods = [...source.matchAll(/^  (\w+):/gm)].map((match) => match[1]).sort();
   assert.deepEqual(methods, [
+    "agentHistory",
     "businessTasksRead",
     "completeSetup",
     "copyLaunchCommand",
@@ -253,6 +268,8 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
     "workersGet",
     "workersLocal",
   ]);
+  assert.match(source, /agentHistory: \(request\) => ipcRenderer\.invoke\("desktop:agent-history:read", request\)/);
+  assert.match(read("../dist/preload.cjs"), /desktop:agent-history:read/);
   assert.doesNotMatch(source, /invoke\((?:channel|name|value)/);
   // The only renderer-bound listeners are the two fixed push channels.
   assert.equal((source.match(/ipcRenderer\.on\(/g) ?? []).length, 2);
