@@ -25,7 +25,7 @@ import { HOME } from "../host/home.ts";
 import type { Job } from "../protocol/job.ts";
 import { addUsage, type Notice, type Result } from "../protocol/validate.ts";
 import { adapterFor, type Adapter, type Reading, type Turn, type Usage } from "./agents.ts";
-import { promptFor, readMessage, repairPrompt, resultFrom } from "./contract.ts";
+import { contextFor, promptFor, readMessage, repairPrompt, resultFrom } from "./contract.ts";
 import {
   summarizeHeld,
   type HeldProbe,
@@ -342,7 +342,7 @@ export function createWorker({
     save(entry);
     if (closing) return endWith(entry, { outcome: "cancelled", summary: "已停止" });
     try {
-      writeFileSync(path.join(dir, "context.json"), JSON.stringify(job.context, null, 2), { mode: 0o600 });
+      writeFileSync(path.join(dir, "context.json"), JSON.stringify(contextFor(job), null, 2), { mode: 0o600 });
       const adapter = await adapterFor(job.agent.use);
       if (closing) return endWith(entry, { outcome: "cancelled", summary: "已停止" });
       entry.prompt = promptFor(job, path.join(dir, "context.json"));
@@ -475,7 +475,7 @@ export function createWorker({
       // The worker stopped while starting it, before anything was launched.
       if (!entry.prompt) entry.prompt = promptFor(entry.job, path.join(entry.dir, "context.json"));
       try {
-        writeFileSync(path.join(entry.dir, "context.json"), JSON.stringify(entry.job.context, null, 2), {
+        writeFileSync(path.join(entry.dir, "context.json"), JSON.stringify(contextFor(entry.job), null, 2), {
           mode: 0o600,
         });
         return launch(entry, adapter, entry.prompt);

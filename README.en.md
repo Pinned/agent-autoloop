@@ -63,14 +63,14 @@ If you'd rather not memorize commands, there's a web page. While the hub is runn
 
 The page is reachable only from this machine; no port needs to face the outside.
 
-An Electron desktop app is being developed incrementally: it will manage the hub or a worker inside the app, stay in the menu bar when closed, and support light/dark themes. The prototype does not connect to real services, and there is no usable installer yet. See the [desktop development scope](docs/desktop.md) (Chinese). Existing CLI installations and data are not migrated automatically.
+The Electron desktop app manages a hub or worker, stays in the menu bar when closed, and supports light/dark themes. Its task page keeps one card per business task, fixed original requirements, decision continuations and a factual timeline. Legacy runs lacking task identity remain separate instead of being guessed into groups. `done` ends a round; explicit `taskStatus: "completed"` with no pending work closes a task, without implying hub-verified acceptance. See the [desktop development and acceptance scope](docs/desktop.md) (Chinese). Existing facts are never migrated or rewritten.
 
 ## How a piece of work flows
 
 The numbers match the diagram above:
 
 1. **An event comes in.** A 9:00 AM schedule, a new GitHub issue, or a production alert becomes a standard event sent to the kernel.
-2. **Dispatched by your rules.** Your rules decide which agent handles it and in which folder. New events for the same subject while it is queued merge into one round.
+2. **Dispatched by your rules.** Rules choose the agent and folder. A new event creates a business task by default; an explicit `taskKey` associates events within the same source and rule. Only events of the same task merge. Answers, business timers and corrections continue the original task; sharing a scheduling lane is not task identity.
 3. **Work one round and exit.** The agent puts its result in its final message, and the process exits.
 4. **Asks only when needed.** For sensitive actions like deleting data, restarting a service, spending money, or messaging people, the kernel sends you a card through Feishu or a desktop notification. While you take your time, no agent process runs and no tokens are spent.
 5. **One tap resumes it.** Your answer picks up the original conversation and finishes the job.

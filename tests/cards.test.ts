@@ -21,10 +21,16 @@ const { AuthError, InputError, NotFound } = await import("../kernel/errors.ts");
 const { all, one, run } = await import("./storage.ts");
 
 const clean = () => {
-  for (const table of ["run_events", "runs", "events", "seen", "cards", "deliveries", "timers"])
+  for (const table of ["tasks", "run_events", "runs", "events", "seen", "cards", "deliveries", "timers"])
     run(`DELETE FROM ${table}`);
 };
-const note = (n: number, step = "new") => ({ id: `feedback:${n}:${step}`, type: `feedback.${step}`, subject: `#${n}` });
+// Successive fixture updates opt into one task; equal subjects alone no longer associate work.
+const note = (n: number, step = "new") => ({
+  taskKey: `feedback:${n}`,
+  id: `feedback:${n}:${step}`,
+  type: `feedback.${step}`,
+  subject: `#${n}`,
+});
 const claim = (worker: string, now: number) => claimNext(worker, `c${Math.random()}`, now);
 const question = {
   title: "要不要删旧表",
@@ -171,7 +177,8 @@ test("a run may resolve only what it was given to check, and a bad id doesn't sp
     finish(w2.run, w2.token, { outcome: "done", notice: [{ title: "别的组", text: "x" }] }, at(0));
     return one<{ id: number }>("SELECT id FROM cards WHERE title = '别的组'")!.id;
   })();
-  ingest("app", note(2), at(1));
+  // Resolution must be a continuation of the task that owns the question.
+  ingest("app", { ...note(1, "followup") }, at(1));
   const job = claim("w1", at(2))!;
   assert.deepEqual(
     job.context.open.map((c) => c.card),

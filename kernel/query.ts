@@ -39,10 +39,19 @@ export function sourceOf(view: View, runId: number) {
 
 /** The cards a run may close: open before it was claimed, from the same source and group. */
 export function openInScope(view: View, run: Row) {
+  if (!run.claimed_at) return [];
+  if (run.task_id != null)
+    return rows(view, "cards", { state: "open", task_id: run.task_id }).filter(
+      (card) => card.created_at <= run.claimed_at,
+    );
   const source = sourceOf(view, run.id);
-  if (!source || !run.claimed_at) return [];
-  const inScope = (card: Row) => card.grp === run.grp && card.source === source && card.created_at <= run.claimed_at;
-  return rows(view, "cards", { state: "open", grp: run.grp, source }).filter(inScope);
+  if (!source) return [];
+  const inScope = (card: Row) =>
+    card.grp === run.grp &&
+    card.source === source &&
+    card.created_at <= run.claimed_at &&
+    (card.task_id ?? null) === (run.task_id ?? null);
+  return rows(view, "cards", { state: "open", grp: run.grp, source, task_id: run.task_id ?? null }).filter(inScope);
 }
 
 export function cardView(card: Row, env: Environment, ref: string | null = null, links = false) {
@@ -75,7 +84,7 @@ export function jobOf(view: View, run: Row, env: Environment): Job {
   const { name, cwd, skill, prompt, emits } = rules.rules.find((rule) => rule.name === run.rule)!;
   const events = eventsOf(view, run.id);
   const eventIds = events.map((event) => event.id);
-  const thread = { rule: run.rule, lane: run.lane };
+  const thread = { rule: run.rule, lane: run.lane, task_id: run.task_id ?? null };
   const answers = rows(view, "cards", { ...thread, answer_event: eventIds });
   const timers = rows(view, "timers", { ...thread, event_id: eventIds });
   const waiting = rows(view, "timers", { ...thread, event_id: null });
@@ -84,7 +93,31 @@ export function jobOf(view: View, run: Row, env: Environment): Job {
     .sort((a, b) => b.id - a.id)
     .slice(0, 20);
   const timerView = (timer: Row) => ({ key: timer.key, about: timer.about, at: timer.at });
+  const eventView = ({
+    key: id,
+    source,
+    type,
+    subject,
+    summary,
+    detail,
+    link,
+    received_at: receivedAt,
+    hops,
+  }: Row): Job["context"]["events"][number] => ({
+    id,
+    source,
+    sourceName: rules.sources[source]?.name ?? source,
+    type,
+    subject,
+    summary,
+    detail,
+    link,
+    receivedAt,
+    hops: hops ?? 0,
+  });
+  const task = run.task_id == null ? undefined : view.get("tasks", run.task_id);
   return {
+    ...(task ? { task: { id: task.id, originEvent: eventView(view.get("events", task.origin_event_id)!) } } : {}),
     run: run.id,
     token: credential(env, "run", run.id, run.issued),
     attempt: run.attempts + 1,
@@ -93,10 +126,7 @@ export function jobOf(view: View, run: Row, env: Environment): Job {
     session: run.session ?? run.resume,
     askFirst: rules.askFirst,
     context: {
-      events: events.map(({ key: id, source, type, subject, summary, detail, link, received_at: receivedAt, hops }) => {
-        const sourceName = rules.sources[source]?.name ?? source;
-        return { id, source, sourceName, type, subject, summary, detail, link, receivedAt, hops: hops ?? 0 };
-      }),
+      events: events.map(eventView),
       answers: answers.map(({ id: card, title, options, choice, answer: text, about, by, decided_at: at }) => {
         return { card, title, options: JSON.parse(options), choice, text, about, by, at };
       }),

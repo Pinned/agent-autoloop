@@ -335,13 +335,19 @@ test("STATIC route predicate has exact task paths, no method/ID checks; pure mod
   const imports = [...source.matchAll(/from "([^"]+)"/g)].map((match) => match[1]).sort();
   assert.deepEqual(
     imports,
-    ["../kernel/credentials.ts", "../kernel/errors.ts", "../kernel/evolve.ts", "./task-query-http.ts"].sort(),
+    [
+      "../kernel/credentials.ts",
+      "../kernel/errors.ts",
+      "../kernel/evolve.ts",
+      "./task-query-http.ts",
+      "./business-task-http.ts",
+    ].sort(),
   );
   assert.ok(source.includes('const given = /^Bearer (.+)$/.exec(request.headers.get("authorization") ?? "");'));
   assert.match(source, /given && whose\(latest, "owner", given\[1\]\)/);
   assert.match(
     source,
-    /export function uiRead\(request: Request, latest: View\): Response \| null \{\s*return taskQueryHttp\(request, latest\);\s*\}/,
+    /export function uiRead\(request: Request, latest: View\): Response \| null \{\s*return businessTaskHttp\(request, latest\) \?\? taskQueryHttp\(request, latest\);\s*\}/,
   );
   assert.doesNotMatch(source, /\bawait\b|hub\.|getView|tick|ingest|Response\.|cursor|runtime|home\.ts|plugins/);
 });

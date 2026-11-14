@@ -2,6 +2,7 @@
 import { DatabaseSync, type StatementSync, type SQLInputValue } from "node:sqlite";
 export type Row = Record<string, any>;
 export const TABLES = [
+  "tasks",
   "events",
   "runs",
   "run_events",
@@ -20,10 +21,11 @@ export type Table = (typeof TABLES)[number];
 export type Change = { table: Table; key: string; row: Row | null };
 export type Fact = { version: 1; seq: number; at: number; type: string; changes: Change[]; meta?: Row };
 export type Match = Record<string, SQLInputValue | SQLInputValue[] | { not: null }>;
-const NUMBERED = new Set<Table>(["events", "runs", "cards", "timers", "feedback"]);
+const NUMBERED = new Set<Table>(["tasks", "events", "runs", "cards", "timers", "feedback"]);
 const indexes: Partial<Record<Table, string[][]>> = {
+  tasks: [["id"], ["source", "rule", "task_key", "id"], ["status", "id"]],
   events: [["source", "key"], ["routed", "id"], ["id"]],
-  runs: [["state", "id"], ["rule", "lane", "state", "id"], ["id"], ["finished_at"]],
+  runs: [["state", "id"], ["rule", "lane", "state", "id"], ["id"], ["finished_at"], ["task_id", "id"]],
   run_events: [["run_id"], ["event_id"]],
   cards: [
     ["key", "id"],
@@ -34,11 +36,14 @@ const indexes: Partial<Record<Table, string[][]>> = {
     ["run_id"],
     ["id"],
     ["fyi", "created_at"],
+    ["task_id", "kind", "state", "id"],
+    ["task_id", "state", "id"],
   ],
   timers: [
     ["event_id", "id"],
     ["rule", "lane", "key", "id"],
     ["rule", "lane", "event_id", "id"],
+    ["task_id", "event_id", "id"],
   ],
   deliveries: [["channel"], ["card_id"]],
   due: [["at"]],
@@ -213,6 +218,14 @@ export function evolve(view: View, facts: Iterable<Fact>, db = view.db, reset = 
       if (typeof change.row?.id === "number") next[change.table] = Math.max(next[change.table] ?? 0, change.row.id);
     }
     for (const { table, key, row } of pending.values()) {
+      const prior = row ?? new View(db).get(table, key);
+      const runId = prior?.run_id;
+      const linkedRun = runId == null ? undefined : new View(db).get("runs", runId);
+      const taskId = table === "tasks" ? prior?.id : (prior?.task_id ?? linkedRun?.task_id);
+      if (runId != null)
+        statement(db, "INSERT OR IGNORE INTO projection_refs VALUES (?,?,?)").run("runs", String(runId), fact.seq);
+      if (taskId != null)
+        statement(db, "INSERT OR IGNORE INTO projection_refs VALUES (?,?,?)").run("tasks", String(taskId), fact.seq);
       if (["events", "runs", "cards"].includes(table))
         statement(db, "INSERT OR IGNORE INTO projection_refs VALUES (?,?,?)").run(table, key, fact.seq);
       if (row === null) remove.run(table, key);

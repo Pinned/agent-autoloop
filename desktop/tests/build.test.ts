@@ -112,7 +112,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(main, /远程队列不会取消/);
   assert.match(main, /离线持久待同步/);
   assert.doesNotMatch(main, /restartPolicy|controller\.restart/);
-  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 29);
+  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 30);
   // Each handler is checked inside its own block: a cross-handler match would let a missing
   // sender check hide behind the next handler that has one. A long handler may wrap its
   // arguments onto their own lines, so the split tolerates whitespace after the open paren.
@@ -220,6 +220,7 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
   const source = read("../src/preload.ts");
   const methods = [...source.matchAll(/^  (\w+):/gm)].map((match) => match[1]).sort();
   assert.deepEqual(methods, [
+    "businessTasksRead",
     "completeSetup",
     "copyLaunchCommand",
     "getTheme",

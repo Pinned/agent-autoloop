@@ -25,6 +25,8 @@ const { all, one, run } = await import("./storage.ts");
 const note = (n: number, step = "new") => ({
   id: `feedback:${n}:${step}`,
   type: `feedback.${step}`,
+  // These fixtures explicitly associate successive updates to one business task.
+  taskKey: `feedback:${n}`,
   subject: `#${n}`,
   summary: `第 ${n} 条`,
   link: `https://x.test/feedback?id=${n}`,
@@ -35,7 +37,7 @@ const told = () =>
     "SELECT key, title, text, state FROM cards ORDER BY id",
   );
 const clean = () => {
-  for (const table of ["run_events", "runs", "events", "seen", "cards", "deliveries", "timers"])
+  for (const table of ["tasks", "run_events", "runs", "events", "seen", "cards", "deliveries", "timers"])
     run(`DELETE FROM ${table}`);
 };
 const claim = (worker: string, now: number) => claimNext(worker, `c${Math.random()}`, now);
@@ -131,14 +133,15 @@ test("a claim whose answer was lost gets the same work back, under a token that 
 
 test("events while work waits join it; while it runs they wait for the next run", () => {
   clean();
-  ingest("ops", alert("first"), at(0));
-  ingest("ops", alert("second"), at(1));
+  // This test exercises explicit batching, not the independent-event default.
+  ingest("ops", { ...alert("first"), taskKey: "batch" }, at(0));
+  ingest("ops", { ...alert("second"), taskKey: "batch" }, at(1));
   const first = claim("w2", at(2))!;
   assert.deepEqual(
     first.context.events.map((e) => e.subject),
     ["first", "second"],
   );
-  ingest("ops", alert("third"), at(3));
+  ingest("ops", { ...alert("third"), taskKey: "batch" }, at(3));
   assert.equal(claim("w2", at(4)), null, "the group already has a run going");
   finish(first.run, first.token, { outcome: "done", summary: "处理了两条告警" }, at(5));
   const second = claim("w2", at(5))!;

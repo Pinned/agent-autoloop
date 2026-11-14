@@ -1022,6 +1022,59 @@ main:has(#task-subpage:not([hidden])) {
   color: var(--text);
   width: 190px;
 }
+.business-tasks-panel .tasks-detail-page > section,
+.business-tasks-panel .tasks-detail-page > h3,
+.business-tasks-panel .tasks-detail-page > details,
+.business-tasks-panel .tasks-detail-page > ol {
+  margin: 24px 0;
+}
+.business-tasks-panel .business-original {
+  padding: 20px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.business-tasks-panel .business-decision {
+  padding: 20px;
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--accent-bg);
+}
+.business-tasks-panel textarea {
+  display: block;
+  width: 100%;
+  min-height: 90px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+.business-tasks-panel .business-timeline {
+  list-style: none;
+  padding: 0 0 0 12px;
+}
+.business-tasks-panel .business-timeline li {
+  border-left: 1px solid var(--border);
+  padding: 0 0 24px 24px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.business-tasks-panel .business-timeline time {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+}
+.business-tasks-panel .business-timeline details {
+  font-size: 12px;
+  color: var(--muted);
+}
 .task-route-summary {
   font-size: 12px;
   color: var(--muted);
