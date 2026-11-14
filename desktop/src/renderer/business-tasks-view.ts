@@ -1,4 +1,6 @@
 import { BUSINESS_STATES, type BusinessTaskItem } from "../../../host/business-task-contract.ts";
+import { createAgentHistoryController } from "./agent-history-controller.ts";
+import type { DesktopBridge } from "../policy.ts";
 import { FEEDBACK_KINDS } from "../../../host/desktop-task-query-contract.ts";
 import type { createRendererBusinessTasks } from "./business-tasks-controller.ts";
 const labels: Record<string, string> = {
@@ -22,7 +24,9 @@ const roundLabels: Record<string, string> = {
 };
 function taskTitle(task: BusinessTaskItem) {
   return task.kind === "legacy"
-    ? `执行 #${task.id} · ${task.rule}`
+    ? task.origin.title && (task.origin.eventId !== null || task.origin.availability !== "missing-history")
+      ? task.origin.title
+      : `执行 #${task.id} · ${task.rule}`
     : task.origin.availability === "missing-history"
       ? `任务 #${task.id} · ${task.rule}`
       : task.origin.title || `任务 #${task.id} · ${task.rule}`;
@@ -72,6 +76,7 @@ export function mountBusinessTasksView(
   controller: ReturnType<typeof createRendererBusinessTasks>,
   options: {
     scrollHost?: HTMLElement;
+    history?: Partial<Pick<DesktopBridge, "agentHistory">>;
     detailChanged?: (open: boolean) => void;
     diagnostics: { root: HTMLElement; init(): void; update(): void };
   },
@@ -175,18 +180,134 @@ export function mountBusinessTasksView(
     diagnosis = el("details"),
     diagnosisText = el("p", "", "muted");
   diagnosis.append(el("summary", "执行与诊断资料"), diagnosisText);
+  const executionHistory = el("section", "", "agent-execution-history");
+  const history = createAgentHistoryController(options.history ?? {}, () => renderHistory());
+  let tab: "process" | "original" | "result" = "process";
+  let tabTask = "";
+  const expanded = new Set<number>();
+  let polling: ReturnType<typeof setTimeout> | undefined;
+  const tabs = el("nav", "", "task-detail-tabs");
+  tabs.setAttribute("aria-label", "任务详情内容");
+  const processTab = button("执行过程", () => {
+    tab = "process";
+    update();
+  });
+  const originalTab = button("原始需求", () => {
+    tab = "original";
+    update();
+  });
+  const resultTab = button("交付结果", () => {
+    tab = "result";
+    update();
+  });
+  tabs.append(processTab, originalTab, resultTab);
+  function renderHistory() {
+    executionHistory.replaceChildren(
+      el("h3", "执行过程"),
+      el(
+        "p",
+        "关联会话历史（可能包含多轮）。仅显示公开消息与工具调用、返回状态；不公开工具参数和原始输出。实时落盘未实机验证。",
+        "muted",
+      ),
+    );
+    const data = controller.detail;
+    if (!data) return;
+    const ids = [
+      ...new Set(
+        [data.task.latestRunId, ...data.timeline.items.map((x) => x.runId)].filter((id): id is number => id !== null),
+      ),
+    ];
+    for (const id of ids) {
+      const round = el("details", "", "agent-history-round");
+      round.open = expanded.has(id);
+      round.append(el("summary", `执行 #${id}${id === data.task.latestRunId ? " · 当前轮" : " · 旧轮"}`));
+      round.addEventListener("toggle", () => {
+        if (round.open) {
+          expanded.add(id);
+          if (!history.rounds.has(id)) history.read(id);
+        } else expanded.delete(id);
+      });
+      const result = history.rounds.get(id);
+      if (!result && history.rounds.size + history.busy.size >= 20)
+        round.append(el("p", "本任务已达 20 个会话的读取上限，请重新进入任务后选择需要的旧轮。", "muted"));
+      if (history.busy.has(id)) round.append(el("p", "正在读取已保存记录…", "muted"));
+      if (result) {
+        const messages: Record<string, string> = {
+          missing: "缺少新启动的可信历史关联，或会话文件尚未落盘；不猜会话，也不据此判断派发资料缺失。",
+          unavailable: "本机历史不可读（权限、路径安全或运行身份不满足）；已记录触发资料和执行结果仍在其他页签。",
+          unsupported:
+            "当前历史读取仅支持桌面自有运行目录；挂接 CLI 中台、远端 worker 或其他 Agent 暂不读取会话，但仍使用同一详情页展示已记录资料和结果。",
+          changed: "文件或读取上下文已变化，请从头重新读取。",
+        };
+        if (result.page.status !== "available") round.append(el("p", messages[result.page.status], "muted"));
+        else {
+          round.append(
+            el(
+              "p",
+              `第 ${result.attempt} 次执行 · 启动 ${result.launch + 1}/${result.launches} · 会话范围，不代表准确轮边界`,
+              "muted",
+            ),
+          );
+          if (result.launches > 1) {
+            const launch = el("select");
+            launch.setAttribute("aria-label", `执行 ${id} 的启动记录`);
+            for (let index = 0; index < result.launches; index++) {
+              const option = el("option", `启动 ${index + 1}（含接续或回执重写）`);
+              option.value = String(index);
+              launch.append(option);
+            }
+            launch.value = String(result.launch);
+            launch.addEventListener("change", () =>
+              history.read(id, false, { attempt: result.attempt, launch: Number(launch.value) }),
+            );
+            round.append(launch);
+          }
+          if (result.attempt > 1)
+            round.append(button("读取前一次执行关联", () => history.read(id, false, { attempt: result.attempt - 1 })));
+          const list = el("ol", "", "agent-history-timeline");
+          for (const item of result.page.items) {
+            const row = el("li");
+            row.append(el("time", item.at ? new Date(item.at).toLocaleString() : "时间未记录", "muted"));
+            if (item.text.length > 600) {
+              const long = el("details");
+              long.append(el("summary", item.text.slice(0, 160) + "…（展开）"), el("pre", item.text));
+              row.append(long);
+            } else row.append(el("pre", item.text));
+            if (item.truncated) row.append(el("p", "此消息仅显示有界片段。", "muted"));
+            list.append(row);
+          }
+          round.append(list);
+          if (!result.page.items.length)
+            round.append(el("p", "尚无可公开的已保存过程记录，不用业务摘要补造。", "muted"));
+        }
+      }
+      const refresh = button("从头读取会话记录", () => history.read(id));
+      refresh.disabled = history.busy.has(id);
+      round.append(refresh);
+      if (result?.page.cursor) {
+        const more = button(result.page.hasMore ? "加载后续记录" : "读取新追加记录", () => history.read(id, true));
+        more.disabled = history.busy.has(id) || result.page.items.length >= 200 || history.capped.has(id);
+        round.append(more);
+        if (result.page.items.length >= 200 || history.capped.has(id))
+          round.append(el("p", "本页已达条数或任务内容保留上限，已读取的内容仍保留。", "muted"));
+      }
+      executionHistory.append(round);
+    }
+  }
   back.className = "task-back-button";
   detailPage.append(
     back,
     detailHead,
     readDetail,
     timelineStatus,
-    original,
     progress,
-    final,
     decisions,
     actionStatus,
     runActions,
+    tabs,
+    executionHistory,
+    original,
+    final,
     el("h3", "处理记录（最新在前）"),
     timeline,
     timelineMore,
@@ -208,9 +329,13 @@ export function mountBusinessTasksView(
     return area;
   }
   function update() {
-    tasksTab.disabled = controller.kind === "task";
+    tasksTab.disabled = controller.kind === "task" || controller.compatibility;
     legacyTab.disabled = controller.kind === "legacy";
-    entranceNote.textContent = controller.kind === "legacy" ? "旧记录按轮次展示，不合并，也不代表业务完成。" : "";
+    entranceNote.textContent = controller.compatibility
+      ? "旧中台通过已有执行查询展示，同一详情页面；触发资料不等于最初业务需求，轮次结束不代表业务完成。"
+      : controller.kind === "legacy"
+        ? "旧记录按轮次展示，不合并，也不代表业务完成。"
+        : "";
     entranceNote.hidden = controller.kind !== "legacy";
     search.placeholder = controller.kind === "legacy" ? "搜索执行结果或错误" : "搜索原始需求或当前进展";
     search.setAttribute("aria-label", controller.kind === "legacy" ? "搜索全部历史执行" : "搜索全部业务任务");
@@ -249,7 +374,7 @@ export function mountBusinessTasksView(
       heading.append(el("h3", taskTitle(task)), el("span", taskState(task), "tasks-run-state"));
       const meta = el("div", "", "business-card-meta");
       meta.append(
-        el("span", legacy ? "历史执行" : `任务 #${task.id} · ${task.rule}`),
+        el("span", legacy ? `历史执行 · 执行 #${task.id} · ${task.rule}` : `任务 #${task.id} · ${task.rule}`),
         el("time", task.createdAt ? new Date(task.createdAt).toLocaleString() : "时间未记录"),
       );
       card.append(meta, heading);
@@ -263,9 +388,15 @@ export function mountBusinessTasksView(
             "tasks-run-detail",
           ),
         );
-      else if (task.origin.availability !== "missing-history")
+      else
         card.append(
-          el("p", `触发资料：${task.origin.detail || task.origin.title || "未填写触发资料"}`, "tasks-run-detail"),
+          el(
+            "p",
+            task.origin.availability === "missing-history"
+              ? "本轮触发详情未读取或没有可用事件关联；可进入详情核对，不据此认定派发资料缺失。"
+              : `触发资料：${task.origin.detail || task.origin.title || "本轮未提供触发详情"}`,
+            "tasks-run-detail",
+          ),
         );
       const cardProgress = el("section", "", "business-card-progress");
       cardProgress.append(el("p", `${legacy ? "本轮结果" : "当前进展"}：${task.latestProgress || "尚无已记录的进展"}`));
@@ -289,7 +420,7 @@ export function mountBusinessTasksView(
       card.append(openDetail);
       list.append(card);
     }
-    fallback.hidden = !(controller.error === "unsupported" || diagnosticOpen);
+    fallback.hidden = !diagnosticOpen;
     if (!fallback.hidden) {
       fallback.append(options.diagnostics.root);
       options.diagnostics.init();
@@ -300,6 +431,34 @@ export function mountBusinessTasksView(
       pendingScroll = false;
     }
     const data = controller.detail;
+    clearTimeout(polling);
+    polling = undefined;
+    history.select(open && controller.detailFresh ? controller.selectedKey : null);
+    if (tabTask !== (controller.selectedKey ?? "")) {
+      tabTask = controller.selectedKey ?? "";
+      tab = "process";
+      expanded.clear();
+    }
+    tabs.hidden = executionHistory.hidden = !data;
+    processTab.disabled = tab === "process";
+    originalTab.disabled = tab === "original";
+    resultTab.disabled = tab === "result";
+    executionHistory.hidden = tab !== "process" || !data;
+    if (data?.task.latestRunId && !history.rounds.has(data.task.latestRunId)) {
+      expanded.add(data.task.latestRunId);
+      history.read(data.task.latestRunId);
+    }
+    renderHistory();
+    if (open && data && tab === "process" && ["claimed", "unknown"].includes(data.task.execution?.state ?? "")) {
+      const key = controller.selectedKey,
+        id = data.task.latestRunId;
+      polling = setTimeout(() => {
+        if (id && root.isConnected && controller.selectedKey === key && tab === "process") {
+          history.read(id, !!history.rounds.get(id)?.page.cursor);
+          update();
+        }
+      }, 2000);
+    }
     timelineStatus.textContent = controller.detailBusy
       ? "正在读取处理记录…"
       : controller.detailError
@@ -321,28 +480,61 @@ export function mountBusinessTasksView(
       return;
     }
     const task = data.task;
-    original.hidden = progress.hidden = decisions.hidden = timeline.hidden = diagnosis.hidden = false;
+    progress.hidden = decisions.hidden = timeline.hidden = diagnosis.hidden = false;
+    original.hidden = tab !== "original";
     title.textContent = taskTitle(task);
     badge.textContent = taskState(task);
     badge.dataset.state = task.kind === "legacy" ? (task.execution?.state ?? "unknown") : task.state;
     metadata.textContent = `${task.kind === "legacy" ? "旧执行" : "任务"} #${task.id} · ${task.rule} · ${task.source} · ${task.createdAt ?? "提交时间未记录"}`;
     original.replaceChildren(
-      el("h3", task.kind === "legacy" ? "触发资料" : "原始需求"),
+      el("h3", task.kind === "legacy" ? "本轮触发资料（不认定最初业务需求）" : "原始需求"),
+      el(
+        "p",
+        task.origin.eventId !== null || task.origin.availability !== "missing-history" ? task.origin.title : "",
+        "task-origin-title",
+      ),
       el(
         "p",
         task.origin.availability === "missing-history"
-          ? "原始资料历史缺失，无法还原详情。"
+          ? task.kind === "legacy"
+            ? task.origin.eventId !== null
+              ? "此触发事件未记录详情，已保存的标题仍展示。"
+              : "本轮没有可读取的事件关联；缺任务身份或 Agent 历史关联不代表派发资料不存在。"
+            : "原始资料历史缺失，无法还原详情。"
           : task.origin.availability === "empty"
-            ? "提交时未填写详情。"
+            ? task.kind === "legacy"
+              ? "本轮记录未提供详情，已记录的触发标题仍展示。"
+              : "提交时未填写详情。"
             : task.origin.detail || "提交时未填写详情。",
       ),
     );
-    if (task.origin.truncated) original.append(el("p", "原始资料超过展示长度，当前仅显示部分。", "muted"));
+    if (task.origin.truncated)
+      original.append(
+        el(
+          "p",
+          task.kind === "legacy"
+            ? "本轮触发资料超过展示长度，当前仅显示部分。"
+            : "原始资料超过展示长度，当前仅显示部分。",
+          "muted",
+        ),
+      );
     if (task.legacyNotice) original.append(el("p", task.legacyNotice, "muted"));
-    progress.replaceChildren(el("h3", "当前进展"), el("p", task.latestProgress || "尚无已记录的进展。"));
-    final.hidden = task.finalResult === null;
-    if (!final.hidden)
-      final.replaceChildren(el("h3", "最终结果"), el("p", task.finalResult || "已明确完成，但未填写最终结果。"));
+    progress.replaceChildren(
+      el("h3", task.kind === "legacy" ? "本轮已记录结果或进展" : "当前进展"),
+      el("p", task.latestProgress || "尚无已记录的进展。"),
+    );
+    final.hidden = tab !== "result";
+    final.replaceChildren(
+      el("h3", "交付结果"),
+      el(
+        "p",
+        task.kind === "legacy"
+          ? `本轮执行结果：${task.latestProgress || "未记录执行结果"}。轮次结束也不代表业务完成，旧记录没有明确业务收尾声明。`
+          : task.finalResult === null
+            ? "尚无明确收尾的交付结果，不把当前进展当作最终结果。"
+            : task.finalResult || "已明确完成，但未填写最终结果。",
+      ),
+    );
     const formKey = `${task.key}/${task.decisions.items.map((c) => `${c.id}:${c.options.join("|")}`).join(",")}`;
     if (formKey !== formsKey) {
       formsKey = formKey;

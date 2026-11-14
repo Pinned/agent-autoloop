@@ -25,6 +25,7 @@ import { HOME } from "../host/home.ts";
 import type { Job } from "../protocol/job.ts";
 import { addUsage, type Notice, type Result } from "../protocol/validate.ts";
 import { adapterFor, type Adapter, type Reading, type Turn, type Usage } from "./agents.ts";
+import { readHistoryFile, saveHistoryAssociation, type HistoryAssociation } from "./history.ts";
 import { contextFor, promptFor, readMessage, repairPrompt, resultFrom } from "./contract.ts";
 import {
   summarizeHeld,
@@ -78,6 +79,8 @@ export type WorkerHub = Pick<Hub, "work" | "started" | "result">;
 export type WorkerOptions = {
   hub: WorkerHub;
   name: string;
+  /** Bound to this worker connection by the host; absent for older callers. */
+  historyScope?: string;
   capacity?: number;
   log?: (line: string) => void;
   /** Run when the hub can't be reached for ten minutes, with {text} in it: nothing else can tell the owner then. */
@@ -166,6 +169,7 @@ function snapshot(file: string) {
 export function createWorker({
   hub,
   name,
+  historyScope,
   capacity = 2,
   log = () => {},
   unreachable,
@@ -288,6 +292,31 @@ export function createWorker({
     };
     if (!existsSync(cwd)) throw new Error(`在 ${cwd} 启动不了：这个目录不存在`);
     const argv = adapter.command(turn);
+    const launch = adapter.history?.reference(turn);
+    if (launch && historyScope) {
+      let previous: HistoryAssociation | undefined;
+      try {
+        previous = JSON.parse(
+          readHistoryFile(HOME, `worker/history/${entry.run}-${entry.attempt}.json`, 0, 16384).bytes.toString("utf8"),
+        );
+      } catch {
+        /* First launch has no association. */
+      }
+      const association: HistoryAssociation = {
+        version: 1,
+        scope: historyScope,
+        run: entry.run,
+        attempt: entry.attempt,
+        task: entry.job.task?.id ?? null,
+        agent: entry.job.agent.id,
+        use: entry.job.agent.use,
+        launches: [
+          ...(previous?.scope === historyScope && Array.isArray(previous.launches) ? previous.launches : []),
+          launch,
+        ].slice(-8),
+      };
+      saveHistoryAssociation(HOME, association);
+    }
     const { out, err, exit } = files(entry);
     // Output and the exit code go through the shell, so they land in their files even if this program has gone by then.
     const script = [

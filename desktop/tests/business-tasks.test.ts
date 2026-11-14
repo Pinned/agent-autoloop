@@ -4,6 +4,146 @@ import { test } from "node:test";
 import { parseBusinessResponse, createBusinessTaskIpc, parseBusinessRequest } from "../src/business-task-ipc.ts";
 import { createRendererBusinessTasks } from "../src/renderer/business-tasks-controller.ts";
 import { createBusinessTaskSource } from "../src/business-task-source.ts";
+import { enrichLegacyReading } from "../src/renderer/legacy-task-reading.ts";
+test("legacy preview hydration respects the shared single detail slot and retains every dispatch preview", async () => {
+  let busy = false;
+  const items = [7, 6].map((id) => ({
+    ...task("active"),
+    key: `legacy:${id}` as const,
+    kind: "legacy" as const,
+    id,
+    latestRunId: id,
+    origin: {
+      eventId: null,
+      title: "原始需求资料缺失",
+      detail: "",
+      availability: "missing-history" as const,
+      truncated: false,
+    },
+    legacyNotice: "旧记录",
+  }));
+  const response = await enrichLegacyReading(
+    { ok: true, data: { items, hasMore: false, nextBefore: null } } as never,
+    { operation: "list", input: {} },
+    {
+      taskDetail: async (request) => {
+        assert.equal(busy, false, "the main query source has only one detail slot");
+        busy = true;
+        await Promise.resolve();
+        busy = false;
+        return {
+          version: 1,
+          ok: true,
+          data: {
+            run: { ...legacyRun, id: request.runId },
+            association: { kind: "unavailable" },
+            events: {
+              items: [
+                {
+                  id: request.runId,
+                  source: "local",
+                  type: "task.new",
+                  subject: "",
+                  summary: `派发标题 ${request.runId}`,
+                  detail: `派发详情 ${request.runId}`,
+                  receivedAt: null,
+                  truncated: false,
+                },
+              ],
+              hasMore: false,
+              nextCursor: null,
+            },
+            cards: { items: [], hasMore: false, nextCursor: null },
+            relatedRuns: { items: [], hasMore: false, nextCursor: null },
+          },
+        } as never;
+      },
+    },
+  );
+  assert.ok(response.ok);
+  const hydrated = (response as any).data.items;
+  assert.deepEqual(
+    hydrated.map((item: any) => item.origin.title),
+    ["派发标题 7", "派发标题 6"],
+  );
+});
+
+test("legacy hydration keeps every item and cursor within the list wire budget", async () => {
+  const items = Array.from({ length: 60 }, (_, i) => ({
+    ...task("active"),
+    key: `legacy:${i + 1}`,
+    kind: "legacy",
+    id: i + 1,
+    latestRunId: i + 1,
+    origin: { eventId: null, title: "", detail: "", availability: "missing-history", truncated: false },
+    legacyNotice: "旧记录",
+  }));
+  const request = { operation: "list" as const, input: {} };
+  const response = await enrichLegacyReading(
+    { ok: true, data: { items, hasMore: true, nextBefore: "legacy:60" } } as never,
+    request,
+    {
+      taskDetail: async (request) =>
+        ({
+          version: 1,
+          ok: true,
+          data: {
+            run: { ...legacyRun, id: request.runId },
+            association: { kind: "unavailable" },
+            events: {
+              items: [
+                {
+                  id: request.runId,
+                  source: "local",
+                  type: "task.new",
+                  subject: "",
+                  summary: "题".repeat(500),
+                  detail: "文".repeat(2000),
+                  receivedAt: null,
+                  truncated: false,
+                },
+              ],
+              hasMore: false,
+              nextCursor: null,
+            },
+            cards: { items: [], hasMore: false, nextCursor: null },
+            relatedRuns: { items: [], hasMore: false, nextCursor: null },
+          },
+        }) as never,
+    },
+  );
+  const parsed = parseBusinessResponse(response, request);
+  assert.ok(parsed.ok);
+  assert.equal((parsed.data as any).items.length, 60);
+  assert.equal((parsed.data as any).nextBefore, "legacy:60");
+});
+
+test("leaving the list stops legacy preview reads from replacing the selected detail", async () => {
+  let current = true;
+  const reads: number[] = [];
+  const items = [7, 6].map((id) => ({
+    ...task("active"),
+    key: `legacy:${id}`,
+    kind: "legacy",
+    id,
+    latestRunId: id,
+    origin: { eventId: null, title: "", detail: "", availability: "missing-history", truncated: false },
+    legacyNotice: "旧记录",
+  }));
+  await enrichLegacyReading(
+    { ok: true, data: { items, hasMore: false, nextBefore: null } } as never,
+    { operation: "list", input: {} },
+    {
+      taskDetail: async (request) => {
+        reads.push(request.runId);
+        current = false;
+        return { version: 1, ok: false, error: { code: "aborted" } } as never;
+      },
+    },
+    () => current,
+  );
+  assert.deepEqual(reads, [7]);
+});
 
 const task = (state = "queued") => ({
   key: "task:1",
@@ -22,6 +162,76 @@ const task = (state = "queued") => ({
   legacyNotice: null,
 });
 const list = (state = "queued") => ({ ok: true, data: { items: [task(state)], hasMore: false, nextBefore: null } });
+const legacyRun = {
+  id: 7,
+  rule: "old-rule",
+  agent: "claude",
+  state: "done",
+  attempts: 1,
+  createdAt: null,
+  claimedAt: null,
+  finishedAt: null,
+  notBefore: null,
+  summary: "本轮实际执行结果",
+  error: "",
+  stopping: false,
+  usage: null,
+  truncated: false,
+};
+test("old hub native run queries enter the unified legacy detail without inventing completion or missing data", async () => {
+  const controller = createRendererBusinessTasks(
+    {
+      businessTasksRead: async () => ({ ok: false, error: "unsupported" }),
+      taskList: async (request) => {
+        assert.equal(request.operation, "list");
+        return { version: 1, ok: true, data: { items: [legacyRun], hasMore: false, nextBefore: null } } as never;
+      },
+      taskDetail: async () =>
+        ({
+          version: 1,
+          ok: true,
+          data: {
+            run: legacyRun,
+            association: { kind: "unavailable" },
+            events: {
+              items: [
+                {
+                  id: 3,
+                  source: "local",
+                  type: "task.new",
+                  subject: "",
+                  summary: "已记录触发标题",
+                  detail: "已记录的本轮触发详情",
+                  receivedAt: null,
+                  truncated: false,
+                },
+              ],
+              hasMore: false,
+              nextCursor: null,
+            },
+            cards: { items: [], hasMore: false, nextCursor: null },
+            relatedRuns: { items: [], hasMore: false, nextCursor: null },
+          },
+        }) as never,
+    },
+    () => {},
+  );
+  controller.refresh();
+  for (let i = 0; i < 12; i++) await Promise.resolve();
+  assert.equal(controller.kind, "legacy");
+  assert.equal(controller.items[0]?.key, "legacy:7");
+  assert.equal(controller.items[0]?.origin.title, "已记录触发标题");
+  assert.equal(controller.items[0]?.origin.detail, "已记录的本轮触发详情");
+  controller.open("legacy:7");
+  for (let i = 0; i < 12; i++) await Promise.resolve();
+  assert.equal(controller.detail?.task.origin.detail, "已记录的本轮触发详情");
+  assert.equal(controller.detail?.task.origin.availability, "recorded");
+  assert.equal(controller.detail?.task.latestProgress, "本轮实际执行结果");
+  assert.equal(controller.detail?.task.finalResult, null);
+  assert.notEqual(controller.detail?.task.state, "completed");
+  assert.equal(controller.detail?.task.execution?.state, "done");
+  controller.dispose();
+});
 const flush = async () => {
   await Promise.resolve();
   await Promise.resolve();

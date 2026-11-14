@@ -65,6 +65,8 @@ The page is reachable only from this machine; no port needs to face the outside.
 
 The Electron desktop app manages a hub or worker, stays in the menu bar when closed, and supports light/dark themes. Its task page keeps one card per business task, fixed original requirements, decision continuations and a factual timeline. Legacy runs lacking task identity remain separate instead of being guessed into groups. `done` ends a round; explicit `taskStatus: "completed"` with no pending work closes a task, without implying hub-verified acceptance. See the [desktop development and acceptance scope](docs/desktop.md) (Chinese). Existing facts are never migrated or rewritten.
 
+Task details use full-width Process / Original request / Delivery result tabs. New Claude launches in the app-owned runtime can page through saved primary-session public messages and tool return status using minimal local associations. Sessions may span multiple rounds; tool arguments and raw outputs remain private. Attached hubs, remote workers, Codex and complete subagent history are unsupported. Live CLI persistence is not verified on a real run; old histories are not guessed into associations. See [the capability limits](docs/desktop.md#本机-agent-会话历史).
+
 ## How a piece of work flows
 
 The numbers match the diagram above:

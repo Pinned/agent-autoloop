@@ -1,5 +1,6 @@
 // Business pages never infer identity, completion or acceptance from a run summary.
 import type { DesktopBridge } from "../policy.ts";
+import { readLegacyTask, enrichLegacyReading } from "./legacy-task-reading.ts";
 import { parseBusinessRequest, parseBusinessResponse, type BusinessRequest } from "../business-task-ipc.ts";
 import {
   businessTaskKey,
@@ -21,7 +22,7 @@ import {
 import type { TaskHistoryResponse } from "../../../host/desktop-task-history-contract.ts";
 type RunDetail = Extract<TaskHistoryResponse<"detail">, { ok: true }>["data"];
 type Bridge = Pick<DesktopBridge, "businessTasksRead"> &
-  Partial<Pick<DesktopBridge, "taskAction" | "taskDetail" | "onRuntimeEvent">>;
+  Partial<Pick<DesktopBridge, "taskAction" | "taskList" | "taskDetail" | "onRuntimeEvent">>;
 export function createRendererBusinessTasks(bridge: Bridge, changed: () => void) {
   let items: BusinessTaskItem[] = [],
     page: BusinessTaskList | null = null,
@@ -45,6 +46,27 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
   let actionToken: object | null = null;
   const drafts = new Map<string, string>();
   const notify = () => changed();
+  let compatibility = false;
+  async function readBusiness(request: BusinessRequest, current: () => boolean) {
+    if (compatibility) return readLegacyTask(request, bridge, current);
+    const raw = await bridge.businessTasksRead(request);
+    const checked = parseBusinessResponse(raw, request);
+    if (!checked.ok && checked.error === "unsupported" && bridge.taskList && bridge.taskDetail && current()) {
+      compatibility = true;
+      kind = "legacy";
+      return readLegacyTask(request, bridge, current);
+    }
+    const candidates =
+      checked.ok && request.operation === "list"
+        ? (checked.data as BusinessTaskList).items
+        : checked.ok && request.operation === "detail"
+          ? [(checked.data as BusinessTaskDetail).task]
+          : [];
+    return current() &&
+      candidates.some((item) => item.kind === "legacy" && item.origin.availability === "missing-history")
+      ? enrichLegacyReading(checked, request, bridge, current)
+      : raw;
+  }
   function readList(more = false) {
     if (!allowed || busy || (more && !page?.hasMore)) return;
     const generation = ++listGeneration;
@@ -101,7 +123,10 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
         notify();
       };
       try {
-        void Promise.resolve(bridge.businessTasksRead(request)).then(finish, () => finish(undefined));
+        void readBusiness(request, () => generation === listGeneration && allowed && selectedKey === null).then(
+          finish,
+          () => finish(undefined),
+        );
       } catch {
         finish(undefined);
       }
@@ -145,7 +170,10 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
       notify();
     };
     try {
-      void Promise.resolve(bridge.businessTasksRead(request)).then(finish, () => finish(undefined));
+      void readBusiness(request, () => generation === detailGeneration && selectedKey === key && allowed).then(
+        finish,
+        () => finish(undefined),
+      );
     } catch {
       finish(undefined);
     }
@@ -240,6 +268,7 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
   const unsubscribe = bridge.onRuntimeEvent?.((raw) => {
     try {
       const event = parseDesktopRuntimeEvent(raw);
+      compatibility = false;
       const next = event.state.status === "running" && event.state.role === "hub-worker";
       ++listGeneration;
       ++detailGeneration;
@@ -265,11 +294,14 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
     }
   });
   return {
+    get compatibility() {
+      return compatibility;
+    },
     get kind() {
       return kind;
     },
     setKind(next: BusinessTaskItem["kind"], input: BusinessTaskListInput = filter) {
-      if (next !== "task" && next !== "legacy") return;
+      if ((next !== "task" && next !== "legacy") || (compatibility && next === "task")) return;
       kind = next;
       const { before: _before, state, ...rest } = input;
       filter = { ...rest, ...(next === "task" && state ? { state } : {}) };
