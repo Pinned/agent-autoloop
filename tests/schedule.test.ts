@@ -19,7 +19,7 @@ const { claimNext, finish, started, heartbeat } = await import("../host/runtime.
 const { all, one, run } = await import("./storage.ts");
 
 const clean = () => {
-  for (const table of ["run_events", "runs", "events", "seen", "cards", "deliveries", "timers", "schedules"])
+  for (const table of ["tasks", "run_events", "runs", "events", "seen", "cards", "deliveries", "timers", "schedules"])
     run(`DELETE FROM ${table}`);
 };
 const ticks = () =>
@@ -126,7 +126,8 @@ test("a run's look-again fires once at its time, on its thread, in its session, 
 test("the same key moves a timer; another thread has its own; a run sees what's waiting and can cancel it", () => {
   clean();
   const end = (n: number, now: number, later: object[]) => {
-    ingest("app", { id: `${n}:${now}`, type: "feedback.new", subject: `#${n}` }, now);
+    // Updating/cancelling a timer requires explicit association with its original task.
+    ingest("app", { id: `${n}:${now}`, type: "feedback.new", subject: `#${n}`, taskKey: `timer:${n}` }, now);
     const job = claim("w1", now)!;
     const seen = job.context.waiting;
     finish(job.run, job.token, { outcome: "done", later }, now);

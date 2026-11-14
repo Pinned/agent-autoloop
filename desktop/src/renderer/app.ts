@@ -17,6 +17,8 @@ import { createRendererRulesCas } from "./rules-cas-controller.ts";
 import { mountRulesCasView } from "./rules-cas-view.ts";
 import { createRendererTasks } from "./tasks-controller.ts";
 import { mountTasksView } from "./tasks-view.ts";
+import { createRendererBusinessTasks } from "./business-tasks-controller.ts";
+import { mountBusinessTasksView } from "./business-tasks-view.ts";
 import { createRendererSettings } from "./settings-controller.ts";
 import { mountSettingsView } from "./settings-view.ts";
 import { mountReconnectView } from "./reconnect-view.ts";
@@ -337,7 +339,19 @@ const rulesPage = mountRulesCasView(rules, {
 const tasks = createRendererTasks(window.desktop, () => {
   if (currentPage === "tasks") tasksPage?.update();
 });
-const tasksPage = mountTasksView(tasks, {
+const executionPage = mountTasksView(tasks);
+const executionDiagnostics = {
+  ...executionPage,
+  init() {
+    if (tasks.loadState.kind === "loading" && !tasks.busy) tasks.refresh();
+    executionPage.update();
+  },
+};
+const businessTasks = createRendererBusinessTasks(window.desktop, () => {
+  if (currentPage === "tasks") tasksPage?.update();
+});
+const tasksPage = mountBusinessTasksView(businessTasks, {
+  diagnostics: executionDiagnostics,
   scrollHost: main,
   detailChanged: (open) => {
     if (currentPage !== "tasks") return;
@@ -579,10 +593,10 @@ function render(id: string, focus = true) {
     // The hub's real run history, read-only; the placeholder days are over.
     main.append(tasksPage.root);
     tasksPage.update();
-    const detailOpen = tasks.detailState.kind !== "idle";
+    const detailOpen = businessTasks.selectedKey !== null;
     main.querySelector<HTMLElement>(".page-head")!.hidden = detailOpen;
     main.setAttribute("aria-labelledby", detailOpen ? "task-detail-title" : "page-title");
-    if (tasks.loadState.kind === "loading" && !tasks.busy) tasks.refresh();
+    tasksPage.init();
   }
   if (id === "workers") {
     const host = document.createElement("div");

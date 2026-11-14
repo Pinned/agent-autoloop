@@ -1,3 +1,16 @@
+CREATE TABLE tasks (
+  id INTEGER PRIMARY KEY,
+  source TEXT NOT NULL,
+  rule TEXT NOT NULL,
+  task_key TEXT,
+  origin_event_id INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT,
+  completed_run_id INTEGER
+);
+
 -- The columns of the read-only SQL views over the projections. host/runtime.ts reads the table and column names and makes
 -- each table here a view; nothing is executed as written, which is why there are no indexes and no migrations.
 CREATE TABLE events (
@@ -16,6 +29,7 @@ CREATE TABLE events (
 
 CREATE TABLE runs (
   id INTEGER PRIMARY KEY,
+  task_id INTEGER,
   rule TEXT NOT NULL,
   agent TEXT NOT NULL,
   grp TEXT NOT NULL,
@@ -41,7 +55,7 @@ CREATE TABLE runs (
 );
 
 CREATE TABLE holds (
-  grp TEXT PRIMARY KEY,
+  task_id INTEGER,  grp TEXT PRIMARY KEY,
   rule TEXT NOT NULL,
   lane TEXT NOT NULL,
   run_id INTEGER NOT NULL,
@@ -56,6 +70,7 @@ CREATE TABLE run_events (
 
 CREATE TABLE cards (
   id INTEGER PRIMARY KEY,
+  task_id INTEGER,
   key TEXT NOT NULL,
   kind TEXT NOT NULL,
   title TEXT NOT NULL,
@@ -100,6 +115,7 @@ CREATE TABLE deliveries (
 
 CREATE TABLE timers (
   id INTEGER PRIMARY KEY,
+  task_id INTEGER,
   rule TEXT NOT NULL,
   lane TEXT NOT NULL DEFAULT '',
   key TEXT NOT NULL,

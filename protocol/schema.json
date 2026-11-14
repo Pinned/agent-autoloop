@@ -5,15 +5,38 @@
     "ruleSchedulingOptions": {
       "type": "object",
       "properties": {
-        "group": { "type": "string", "minLength": 1 },
-        "autoGroup": { "type": "boolean" },
-        "pauseOnAsk": { "type": "boolean" },
-        "parallel": { "type": "integer", "minimum": 1 }
+        "group": {
+          "type": "string",
+          "minLength": 1
+        },
+        "autoGroup": {
+          "type": "boolean"
+        },
+        "pauseOnAsk": {
+          "type": "boolean"
+        },
+        "parallel": {
+          "type": "integer",
+          "minimum": 1
+        }
       },
       "allOf": [
         {
-          "if": { "required": ["pauseOnAsk"], "properties": { "pauseOnAsk": { "const": true } } },
-          "then": { "properties": { "parallel": { "const": 1 } } }
+          "if": {
+            "required": ["pauseOnAsk"],
+            "properties": {
+              "pauseOnAsk": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "parallel": {
+                "const": 1
+              }
+            }
+          }
         }
       ],
       "description": "Optional rule scheduling fields; absolute auto-group paths and cross-rule parallel consistency are checked by parseRules.",
@@ -22,12 +45,34 @@
     "hold": {
       "type": "object",
       "properties": {
-        "grp": { "type": "string" },
-        "rule": { "type": "string" },
-        "lane": { "type": "string" },
-        "run_id": { "type": "integer", "minimum": 1 },
-        "created_at": { "type": "string" },
-        "cards": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "uniqueItems": true }
+        "grp": {
+          "type": "string"
+        },
+        "rule": {
+          "type": "string"
+        },
+        "lane": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "cards": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "uniqueItems": true
+        },
+        "task_id": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        }
       },
       "required": ["grp", "rule", "lane", "run_id", "created_at"],
       "additionalProperties": false
@@ -35,12 +80,18 @@
     "protocolDescription": {
       "type": "object",
       "properties": {
-        "version": { "const": 1 },
+        "version": {
+          "const": 1
+        },
         "capabilities": {
           "type": "array",
           "maxItems": 8,
           "uniqueItems": true,
-          "items": { "type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" }
+          "items": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+          }
         }
       },
       "required": ["version", "capabilities"],
@@ -49,9 +100,17 @@
     "credentialIdentity": {
       "type": "object",
       "properties": {
-        "version": { "const": 1 },
-        "kind": { "enum": ["owner", "worker"] },
-        "name": { "type": "string", "maxLength": 128, "pattern": "^[a-z][a-z0-9-]*$" }
+        "version": {
+          "const": 1
+        },
+        "kind": {
+          "enum": ["owner", "worker"]
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-z][a-z0-9-]*$"
+        }
       },
       "required": ["version", "kind", "name"],
       "additionalProperties": false
@@ -90,6 +149,12 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 9007199254740991
+        },
+        "taskKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "\\S"
         }
       },
       "required": ["id", "type"],
@@ -339,6 +404,9 @@
             "$ref": "#/$defs/event"
           },
           "maxItems": 100
+        },
+        "taskStatus": {
+          "enum": ["active", "completed"]
         }
       },
       "required": ["outcome"],
@@ -592,6 +660,55 @@
           "items": {
             "type": "string"
           }
+        },
+        "task": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "originEvent": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string"
+                },
+                "sourceName": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "subject": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "detail": {
+                  "type": "string"
+                },
+                "link": {
+                  "type": "string"
+                },
+                "receivedAt": {
+                  "type": "string"
+                },
+                "hops": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": ["id", "source", "sourceName", "type", "subject", "summary", "detail", "link", "receivedAt"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["id", "originEvent"],
+          "additionalProperties": false
         }
       },
       "required": ["run", "token", "attempt", "rule", "agent", "session", "askFirst", "context"],
@@ -786,7 +903,12 @@
         "meta": {
           "type": "object",
           "properties": {
-            "declarationHash": { "type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[a-f0-9]{64}$" }
+            "declarationHash": {
+              "type": "string",
+              "minLength": 64,
+              "maxLength": 64,
+              "pattern": "^[a-f0-9]{64}$"
+            }
           },
           "additionalProperties": true
         },

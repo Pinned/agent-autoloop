@@ -414,6 +414,8 @@ export async function uiRoutes(request: Request): Promise<Response | null> {
   if (
     pathname === "/v1/ui/rules" ||
     pathname === "/v1/ui/tasks" ||
+    pathname === "/v1/ui/business-tasks" ||
+    /^\/v1\/ui\/business-tasks\/(task|legacy)\/([^/]+)$/.test(pathname) ||
     pathname === "/v1/ui/task-runs" ||
     /^\/v1\/ui\/task-runs\/([^/]+)$/.test(pathname) ||
     /^\/v1\/ui\/config(\/|$)/.test(pathname)

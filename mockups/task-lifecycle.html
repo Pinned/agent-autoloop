@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>任务生命周期 · 交互原型</title>
+<style>
+:root{--bg:#f6f7f9;--ink:#202734;--muted:#737c8c;--line:#e8ebf0;--accent:#4669d8}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}button{font:inherit;cursor:pointer}button:focus-visible{outline:3px solid #a5b7ff;outline-offset:3px}.shell{max-width:1280px;margin:auto;padding:36px 32px}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:28px}h1{font-size:25px;margin:0}h2{font-size:19px;margin:0}h3{font-size:14px;margin:0 0 12px}.muted{color:var(--muted)}.prototype{font-size:12px;border:1px solid var(--line);border-radius:6px;padding:5px 10px;background:white}.layout{display:grid;grid-template-columns:360px 1fr;gap:24px}.tabs{display:flex;gap:20px;margin:0 0 18px;color:var(--muted)}.tabs strong{color:var(--ink)}.task{background:white;border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:12px}.task.selected{border-color:#97aae9;box-shadow:0 0 0 2px #e8edff}.task h2{font-size:16px;margin:12px 0 6px}.task p{margin:6px 0;color:var(--muted);font-size:13px}.meta{display:flex;justify-content:space-between;font-size:12px;color:var(--muted)}.badge{display:inline-block;font-size:12px;color:#8a5b12;background:#fff3d9;border-radius:5px;padding:2px 8px}.badge.queue{background:#edf0f6;color:#627087}.badge.running{background:#edf2ff;color:#4669d8}.badge.done{background:#eaf5ef;color:#367253}.task-decision{border-top:1px solid var(--line);margin-top:16px;padding-top:12px;font-size:13px}.panel{background:white;border:1px solid var(--line);border-radius:14px;overflow:hidden}.panel-head{padding:26px 28px 22px;border-bottom:1px solid var(--line)}.heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.panel-head p{margin:8px 0 0;font-size:12px;color:var(--muted)}.body{padding:26px 28px}.section{margin-bottom:30px}.original{padding:18px 20px;background:#f8f9fb;border-radius:8px}.original p{margin:0}.original p+p{margin-top:10px}.decision{background:#fffcf5;border:1px solid #efdfbc;border-radius:10px;padding:20px}.decision h3{font-size:16px;margin-bottom:6px}.decision p{color:#786a53;margin:0 0 16px}.options{display:grid;gap:8px}.option{text-align:left;background:white;border:1px solid #e8e1d5;border-radius:8px;padding:12px 14px;color:var(--ink)}.option.active{border-color:var(--accent);background:#f5f7ff}.option small{display:block;color:var(--muted);margin-top:3px}.actions{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:18px}.primary{background:var(--accent);color:white;border:0;border-radius:7px;padding:9px 18px}.secondary{background:white;border:1px solid var(--line);border-radius:7px;padding:8px 14px;color:var(--ink)}.notice{background:#f4f7ff;border:1px solid #e1e8ff;border-radius:9px;padding:18px 20px}.notice p{margin:6px 0 0;color:var(--muted)}.timeline{margin:0;padding:0;list-style:none}.timeline li{position:relative;padding:0 0 24px 26px;border-left:1px solid var(--line);margin-left:5px}.timeline li:last-child{border-left-color:transparent;padding-bottom:0}.timeline li:before{content:"";position:absolute;left:-5px;top:6px;width:9px;height:9px;background:#a2acbd;border:2px solid white;border-radius:50%}.timeline li.current:before{background:var(--accent)}.timeline p{margin:5px 0 0;color:var(--muted);font-size:13px}.time{float:right;font-size:12px;color:var(--muted)}details{margin-top:12px;font-size:12px;color:var(--muted)}summary{cursor:pointer}.foot{border-top:1px solid var(--line);padding:16px 28px;display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:12px}.demo-controls{display:flex;gap:8px;flex-wrap:wrap}.demo-controls button{font-size:12px;padding:5px 10px}.helper{font-size:12px;color:var(--muted);margin-top:18px}@media(max-width:850px){.shell{padding:20px}.layout{grid-template-columns:1fr}.body,.panel-head{padding:20px}.heading{align-items:flex-start}.actions{flex-wrap:wrap}}
+</style>
+</head>
+<body><main class="shell">
+<header><div><h1>任务</h1><div class="muted">按事情看进展，按轮次查记录。</div></div><span class="prototype">交互原型 · 示例数据</span></header>
+<div class="layout"><aside><div class="tabs"><strong>全部任务</strong><span>待你处理</span><span>已完成</span></div>
+<article class="task selected"><div class="meta"><span>任务 T-1042</span><span>今天 09:12</span></div><h2>修复历史回放的问答提示</h2><span class="badge" id="list-status">待你决策</span><p>让回放进度条显示完整的用户提问与回复。</p><div class="task-decision" id="list-progress">需要你决定：提示中显示哪些内容？</div></article>
+<article class="task"><div class="meta"><span>任务 T-1041</span><span>今天 08:35</span></div><h2>整理本周项目更新</h2><span class="badge running">执行中</span><p>正在核对本周已合并的改动与验收结果。</p></article>
+<article class="task"><div class="meta"><span>任务 T-1040</span><span>昨天 17:20</span></div><h2>修复回放声波的布局</h2><span class="badge done">已完成</span><p>声波与布局已通过实际回放验收。</p></article>
+<p class="helper">回答问题后，任务不会新增一张卡片。<br>标题与原始需求不变，进展在这里更新。</p>
+</aside>
+<section class="panel"><div class="panel-head"><div class="heading"><h2>修复历史回放的问答提示</h2><span class="badge" id="detail-status">待你决策</span></div><p>任务 T-1042 · Unity 项目需求 · Claude Code · 今天 09:12 提交</p></div>
+<div class="body"><section class="section"><h3>原始需求</h3><div class="original"><p>历史回放中，悬停在进度条上只能看到笼统的“历史事件”，看不到当时具体说了什么。</p><p>请让悬停提示显示当时的问答内容，保留已有车辆状态提示，不影响回放操作。</p></div></section>
+<section class="section" id="current-area" aria-live="polite"></section>
+<section><h3>处理记录</h3><ol class="timeline" id="timeline"></ol></section></div>
+<div class="foot"><span>原始需求、回答与每轮结果均保留</span><button class="secondary" id="reset">重置演示</button></div></section></div>
+<div class="helper">演示控制：模拟后台领取和完成，不会派发真实任务。</div><div class="demo-controls"><button class="secondary" id="simulate-run">模拟 Agent 领取</button><button class="secondary" id="simulate-done">模拟处理完成</button></div>
+</main>
+<script>
+let stage='decision',selected=1;
+const labels={decision:'待你决策',queued:'排队，等待继续执行',running:'执行中',done:'已完成'};
+const descriptions={decision:'需要你决定：提示中显示哪些内容？',queued:'决定已记录，等待 Agent 继续处理。',running:'正在按你的决定修改问答提示。',done:'处理结果：已修复，并通过实际回放验收。'};
+const choices=['仅显示用户提问','显示用户提问与回复'];
+function render(){
+for(const id of ['list-status','detail-status']){const el=document.getElementById(id);el.textContent=labels[stage];el.className='badge '+({queued:'queue',running:'running',done:'done'}[stage]||'');}
+document.getElementById('list-progress').textContent=descriptions[stage];
+const area=document.getElementById('current-area');
+if(stage==='decision'){
+area.innerHTML='<h3>当前需要你决定</h3><div class="decision"><h3>提示中显示哪些内容？</h3><p>已定位问题：当前提示只读取车控指令摘要，普通问答没有被显示。</p><div class="options"><button class="option" data-choice="0">仅显示用户提问<small>内容更简短，但无法看到当时的回复。</small></button><button class="option" data-choice="1">显示用户提问与回复 · 推荐<small>完整还原问答；长内容使用可滚动提示，不遮挡操作。</small></button></div><div class="actions"><span class="muted">回答后，原任务进入下一轮执行。</span><button class="primary" id="confirm">确认方案</button></div></div>';
+area.querySelectorAll('[data-choice]').forEach(button=>{button.classList.toggle('active',Number(button.dataset.choice)===selected);button.setAttribute('aria-pressed',String(Number(button.dataset.choice)===selected));button.onclick=()=>{selected=Number(button.dataset.choice);render();};});
+document.getElementById('confirm').onclick=()=>{stage='queued';render();};
+}else{
+area.innerHTML='<h3>'+ (stage==='done'?'最终结果':'当前进展') +'</h3><div class="notice"><strong id="progress-text"></strong><p id="decision-text"></p></div>';
+document.getElementById('progress-text').textContent=descriptions[stage];document.getElementById('decision-text').textContent='你的决定：'+choices[selected]+'。决策已记录，原提问不再待处理。';
+}
+const entries=[['提交任务','已保存原始标题与任务详情。','09:12'],['第 1 轮 · 定位问题','已定位数据来源，提出展示方案，需要你确认。','09:15']];
+if(stage==='decision') entries.push(['等待你的决策','Agent 本轮已结束，不占用执行进程等待。','09:15']);
+else {entries.push(['你的决策',choices[selected]+'。','09:18']);if(stage==='queued')entries.push(['第 2 轮 · 等待执行','同一任务继续处理，尚未被接单程序领取。','09:18']);if(stage==='running'||stage==='done')entries.push(['第 2 轮 · '+(stage==='done'?'执行完成':'执行中'),stage==='done'?'已修改问答提示并完成检查。':'已领取，正在根据决定修改。','09:19']);if(stage==='done'){entries.push(['验收反馈','编译完成，悬停问答与车辆状态提示正常。','09:26']);entries.push(['任务完成','已修复，并通过实际回放验收。','09:27']);}}
+const timeline=document.getElementById('timeline');timeline.replaceChildren();entries.forEach((entry,i)=>{const li=document.createElement('li');if(i===entries.length-1)li.className='current';const time=document.createElement('span');time.className='time';time.textContent=entry[2];const title=document.createElement('strong');title.textContent=entry[0];const p=document.createElement('p');p.textContent=entry[1];li.append(time,title,p);if(entry[0].startsWith('第 ')){const details=document.createElement('details');const summary=document.createElement('summary');summary.textContent='执行记录与诊断资料';const text=document.createElement('p');text.textContent=entry[0].startsWith('第 1')?'执行 #20 · Claude Code · 提问卡片 #12':'执行 #21 · Claude Code · 接续原任务会话';details.append(summary,text);li.append(details);}timeline.append(li);});
+document.getElementById('simulate-run').disabled=stage!=='queued';document.getElementById('simulate-done').disabled=stage!=='running';
+}
+document.getElementById('reset').onclick=()=>{stage='decision';selected=1;render();};document.getElementById('simulate-run').onclick=()=>{if(stage==='queued'){stage='running';render();}};document.getElementById('simulate-done').onclick=()=>{if(stage==='running'){stage='done';render();}};render();
+</script></body></html>

@@ -1,3 +1,5 @@
+import { createBusinessTaskSource } from "./business-task-source.ts";
+import { createBusinessTaskIpc } from "./business-task-ipc.ts";
 import { createTaskQuerySource } from "./task-query-source.ts";
 import { createTaskListIpc } from "./task-list-ipc.ts";
 import { createTaskDetailIpc } from "./task-detail-ipc.ts";
@@ -358,6 +360,16 @@ if (ownsAppLock)
         },
         refresh: () => refreshMenus(),
         report: (message) => console.error(message),
+      });
+      const businessSource = createBusinessTaskSource({
+        home: runtimeHome,
+        getState: () => presentation.snapshot(),
+        readConfig,
+      });
+      const businessIpc = createBusinessTaskIpc({
+        assertSender: (event) => assertSender(event as Parameters<typeof assertSender>[0], window.webContents, page),
+        presentation,
+        read: (request, canRead) => businessSource.read(request, canRead),
       });
       const detailSource = createTaskQuerySource({
         home: runtimeHome,
@@ -851,6 +863,7 @@ if (ownsAppLock)
         return taskSource.entries();
       });
       // The tasks list's server-side search/filter door; the unit checks sender, arity and shape.
+      ipcMain.handle(channels.businessTasksRead, (event, ...args: unknown[]) => businessIpc.read(event, args));
       ipcMain.handle(channels.taskList, (event, ...args: unknown[]) => listIpc.read(event, args));
       // One task at a time through the hub's door; the input is validated before any request.
       ipcMain.handle(channels.taskDetail, (event, ...args: unknown[]) => detailIpc.read(event, args));
@@ -983,7 +996,7 @@ if (ownsAppLock)
             result.runtimeEventSeen !== false ||
             result.navigateSeen !== false ||
             result.bridge.join(",") !==
-              "completeSetup,copyLaunchCommand,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,pickWorkingDir,rulesCasGet,rulesCasPut,runtimeGet,runtimeReconnect,runtimeStart,runtimeStop,runtimeUseEmbedded,setTheme,settingsGet,settingsPut,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,taskList,tasksGet,todayState,window,workersGet,workersLocal" ||
+              "businessTasksRead,completeSetup,copyLaunchCommand,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,pickWorkingDir,rulesCasGet,rulesCasPut,runtimeGet,runtimeReconnect,runtimeStart,runtimeStop,runtimeUseEmbedded,setTheme,settingsGet,settingsPut,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,taskList,tasksGet,todayState,window,workersGet,workersLocal" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||

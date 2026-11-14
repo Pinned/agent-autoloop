@@ -98,10 +98,20 @@ function assignQueued(draft: Draft, run: Row) {
   const session = rule.to === run.agent ? {} : nulls("session", "resume");
   put(draft, "runs", run.id, { agent: rule.to, rules_version: config.version, ...session });
 }
-const threadOf = (run: Row) => ({ rule: run.rule, lane: run.lane, grp: run.grp });
-const sameThread = (a: Row, b: Row) => a.rule === b.rule && a.lane === b.lane;
+const taskScope = (row: Row) => ({ task_id: row.task_id ?? null });
+const threadOf = (run: Row) => ({ rule: run.rule, lane: run.lane, grp: run.grp, ...taskScope(run) });
+const sameThread = (a: Row, b: Row) =>
+  a.task_id != null || b.task_id != null
+    ? a.task_id != null && a.task_id === b.task_id
+    : a.rule === b.rule && a.lane === b.lane;
 const threadAsks = (draft: Draft, thread: Row) =>
-  rows(draft.view, "cards", { rule: thread.rule, lane: thread.lane, kind: "ask", state: ["open", "decided"] });
+  rows(draft.view, "cards", {
+    rule: thread.rule,
+    lane: thread.lane,
+    ...taskScope(thread),
+    kind: "ask",
+    state: ["open", "decided"],
+  });
 const holdsOf = (draft: Draft) => rows(draft.view, "holds");
 function canResumeHold(draft: Draft, run: Row, hold: Row) {
   if (!sameThread(run, hold)) return false;
@@ -158,16 +168,40 @@ const notify = (draft: Draft, key: string, title: string, text: string, extra: R
   createCard(draft, { key, kind: "notice", title, text, ...extra });
 
 /** A queued run of this rule and subject takes the event, so what comes in while it waits is handled together. */
-function enqueue(draft: Draft, rule: Rule, event: number, subject: string, resume?: string | null, thread?: Row) {
-  const hold = holdsOf(draft).find((item) => item.rule === rule.name && item.lane === subject);
+function enqueue(
+  draft: Draft,
+  rule: Rule,
+  event: number,
+  subject: string,
+  resume?: string | null,
+  thread?: Row,
+  taskId?: number | null,
+) {
+  if (taskId != null) {
+    put(draft, "tasks", taskId, { status: "active", updated_at: draft.at, completed_at: null, completed_run_id: null });
+    // Explicit identity retains its scheduling lane even when later source subjects differ.
+    thread ??= rows(draft.view, "runs", { task_id: taskId }, 1, true)[0];
+  }
+  const hold = holdsOf(draft).find(
+    (item) => item.rule === rule.name && item.lane === subject && (item.task_id ?? null) === (taskId ?? null),
+  );
   const lane = thread?.lane ?? hold?.lane ?? (rule.parallel ? subject : "");
   const group = thread?.grp ?? hold?.grp ?? rule.group;
   const rulesVersion = draft.view.get("config", "rules")!.version;
   const stamps = { not_before: draft.at, created_at: draft.at, rules_version: rulesVersion };
-  const isSameQueued = (run: Row) => run.rule === rule.name && run.lane === lane && run.state === "queued";
+  const isSameQueued = (run: Row) =>
+    run.rule === rule.name && run.lane === lane && (run.task_id ?? null) === (taskId ?? null) && run.state === "queued";
   const run =
-    rows(draft.view, "runs", { rule: rule.name, lane, state: "queued" }).find(isSameQueued) ??
-    add(draft, "runs", { rule: rule.name, agent: rule.to, grp: group, lane, state: "queued", ...stamps });
+    rows(draft.view, "runs", { rule: rule.name, lane, task_id: taskId ?? null, state: "queued" }).find(isSameQueued) ??
+    add(draft, "runs", {
+      rule: rule.name,
+      agent: rule.to,
+      grp: group,
+      lane,
+      state: "queued",
+      ...(taskId != null ? { task_id: taskId } : {}),
+      ...stamps,
+    });
   if (thread || hold) put(draft, "runs", run.id, { grp: group });
   put(draft, "run_events", `${run.id}:${event}`, { run_id: run.id, event_id: event });
   if (resume) put(draft, "runs", run.id, { resume });
@@ -207,7 +241,26 @@ function ingest(draft: Draft, source: string, given: unknown) {
     const words = `同一条处理链已超过 ${MAX_HOPS} 层，后续事件已记录，没有继续派发。`;
     notify(draft, `hops:${source}:${event.id}`, "事件循环已停止", words, { once: true });
   }
-  for (const rule of matched) enqueue(draft, rule, id, event.subject);
+  for (const rule of matched) {
+    const existingTask =
+      event.taskKey === undefined
+        ? undefined
+        : rows(draft.view, "tasks", { source, rule: rule.name, task_key: event.taskKey }, 1)[0];
+    const task =
+      existingTask ??
+      add(draft, "tasks", {
+        source,
+        rule: rule.name,
+        task_key: event.taskKey ?? null,
+        origin_event_id: id,
+        status: "active",
+        created_at: draft.at,
+        updated_at: draft.at,
+        completed_at: null,
+      });
+    if (existingTask) put(draft, "tasks", task.id, { status: "active", updated_at: draft.at, completed_at: null });
+    enqueue(draft, rule, id, event.subject, undefined, undefined, task.id);
+  }
   return { event: id, duplicate: false, routed };
 }
 
@@ -223,7 +276,7 @@ function cardFromReceipt(draft: Draft, run: Row, kind: string, card: Row) {
   const session = draft.view.get("runs", run.id)!.session;
   const quiet = kind === "notice" && ruleNamed(draft, run.rule)?.tell === "never";
   const origin = { source: sourceOf(draft.view, run.id), agent: run.agent, session, run: run.id };
-  const key = `thread:${run.rule}:${run.lane}:${name}`;
+  const key = run.task_id == null ? `thread:${run.rule}:${run.lane}:${name}` : `task:${run.task_id}:${name}`;
   createCard(draft, { ...card, hops: hopsOf(draft, run), key, kind, quiet, ...threadOf(run), ...origin });
 }
 
@@ -310,10 +363,17 @@ function retryLater(draft: Draft, run: Row, result: Result) {
   const error = (result.error ?? "").trim().replace(/[。.]+$/, "") || "没说原因";
   const unclaimed = nulls("claim", "claimed_at", "seen_at", "cancel_at");
   put(draft, "runs", id, { state: "queued", attempts, not_before: iso(notBefore), error, ...unclaimed });
-  const sameThread = (other: Row) => other.id !== id && other.rule === run.rule && other.lane === run.lane;
-  for (const other of rows(draft.view, "runs", { rule: run.rule, lane: run.lane, state: "queued" }).filter(
-    sameThread,
-  )) {
+  const sameThread = (other: Row) =>
+    other.id !== id &&
+    other.rule === run.rule &&
+    other.lane === run.lane &&
+    (other.task_id ?? null) === (run.task_id ?? null);
+  for (const other of rows(draft.view, "runs", {
+    rule: run.rule,
+    lane: run.lane,
+    ...taskScope(run),
+    state: "queued",
+  }).filter(sameThread)) {
     for (const link of rows(draft.view, "run_events", { run_id: other.id })) {
       put(draft, "run_events", `${id}:${link.event_id}`, { run_id: id, event_id: link.event_id });
       set(draft, "run_events", `${other.id}:${link.event_id}`, null);
@@ -338,7 +398,7 @@ function retryLater(draft: Draft, run: Row, result: Result) {
 
 function scheduleReview(draft: Draft, run: Row, later: Later) {
   const { rule, lane } = run;
-  const existing = rows(draft.view, "timers", { rule, lane, key: later.key, event_id: null }).find(
+  const existing = rows(draft.view, "timers", { rule, lane, ...taskScope(run), key: later.key, event_id: null }).find(
     (timer) => timer.rule === rule && timer.lane === lane && timer.key === later.key && timer.event_id === null,
   );
   if (later.cancel) {
@@ -349,7 +409,16 @@ function scheduleReview(draft: Draft, run: Row, later: Later) {
   const fields = { at: iso(Date.parse(later.at!)), about: later.about, session, hops: hopsOf(draft, run) };
   if (existing) return void put(draft, "timers", existing.id, fields);
   const source = sourceOf(draft.view, run.id) ?? SCHEDULE;
-  add(draft, "timers", { ...fields, rule, lane, key: later.key, source, event_id: null, created_at: draft.at });
+  add(draft, "timers", {
+    ...fields,
+    rule,
+    lane,
+    ...taskScope(run),
+    key: later.key,
+    source,
+    event_id: null,
+    created_at: draft.at,
+  });
 }
 
 /** A receipt takes effect here, all of it in the one fact. */
@@ -435,6 +504,21 @@ function finish(draft: Draft, id: number, token: string, given: unknown) {
       cancel_at: null,
     });
   } else rejected = applyReceipt(draft, run, result);
+  if (run.task_id != null) {
+    const pending =
+      rows(draft.view, "cards", { task_id: run.task_id, kind: "ask", state: ["open", "decided"] }).length ||
+      rows(draft.view, "timers", { task_id: run.task_id, event_id: null }).length ||
+      rows(draft.view, "runs", { task_id: run.task_id, state: ["queued", "claimed", "unknown"] }).length;
+    const completed = result.taskStatus === "completed" && result.outcome === "done" && !pending;
+    if (result.taskStatus === "completed" && !completed)
+      rejected.push({ what: "taskStatus", reason: "任务还有待处理事项，不能标为完成" });
+    put(draft, "tasks", run.task_id, {
+      status: completed ? "completed" : "active",
+      updated_at: draft.at,
+      completed_at: completed ? draft.at : null,
+      completed_run_id: completed ? id : null,
+    });
+  }
   put(draft, "runs", id, { last_answer: JSON.stringify(rejected) });
   return { rejected };
 }
@@ -472,6 +556,7 @@ function answer(draft: Draft, id: number, given: Row) {
       card.lane,
       card.agent === rule.to ? card.session : null,
       holdsOf(draft).find((hold) => sameThread(hold, card)),
+      card.task_id,
     );
   return { changed: true, state: "decided" };
 }
@@ -520,7 +605,7 @@ function memo(draft: Draft, id: number, given: Row) {
     decided_at: draft.at,
     answer_event: eventId,
   });
-  enqueue(draft, rule, eventId, run.lane, session);
+  enqueue(draft, rule, eventId, run.lane, session, run, run.task_id);
   return { stopped: working };
 }
 
@@ -577,7 +662,18 @@ function tick(draft: Draft) {
     if (now < Date.parse(schedule.next_at)) continue;
     const key = `${rule.name}@${iso(latestBefore(cron, Date.parse(schedule.next_at), now, timezone))}`;
     if (!rows(draft.view, "events", { source: SCHEDULE, key }).length) {
-      enqueue(draft, rule, recordEvent(draft, SCHEDULE, { id: key, type: "schedule.tick" }, [rule.name]), "");
+      const eventId = recordEvent(draft, SCHEDULE, { id: key, type: "schedule.tick" }, [rule.name]);
+      const task = add(draft, "tasks", {
+        source: SCHEDULE,
+        rule: rule.name,
+        task_key: null,
+        origin_event_id: eventId,
+        status: "active",
+        created_at: draft.at,
+        updated_at: draft.at,
+        completed_at: null,
+      });
+      enqueue(draft, rule, eventId, "", undefined, undefined, task.id);
     }
     put(draft, "schedules", rule.name, { next_at: nextAt() });
   }
@@ -588,7 +684,7 @@ function tick(draft: Draft) {
     const event = { id: `timer:${timer.id}`, type: "timer.due", subject: timer.lane, hops: timer.hops ?? 0 };
     const eventId = recordEvent(draft, timer.source, event, rule ? [rule.name] : []);
     put(draft, "timers", timer.id, { event_id: eventId });
-    if (rule) enqueue(draft, rule, eventId, timer.lane, timer.session);
+    if (rule) enqueue(draft, rule, eventId, timer.lane, timer.session, undefined, timer.task_id);
   }
   sweep(draft);
 }

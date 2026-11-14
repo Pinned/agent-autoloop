@@ -1,5 +1,6 @@
 import type { Rule } from "../kernel/rules.ts";
 export type Job = {
+  task?: { id: number; originEvent: Job["context"]["events"][number] };
   run: number;
   token: string;
   attempt: number;

@@ -18,6 +18,7 @@ export function addUsage(total: Usage | undefined, more: Usage | undefined): Usa
 }
 export type Result = {
   outcome: "done" | "nothing" | "failed" | "cancelled";
+  taskStatus?: "active" | "completed";
   summary?: string;
   error?: string;
   session?: string;
@@ -31,6 +32,7 @@ export type Result = {
 export type Rejected = { card?: number; what?: string; reason: string };
 
 export type EventInput = {
+  taskKey?: string;
   id: string;
   type: string;
   subject: string;
@@ -41,7 +43,7 @@ export type EventInput = {
 };
 
 const LIMITS = { id: 200, subject: 100, summary: 200, detail: 4000, link: 500 } as const;
-const FIELDS = ["id", "type", "subject", "summary", "detail", "link", "hops"];
+const FIELDS = ["id", "type", "subject", "summary", "detail", "link", "hops", "taskKey"];
 
 export function parseEvent(input: unknown): EventInput {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
@@ -56,9 +58,15 @@ export function parseEvent(input: unknown): EventInput {
     if (name !== "type" && [...value].length > LIMITS[name]) throw new InputError(`${name} 最多 ${LIMITS[name]} 个字`);
     return value;
   };
+  if (
+    given.taskKey !== undefined &&
+    (typeof given.taskKey !== "string" || !given.taskKey.trim() || [...given.taskKey].length > 200)
+  )
+    throw new InputError("taskKey 要是 1 到 200 字的非空文字");
   const hops = given.hops === undefined ? 0 : given.hops;
   if (!Number.isSafeInteger(hops) || (hops as number) < 0) throw new InputError("hops 要是非负整数");
   const event = {
+    ...(given.taskKey !== undefined ? { taskKey: given.taskKey as string } : {}),
     id: field("id", true),
     type: field("type", true),
     subject: field("subject"),
@@ -146,13 +154,27 @@ export function parseResult(input: unknown): Result {
   }
   const result = { ...input } as Item;
   if (
-    !only(result, ["outcome", "summary", "error", "session", "usage", "ask", "notice", "resolve", "later", "events"])
+    !only(result, [
+      "outcome",
+      "taskStatus",
+      "summary",
+      "error",
+      "session",
+      "usage",
+      "ask",
+      "notice",
+      "resolve",
+      "later",
+      "events",
+    ])
   ) {
     throw new InputError("结果里有不认识的字段");
   }
   if (!["done", "nothing", "failed", "cancelled"].includes(result.outcome as string)) {
     throw new InputError("outcome 只能是 done、nothing、failed、cancelled");
   }
+  if (result.taskStatus !== undefined && !["active", "completed"].includes(result.taskStatus as string))
+    throw new InputError("taskStatus 只能是 active 或 completed");
   if (!optional(result.summary, 500) || !optional(result.error, 500) || !optional(result.session, 500)) {
     throw new InputError("summary、error、session 最多 500 字");
   }

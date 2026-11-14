@@ -3,6 +3,7 @@ import { whose } from "../kernel/credentials.ts";
 import { AuthError } from "../kernel/errors.ts";
 import type { View } from "../kernel/evolve.ts";
 import { taskQueryHttp } from "./task-query-http.ts";
+import { businessTaskHttp } from "./business-task-http.ts";
 
 export function requireOwner(request: Request, latest: View): string {
   const given = /^Bearer (.+)$/.exec(request.headers.get("authorization") ?? "");
@@ -13,5 +14,5 @@ export function requireOwner(request: Request, latest: View): string {
 
 // Called only after authentication; the supplied committed View is also the query's View.
 export function uiRead(request: Request, latest: View): Response | null {
-  return taskQueryHttp(request, latest);
+  return businessTaskHttp(request, latest) ?? taskQueryHttp(request, latest);
 }

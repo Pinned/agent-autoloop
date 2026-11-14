@@ -181,11 +181,17 @@ test("capture failure and already exited or closed child stay unknown without si
 
 test("blocked check absorbs delayed real pipe EPIPE until the bounded child closes", () => {
   const it = computer();
-  it.ok(`const cp = (await import('node:child_process')).default; const original = cp.spawn; let child, closed = false;
-    cp.spawn = (program, args, options) => {child = original(program, ['--input-type=module','-e', ${JSON.stringify(`import {writeFileSync} from 'node:fs'; process.on('SIGTERM', () => {}); setTimeout(() => {writeFileSync(${JSON.stringify(it.calls)}, 'self-exited\\n'); process.exit(0)}, 600);`)}], options); child.on('close', () => {closed = true}); return child}; (await import('node:module')).syncBuiltinESMExports();
+  // Prestart the real pipe fixture: spawn is not proof its signal handler is installed.
+  // IPC controls exit after the blocked-state assertions, independent of machine load.
+  it.ok(`const cp = (await import('node:child_process')).default; const {once} = await import('node:events'); const original = cp.spawn; let closed = false;
+    const child = original(process.execPath, ['--input-type=module','-e', ${JSON.stringify(`import {writeFileSync} from 'node:fs'; process.on('SIGTERM', () => {process.send('stopped')}); process.on('message', message => {if(message === 'exit') {writeFileSync(${JSON.stringify(it.calls)}, 'self-exited\\n'); process.exit(0)}}); setTimeout(() => process.exit(92), 10000).unref(); process.send('ready');`)}], {shell:false,detached:process.platform !== 'win32',stdio:['pipe','ignore','ignore','pipe','ipc']});
+    child.on('close', () => {closed = true}); const closing = once(child,'close'); assert.equal((await once(child,'message'))[0], 'ready');
+    const stopped = once(child,'message'); let launches = 0;
+    cp.spawn = () => {assert.equal(++launches,1); queueMicrotask(() => child.emit('spawn')); return child}; (await import('node:module')).syncBuiltinESMExports();
     const pending = setup.checkLocalAgents({large:{use:'command',command:['x'.repeat(8*1024*1024)]}}, {timeoutMs:200,stopTimeoutMs:30});
     await assert.rejects(pending, /受阻/); assert.equal(closed,false); assert.ok(child.stdin.listenerCount('error') > 0); assert.ok(child.stdio[3].listenerCount('error') > 0);
-    await new Promise(resolve => child.once('close', resolve)); assert.equal(child.stdin.errored?.code, 'EPIPE'); assert.equal(fs.readFileSync(${JSON.stringify(it.calls)}, 'utf8'), 'self-exited\\n');
+    assert.equal((await Promise.race([stopped, closing.then(() => {throw new Error('fixture closed before SIGTERM')})]))[0], 'stopped'); child.send('exit');
+    await closing; assert.equal(child.stdin.errored?.code, 'EPIPE'); assert.equal(fs.readFileSync(${JSON.stringify(it.calls)}, 'utf8'), 'self-exited\\n');
     assert.equal(child.stdin.listenerCount('error'),0); assert.equal(child.stdio[3].listenerCount('error'),0); await assert.rejects(setup.checkLocalAgents(), /受阻/);`);
 });
 

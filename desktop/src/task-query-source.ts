@@ -38,9 +38,15 @@ export type TaskQuerySource = {
   cards(run: number, input?: RunSectionInput, canRead?: () => boolean): Promise<TaskQueryResult<Page<CardItem>>>;
   related(run: number, input?: RunSectionInput, canRead?: () => boolean): Promise<TaskQueryResult<Page<RunItem>>>;
   feedback(run: number, input?: RunSectionInput, canRead?: () => boolean): Promise<TaskQueryResult<Page<FeedbackItem>>>;
+  businessRead<T>(
+    path: string,
+    parse: (bytes: Uint8Array) => T,
+    list: boolean,
+    canRead?: () => boolean,
+  ): Promise<TaskQueryResult<T>>;
   cancelAll(): void;
 };
-type Slot = "list" | "detail" | PageSection;
+type Slot = "list" | "detail" | PageSection | "business-list" | "business-detail";
 type Flight = {
   key: string;
   promise: Promise<TaskQueryResult<unknown>>;
@@ -89,6 +95,8 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
   const slots: Record<Slot, Flight | undefined> = {
     list: undefined,
     detail: undefined,
+    "business-list": undefined,
+    "business-detail": undefined,
     events: undefined,
     cards: undefined,
     related: undefined,
@@ -243,7 +251,7 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
           cancelBody(response.body);
           return;
         }
-        if (response.status === 404 && slot !== "list") {
+        if (response.status === 404 && slot !== "list" && slot !== "business-list" && slot !== "business-detail") {
           let missing = false;
           try {
             const bytes = await readBytes(response, 1024);
@@ -277,7 +285,10 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
           if (!inactive()) finish(failure(code));
           return;
         }
-        const bytes = await readBytes(response, slot === "list" ? LIST_MAX_BYTES : DETAIL_MAX_BYTES);
+        const bytes = await readBytes(
+          response,
+          slot === "list" || slot === "business-list" ? LIST_MAX_BYTES : DETAIL_MAX_BYTES,
+        );
         if (inactive()) return;
         const data = prepared.parse(bytes);
         if (!inactive()) finish({ ok: true, data });
@@ -339,6 +350,8 @@ export function createTaskQuerySource(options: TaskQuerySourceOptions): TaskQuer
     cards: (run, input = {}, canRead) => section("cards", run, input, parseRunCardsBytes, canRead),
     related: (run, input = {}, canRead) => section("related", run, input, parseRelatedRunsBytes, canRead),
     feedback: (run, input = {}, canRead) => section("feedback", run, input, parseRunFeedbackBytes, canRead),
+    businessRead: (path, parse, list, canRead) =>
+      request(list ? "business-list" : "business-detail", () => ({ path, parse }), canRead),
     cancelAll() {
       cancelGeneration++;
       for (const slot of Object.keys(slots) as Slot[]) slots[slot]?.stop();

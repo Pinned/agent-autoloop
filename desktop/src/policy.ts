@@ -58,6 +58,7 @@ export const channels = Object.freeze({
   workersLocal: "desktop:workers:local",
   tasksGet: "desktop:tasks:get",
   /** Server-side search and filtering over the hub's own run query, not a local slice of 60 runs. */
+  businessTasksRead: "desktop:business-tasks:read",
   taskList: "desktop:tasks:list",
   taskDetail: "desktop:tasks:detail",
   taskEntries: "desktop:task:entries",
@@ -78,6 +79,9 @@ export interface ThemeState {
   effective: "light" | "dark";
 }
 export interface DesktopBridge {
+  businessTasksRead(
+    request: import("./business-task-ipc.ts").BusinessRequest,
+  ): Promise<import("./business-task-ipc.ts").BusinessResponse>;
   getTheme(): Promise<ThemeState>;
   setTheme(theme: Theme): Promise<ThemeState>;
   window(action: WindowAction): Promise<void>;
