@@ -50,6 +50,51 @@ test("exact routes and errors", async () => {
   }
 });
 
+// Missing task identity must not erase dispatch data connected by recorded run-event edges.
+test("legacy list and detail retain dispatch title/detail rather than declaring every origin missing", async () => {
+  const view = empty();
+  try {
+    evolve(view, [
+      {
+        version: 1,
+        seq: 1,
+        at: 0,
+        type: "fixture",
+        changes: [
+          {
+            table: "runs",
+            key: "1",
+            row: { id: 1, rule: "规则只是兜底", agent: "a", state: "done", attempts: 1, summary: "本轮结果" },
+          },
+          {
+            table: "events",
+            key: "11",
+            row: { id: 11, source: "local", type: "task.new", summary: "实际派发标题", detail: "实际已保存派发详情" },
+          },
+          {
+            table: "events",
+            key: "12",
+            row: { id: 12, source: "local", type: "card.answered", summary: "后来的回答", detail: "不能冒充派发需求" },
+          },
+          { table: "run_events", key: "1:11", row: { run_id: 1, event_id: 11 } },
+          { table: "run_events", key: "1:12", row: { run_id: 1, event_id: 12 } },
+        ],
+      },
+    ]);
+    const item = listBusinessTasks(view).items[0];
+    assert.equal(item.origin.title, "实际派发标题");
+    assert.equal(item.origin.detail, "实际已保存派发详情");
+    assert.equal(item.origin.availability, "recorded");
+    assert.equal(item.origin.eventId, 11);
+    assert.equal(item.source, "local");
+    assert.equal(item.finalResult, null);
+    const detail = await businessTaskHttp(new Request(root + "/legacy/1"), view)!.json();
+    assert.deepEqual(detail.task.origin, item.origin);
+    assert.match(item.legacyNotice!, /触发资料/);
+  } finally {
+    view.close();
+  }
+});
 // Legacy display must carry committed round state, including unconfirmed stop requests.
 test("legacy display exposes execution facts without claiming business completion", () => {
   const view = empty();

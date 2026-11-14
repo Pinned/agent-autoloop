@@ -351,6 +351,7 @@ const businessTasks = createRendererBusinessTasks(window.desktop, () => {
   if (currentPage === "tasks") tasksPage?.update();
 });
 const tasksPage = mountBusinessTasksView(businessTasks, {
+  history: window.desktop,
   diagnostics: executionDiagnostics,
   scrollHost: main,
   detailChanged: (open) => {

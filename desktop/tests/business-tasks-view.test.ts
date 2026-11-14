@@ -126,6 +126,74 @@ async function withView(
     else Reflect.deleteProperty(globalThis, "document");
   }
 }
+test("task detail defaults to process and keeps original and delivery separate", async () => {
+  await withView(async (controller, root) => {
+    controller.open("task:1");
+    await flush();
+    const original = all(root).find((x) => x.className === "business-original")!;
+    const history = all(root).find((x) => x.className === "agent-execution-history")!;
+    assert.equal(original.hidden, true);
+    assert.equal(history.hidden, false);
+    assert.equal(history.textContent.includes("需确认"), false);
+    assert.ok(history.textContent.includes("可能包含多轮"));
+    all(root)
+      .find((x) => x.tag === "button" && x.textContent === "原始需求")!
+      .fire();
+    assert.equal(original.hidden, false);
+    assert.equal(history.hidden, true);
+    all(root)
+      .find((x) => x.tag === "button" && x.textContent === "交付结果")!
+      .fire();
+    assert.equal(original.hidden, true);
+    assert.ok(root.textContent.includes("尚无明确收尾的交付结果"));
+    controller.back();
+    await flush();
+    controller.open("task:1");
+    await flush();
+    assert.equal(history.hidden, false);
+  });
+});
+test("legacy detail uses identical tabs and displays recorded trigger title and round result", async () => {
+  const legacy = {
+    ...item,
+    key: "legacy:1",
+    kind: "legacy",
+    state: "active",
+    legacyNotice: "旧执行没有业务任务身份",
+    origin: { ...item.origin, title: "触发记录标题", detail: "", availability: "empty" },
+    latestProgress: "旧轮实际结果",
+    execution: { state: "done", stopping: false },
+    decisions: { items: [], hasMore: false },
+  };
+  await withView(async (controller, root) => {
+    controller.setKind("legacy");
+    await flush();
+    controller.open("legacy:1");
+    await flush();
+    const tabs = all(root).find((x) => x.className === "task-detail-tabs")!;
+    assert.ok(
+      tabs.textContent.includes("执行过程") &&
+        tabs.textContent.includes("原始需求") &&
+        tabs.textContent.includes("交付结果"),
+    );
+    all(tabs)
+      .find((x) => x.textContent === "原始需求")!
+      .fire();
+    const original = all(root).find((x) => x.className === "business-original")!;
+    assert.ok(original.textContent.includes("触发记录标题"));
+    assert.ok(original.textContent.includes("触发资料"));
+    assert.equal(original.textContent.includes("资料历史缺失"), false);
+    all(tabs)
+      .find((x) => x.textContent === "交付结果")!
+      .fire();
+    const result = all(root).find(
+      (x) => x.tag === "section" && x.children.some((y) => y.tag === "h3" && y.textContent === "交付结果"),
+    )!;
+    assert.ok(result.textContent.includes("旧轮实际结果"));
+    assert.ok(result.textContent.includes("不代表业务完成"));
+    assert.ok(root.textContent.includes("本轮结束"));
+  }, legacy);
+});
 test("list decisions keep question, every option and honest truncation/more notices", async () => {
   await withView(async (_controller, root) => {
     const task = all(root).find((x) => x.dataset.taskKey === "task:1")!;

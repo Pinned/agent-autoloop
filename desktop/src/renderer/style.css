@@ -2198,6 +2198,42 @@ main:has(#task-subpage:not([hidden])) {
 }
 main:has(.tasks-detail-page:not([hidden])) {
   padding: 14px 20px 16px;
+  max-width: none;
+  width: 100%;
+}
+.task-detail-tabs {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  padding: 12px 0;
+  margin-bottom: 16px;
+}
+.agent-history-round {
+  border: 1px solid var(--border);
+  padding: 12px;
+  margin: 12px 0;
+  border-radius: 10px;
+}
+.agent-history-round > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.agent-history-timeline {
+  padding-left: 24px;
+}
+.agent-history-timeline li {
+  border-left: 2px solid var(--border);
+  padding: 8px 14px;
+  list-style: none;
+}
+.agent-history-timeline pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  margin: 8px 0;
+}
+.agent-history-round > button {
+  margin-right: 8px;
 }
 .tasks-detail-page {
   min-width: 0;

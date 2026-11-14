@@ -40,7 +40,7 @@ GET /v1/ui/business-tasks/task/42?before=120&limit=20
 
 列表 key 为 `task:<id>` 或 `legacy:<runId>`，旧轮次缺身份时独立展示，明确不可可靠关联；列表按创建时间降序排列，同时间按编号降序、身份种类稳定排序，不能直接混用 task 与 run 的独立编号计数器。列表游标是返回的 nextBefore，以对应记录的固定创建时间和身份作为分页锚点，不能自行拼算。q/state 在服务端过滤。详情的时间线分页按已记录事实序号推进，保留提交、领取、轮次结果、提问、回答、交付评价与明确任务完成记录；没有的验收或执行对话不得伪造。接口保持本人鉴权、纯只读、禁止 GET 正文、严格查询和响应预算，原 `/v1/ui/task-runs` 执行查询继续保留。
 
-原始资料状态区分 recorded（已记录详情）、empty（确实未填写详情）、missing-history（原始历史确实缺失）。没有新接口的旧中台由桌面明确降级到执行记录，不能伪装成已有业务任务身份。
+原始资料状态区分 recorded（已记录详情）、empty（确实未填写详情）、missing-history（原始历史确实缺失）。legacy 缺业务身份时仍通过实际 run_events 边读取本轮触发事件的标题、详情和来源，优先本轮非回答/更正/复查事件，只称触发资料，不猜最初业务需求；缺 task_id 不得把已有事件资料全部标为缺失。没有新接口的旧中台由桌面用已有执行查询适配同一列表和全宽详情页签，不能伪装成已有业务任务身份，也不自动回到旧详情布局。仅当前有界页面缺触发预览时按各自 run_id 查询详情补展示，不合并轮次、不迁移或改写事实。
 
 列表项与详情任务可选提供 `execution: { state, stopping }`，直接取最新关联轮次的已提交投影；state 使用既有轮次状态 queued/claimed/unknown/done/nothing/failed/cancelled。它不是业务完成声明。旧执行按轮次状态显示「本轮结束」或「本轮已停止」，缺此字段时明确状态未记录，不从 active、摘要或提问推断轮次结局。claimed/unknown 且 stopping 时仍等待进程退出，不显示已停止，也不提供重复停止。新桌面接受没有 execution 的旧响应；严格拒绝额外字段的旧客户端需随此只读字段约定更新。请求、鉴权、游标、业务状态筛选与响应预算不变。
 
@@ -266,8 +266,14 @@ export default {
   command: (run) => [...],                                // 这一轮的命令行，run.resume 是要接着的会话
   read: (output) => ({ text, session, usage, finished }), // 从输出里读出最后一条消息和会话
   link: (session) => "…",                                 // 可选：打开这个会话的链接
+  history: {                                               // 可选：本机历史能力，不改变 HTTP 协议
+    reference: (run) => ({ cwd: run.cwd, session: run.resume ?? run.session }),
+    read: (request) => ({ status, scope: "session", items, cursor, hasMore }),
+  },
 };
 ```
+
+`history` 与业务回执分开，是本机接单程序和桌面之间的可选能力；旧插件不提供时保持原行为。Agent 负责定位和解析自己的记录，worker 只保存连接绑定的最小执行关联，内核不认识产品路径。第一版仅支持桌面自有运行目录内 Claude 默认配置下的新启动关联；会话内容可能包含多轮，不能按时间猜分轮。参数、原始工具输出及内部资料不公开，分页、安全与未验收限制见[桌面说明](desktop.md#本机-agent-会话历史)。不新增 HTTP 端点，不同步完整历史，不支持远端历史读取。
 
 专用插件的 `access` 三档，翻译成各自 CLI 的权限：`read` 只读，`edit` 只改工作目录（默认），`full` 完整权限、不审批。只读不等于读不到密钥，要隔离密钥请用系统账号或容器。`command` 只传命令参数，不替任意程序限制权限。
 

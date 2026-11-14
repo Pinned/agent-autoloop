@@ -32,6 +32,8 @@ node --disable-warning=ExperimentalWarning --test --test-name-pattern='agent-aut
 | `read(stdout, code, stderr)` | 返回 `text`、`session`、`usage`、`error`、`finished`；运行中 `code` 为 `null` |
 | `link(session)` | 可选，会话链接；支持会话的插件可只重写错误回执 |
 | `check()` | 可选，能用返回 `null`，否则返回下一步怎么做 |
+| `history.reference(turn)` | 可选历史能力：返回本次实际启动的 `{ cwd, session }`；不支持的启动方式返回 `null` |
+| `history.read(request)` | 与 reference 成组提供：在可信 root 下定位、按有界游标读取自身记录，返回会话范围的公开内容 DTO，不返回路径或凭据 |
 
 `turn` 包含 `prompt`、`session`、`resume`、`cwd`、`access`、`model`、`effort`、`command`、`contextFile`、`folder`。`contextFile` 是资料文件，受限 CLI 需要允许读取 `folder`。`read` 要能处理未写完的输出；CLI 真正完成后才返回 `text`。
 

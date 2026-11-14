@@ -119,7 +119,13 @@ function taskItem(view: View, key: BusinessTaskKey): BusinessTaskItem {
           `SELECT substr(${f("e", "summary")},1,501) AS title, substr(${f("e", "detail")},1,2001) AS detail, json_type(e.data,'$.detail') AS detailType FROM projections e WHERE e.collection='events' AND e.key=?`,
           [String(task.eventId)],
         )
-      : undefined;
+      : kind === "legacy"
+        ? get(
+            view,
+            `SELECT ${f("e", "id")} AS eventId, substr(${f("e", "source")},1,201) AS source, substr(${f("e", "summary")},1,501) AS title, substr(${f("e", "detail")},1,2001) AS detail, json_type(e.data,'$.detail') AS detailType FROM projections re JOIN projections e ON e.collection='events' AND e.key=CAST(${f("re", "event_id")} AS TEXT) WHERE re.collection='run_events' AND ${f("re", "run_id")}=? ORDER BY CASE WHEN ${f("e", "type")} IN ('card.answered','owner.memo','timer.due') THEN 1 ELSE 0 END, ${f("re", "event_id")} ASC LIMIT 1`,
+            [id],
+          )
+        : undefined;
   const pending =
     kind === "task" &&
     !!get(
@@ -148,10 +154,15 @@ function taskItem(view: View, key: BusinessTaskKey): BusinessTaskItem {
     kind,
     id,
     rule: cut(task.rule, 200),
-    source: cut(task.source, 200),
+    source: cut(kind === "legacy" ? origin?.source : task.source, 200),
     origin: {
-      eventId: typeof task.eventId === "number" ? task.eventId : null,
-      title: origin ? cut(origin.title, 500) || "未记录任务标题" : "原始需求资料缺失",
+      eventId:
+        typeof task.eventId === "number" ? task.eventId : typeof origin?.eventId === "number" ? origin.eventId : null,
+      title: origin
+        ? cut(origin.title, 500) || "未记录任务标题"
+        : kind === "legacy"
+          ? "本轮触发资料未关联"
+          : "原始需求资料缺失",
       detail: cut(origin?.detail, 2000),
       availability:
         !origin || origin.detailType == null ? "missing-history" : origin.detail === "" ? "empty" : "recorded",
@@ -166,7 +177,10 @@ function taskItem(view: View, key: BusinessTaskKey): BusinessTaskItem {
     decisions,
     createdAt: timestamp(task.createdAt),
     updatedAt: timestamp(task.updatedAt) ?? run?.finishedAt ?? timestamp(task.createdAt),
-    legacyNotice: kind === "legacy" ? "这是一条旧执行记录，未记录业务任务身份，不能可靠关联到其他轮次。" : null,
+    legacyNotice:
+      kind === "legacy"
+        ? "这是一条旧执行记录，未记录业务任务身份。已记录事件仅作为本轮触发资料展示，不能认定为最初业务需求，也不关联其他轮次。"
+        : null,
   });
 }
 import { encodeRunCursor } from "./desktop-task-query-contract.ts";

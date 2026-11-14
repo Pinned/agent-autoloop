@@ -1,5 +1,6 @@
 // Claude Code: the user's own, installed and signed in by them. This only ever runs the official program.
 import { execFileSync } from "node:child_process";
+import { readClaudeHistory } from "./history.ts";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -25,6 +26,13 @@ function launcher(turn: Turn) {
 }
 
 export default {
+  history: {
+    reference: (turn) =>
+      turn.command?.length || process.env.CLAUDE_CONFIG_DIR
+        ? null
+        : { cwd: path.resolve(turn.cwd), session: turn.resume ?? turn.session },
+    read: readClaudeHistory,
+  },
   command: (turn) => [
     ...launcher(turn),
     "-p",

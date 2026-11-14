@@ -23,6 +23,7 @@ const bridge = Object.freeze<DesktopBridge>({
   workersLocal: () => ipcRenderer.invoke("desktop:workers:local"),
   tasksGet: (before) => ipcRenderer.invoke("desktop:tasks:get", before),
   businessTasksRead: (request) => ipcRenderer.invoke("desktop:business-tasks:read", request),
+  agentHistory: (request) => ipcRenderer.invoke("desktop:agent-history:read", request),
   taskList: (input) => ipcRenderer.invoke("desktop:tasks:list", input),
   taskDetail: (request) => ipcRenderer.invoke("desktop:tasks:detail", request),
   taskEntries: () => ipcRenderer.invoke("desktop:task:entries"),

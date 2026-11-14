@@ -59,6 +59,7 @@ export const channels = Object.freeze({
   tasksGet: "desktop:tasks:get",
   /** Server-side search and filtering over the hub's own run query, not a local slice of 60 runs. */
   businessTasksRead: "desktop:business-tasks:read",
+  agentHistory: "desktop:agent-history:read",
   taskList: "desktop:tasks:list",
   taskDetail: "desktop:tasks:detail",
   taskEntries: "desktop:task:entries",
@@ -79,6 +80,9 @@ export interface ThemeState {
   effective: "light" | "dark";
 }
 export interface DesktopBridge {
+  agentHistory(
+    request: import("./agent-history-contract.ts").AgentHistoryInput,
+  ): Promise<import("./agent-history-contract.ts").AgentHistoryResponse>;
   businessTasksRead(
     request: import("./business-task-ipc.ts").BusinessRequest,
   ): Promise<import("./business-task-ipc.ts").BusinessResponse>;

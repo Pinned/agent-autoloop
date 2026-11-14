@@ -10,6 +10,7 @@ import { HOME } from "./home.ts";
 import { acquireRunLock, RunLockBusyError } from "./runlock.ts";
 import { commitOf } from "./version.ts";
 import type { createWorker } from "../worker/worker.ts";
+import { localHistoryScope } from "../worker/history.ts";
 
 const log = (who: string) => (line: string) => console.log(`${new Date().toISOString()} [${who}] ${line}`);
 type Failure = "lock" | "setup" | "listen" | "runtime";
@@ -228,6 +229,7 @@ export async function up(options: { stopMode?: "legacy" | "drain" } = {}) {
         // Finish the in-flight claim instead of aborting its response after the hub may already have committed it.
         // Short polls bound desktop shutdown without closing the hub before result delivery; legacy keeps its old wait.
         worker = createWorker({
+          ...(config.hub && { historyScope: localHistoryScope(HOME, config.url, key) }),
           hub: hubClient(config.url, key),
           name,
           capacity,

@@ -1,4 +1,6 @@
 import { createBusinessTaskSource } from "./business-task-source.ts";
+import { createAgentHistorySource } from "./agent-history-source.ts";
+import { createAgentHistoryIpc } from "./agent-history-ipc.ts";
 import { createBusinessTaskIpc } from "./business-task-ipc.ts";
 import { createTaskQuerySource } from "./task-query-source.ts";
 import { createTaskListIpc } from "./task-list-ipc.ts";
@@ -375,6 +377,20 @@ if (ownsAppLock)
         home: runtimeHome,
         getState: () => presentation.snapshot(),
         readConfig,
+      });
+      const agentHistorySource = createAgentHistorySource({
+        home: runtimeHome,
+        owned: () => !boot.attach() && controller.getState().ownership === "owned",
+        readConfig,
+        readRun: async (id, canRead) => {
+          const result = await detailSource.detail(id, canRead);
+          return result.ok ? result.data.run : null;
+        },
+      });
+      const agentHistoryIpc = createAgentHistoryIpc({
+        assertSender: (event) => assertSender(event as Parameters<typeof assertSender>[0], window.webContents, page),
+        presentation,
+        read: (request, canRead) => agentHistorySource.read(request, canRead),
       });
       // The list door: server-side search/filtering over the hub's own query, no lease. The source
       // itself classifies unavailable/no-hub, so an unrelated runtime transition cannot abort a read.
@@ -864,6 +880,7 @@ if (ownsAppLock)
       });
       // The tasks list's server-side search/filter door; the unit checks sender, arity and shape.
       ipcMain.handle(channels.businessTasksRead, (event, ...args: unknown[]) => businessIpc.read(event, args));
+      ipcMain.handle(channels.agentHistory, (event, ...args: unknown[]) => agentHistoryIpc.read(event, args));
       ipcMain.handle(channels.taskList, (event, ...args: unknown[]) => listIpc.read(event, args));
       // One task at a time through the hub's door; the input is validated before any request.
       ipcMain.handle(channels.taskDetail, (event, ...args: unknown[]) => detailIpc.read(event, args));
@@ -996,7 +1013,7 @@ if (ownsAppLock)
             result.runtimeEventSeen !== false ||
             result.navigateSeen !== false ||
             result.bridge.join(",") !==
-              "businessTasksRead,completeSetup,copyLaunchCommand,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,pickWorkingDir,rulesCasGet,rulesCasPut,runtimeGet,runtimeReconnect,runtimeStart,runtimeStop,runtimeUseEmbedded,setTheme,settingsGet,settingsPut,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,taskList,tasksGet,todayState,window,workersGet,workersLocal" ||
+              "agentHistory,businessTasksRead,completeSetup,copyLaunchCommand,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,pickWorkingDir,rulesCasGet,rulesCasPut,runtimeGet,runtimeReconnect,runtimeStart,runtimeStop,runtimeUseEmbedded,setTheme,settingsGet,settingsPut,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,taskList,tasksGet,todayState,window,workersGet,workersLocal" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||
