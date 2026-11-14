@@ -159,6 +159,7 @@ function taskItem(view: View, key: BusinessTaskKey): BusinessTaskItem {
         !!origin && ([...String(origin.title ?? "")].length > 500 || [...String(origin.detail ?? "")].length > 2000),
     },
     state,
+    ...(run ? { execution: { state: run.state, stopping: run.stopping } } : {}),
     latestRunId: run?.id ?? null,
     latestProgress: run?.summary ?? "",
     finalResult: state === "completed" ? cut(final?.summary, 500) : null,
