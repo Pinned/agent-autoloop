@@ -296,3 +296,69 @@ test("leaving a detail fences its late response and unsupported never becomes ta
   assert.equal(controller.detail, null);
   assert.equal(controller.selectedKey, null);
 });
+
+// Prevent identity switches from hiding later pages or reusing a prior filter cursor.
+test("task and legacy entrances page independently without guessing identity", async () => {
+  const legacy = { ...task("active"), key: "legacy:8", kind: "legacy", id: 8, legacyNotice: "旧执行" };
+  const calls: any[] = [];
+  const controller = createRendererBusinessTasks(
+    {
+      businessTasksRead: async (request) => {
+        calls.push(request);
+        return {
+          ok: true,
+          data: request.input.before
+            ? { items: [task()], hasMore: false, nextBefore: null }
+            : { items: [legacy], hasMore: true, nextBefore: "legacy:8" },
+        } as never;
+      },
+    },
+    () => {},
+  );
+  controller.refresh();
+  for (let i = 0; i < 5; i++) await flush();
+  assert.deepEqual(
+    controller.items.map((x) => x.key),
+    ["task:1"],
+  );
+  assert.equal(calls[1].input.before, "legacy:8");
+  controller.setKind("legacy");
+  await flush();
+  assert.deepEqual(
+    controller.items.map((x) => x.key),
+    ["legacy:8"],
+  );
+  assert.equal(calls.at(-1).input.before, undefined);
+});
+
+// A changed detail cannot leave a stale row in an authoritative state-filtered list.
+test("returning from detail re-queries the original filter instead of patching stale rows", async () => {
+  const calls: any[] = [];
+  let state = "running";
+  const controller = createRendererBusinessTasks(
+    {
+      businessTasksRead: async (request) => {
+        calls.push(request);
+        return {
+          ok: true,
+          data:
+            request.operation === "list"
+              ? { items: state === "running" ? [task(state)] : [], hasMore: false, nextBefore: null }
+              : { task: task(state), timeline: { items: [], hasMore: false, nextBefore: null } },
+        } as never;
+      },
+    },
+    () => {},
+  );
+  controller.setFilter({ q: "需求", state: "running" });
+  await flush();
+  controller.open("task:1");
+  await flush();
+  state = "active";
+  controller.refreshDetail();
+  await flush();
+  controller.back();
+  await flush();
+  assert.deepEqual(calls.at(-1), { operation: "list", input: { q: "需求", state: "running" } });
+  assert.equal(controller.items.length, 0);
+});

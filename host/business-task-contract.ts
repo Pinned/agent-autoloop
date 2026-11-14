@@ -1,5 +1,12 @@
 // Pure strict display DTOs; no transport, projection or capability dependencies.
-import { runId, jsonBytes, parseCardItem, type CardItem } from "./desktop-task-query-contract.ts";
+import {
+  runId,
+  jsonBytes,
+  parseCardItem,
+  RUN_STATES,
+  type RunState,
+  type CardItem,
+} from "./desktop-task-query-contract.ts";
 export const BUSINESS_LIST_MAX_BYTES = 160 * 1024;
 export const BUSINESS_DETAIL_MAX_BYTES = 128 * 1024;
 export const BUSINESS_STATES = [
@@ -34,6 +41,7 @@ export type BusinessTaskItem = {
   createdAt: string | null;
   updatedAt: string | null;
   legacyNotice: string | null;
+  execution?: { state: RunState; stopping: boolean };
 };
 export type BusinessTimelineItem = {
   seq: number;
@@ -52,10 +60,13 @@ export type BusinessTaskDetail = { task: BusinessTaskItem; timeline: BusinessTim
 function invalid(): never {
   throw new Error("invalid-business-task-query");
 }
-function record(v: unknown, fields: string[], optional = false): Record<string, unknown> {
+function record(v: unknown, fields: string[], optional = false, extras: string[] = []): Record<string, unknown> {
   if (!v || typeof v !== "object" || Object.getPrototypeOf(v) !== Object.prototype) invalid();
   const keys = Reflect.ownKeys(v);
-  if ((!optional && keys.length !== fields.length) || keys.some((k) => typeof k !== "string" || !fields.includes(k)))
+  if (
+    (!optional && keys.filter((k) => !extras.includes(k as string)).length !== fields.length) ||
+    keys.some((k) => typeof k !== "string" || ![...fields, ...extras].includes(k))
+  )
     invalid();
   for (const k of keys) {
     const d = Object.getOwnPropertyDescriptor(v, k);
@@ -143,22 +154,27 @@ export function parseBusinessTaskDetailBytes(bytes: Uint8Array): BusinessTaskDet
   return parseBusinessTaskDetail(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
 }
 export function parseBusinessTaskItem(v: unknown): BusinessTaskItem {
-  const r = record(v, [
-    "key",
-    "kind",
-    "id",
-    "rule",
-    "source",
-    "origin",
-    "state",
-    "latestRunId",
-    "latestProgress",
-    "finalResult",
-    "decisions",
-    "createdAt",
-    "updatedAt",
-    "legacyNotice",
-  ]);
+  const r = record(
+    v,
+    [
+      "key",
+      "kind",
+      "id",
+      "rule",
+      "source",
+      "origin",
+      "state",
+      "latestRunId",
+      "latestProgress",
+      "finalResult",
+      "decisions",
+      "createdAt",
+      "updatedAt",
+      "legacyNotice",
+    ],
+    false,
+    ["execution"],
+  );
   const key = businessTaskKey(r.key),
     kind = one(r.kind, ["task", "legacy"]),
     id = runId(r.id);
@@ -193,6 +209,10 @@ export function parseBusinessTaskItem(v: unknown): BusinessTaskItem {
     updatedAt: stamp(r.updatedAt),
     legacyNotice: r.legacyNotice === null ? null : text(r.legacyNotice, 500),
   };
+  if ("execution" in r) {
+    const execution = record(r.execution, ["state", "stopping"]);
+    result.execution = { state: one(execution.state, RUN_STATES), stopping: bool(execution.stopping) };
+  }
   if (
     (kind === "legacy") !== (result.legacyNotice !== null) ||
     (result.state !== "completed" && result.finalResult !== null)

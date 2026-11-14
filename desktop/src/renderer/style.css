@@ -1022,6 +1022,176 @@ main:has(#task-subpage:not([hidden])) {
   color: var(--text);
   width: 190px;
 }
+/* Lifecycle cards share the app tokens, not the prototype's two-column layout. */
+.business-tasks-panel {
+  padding: 0;
+  border: 0;
+  background: none;
+  min-width: 0;
+  width: 100%;
+}
+.business-tasks-panel .business-entrances {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+.business-entrances button {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 10px 14px;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+.business-entrances button:disabled {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  opacity: 1;
+  cursor: default;
+}
+.business-tasks-panel .run-list {
+  gap: 16px;
+  margin-top: 20px;
+}
+.business-tasks-panel .tasks-run-card {
+  min-width: 0;
+  padding: 22px 24px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  overflow-wrap: anywhere;
+}
+.business-card-meta {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+.business-card-head,
+.business-detail-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.business-card-head h3 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.5;
+  min-width: 0;
+  font-weight: 650;
+}
+.business-tasks-panel .tasks-run-state {
+  flex-shrink: 0;
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: var(--panel2);
+  color: var(--muted);
+}
+.business-tasks-panel [data-state="running"] .tasks-run-state,
+.business-tasks-panel [data-state="claimed"] .tasks-run-state,
+.business-tasks-panel .tasks-run-state[data-state="claimed"],
+.business-tasks-panel .tasks-run-state[data-state="running"] {
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+.business-tasks-panel [data-state="waiting-decision"] .tasks-run-state,
+.business-tasks-panel .tasks-run-state[data-state="waiting-decision"] {
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 9%, var(--panel));
+}
+.business-tasks-panel [data-state="completed"] .tasks-run-state,
+.business-tasks-panel .tasks-run-state[data-state="completed"] {
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 9%, var(--panel));
+}
+.business-tasks-panel [data-state="failed"] .tasks-run-state,
+.business-tasks-panel .tasks-run-state[data-state="failed"] {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 9%, var(--panel));
+}
+.business-tasks-panel .tasks-run-detail {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+.business-card-progress {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.business-card-progress > p {
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+}
+.business-tasks-panel .tasks-run-card .business-decision {
+  border: 0;
+  border-left: 3px solid var(--amber);
+  border-radius: 6px;
+  padding: 12px 16px;
+  background: color-mix(in srgb, var(--amber) 5%, var(--panel));
+}
+.business-card-open {
+  margin-top: 14px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.business-tasks-panel button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.business-tasks-panel .tasks-detail-head {
+  display: block;
+  margin: 16px 0 20px;
+  padding: 22px 24px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.business-tasks-panel .tasks-detail-head > p {
+  margin: 10px 0 0;
+  font-size: 12px;
+}
+.business-stopping {
+  padding: 12px 16px;
+  border-left: 3px solid var(--amber);
+  background: color-mix(in srgb, var(--amber) 6%, var(--panel));
+}
+@media (max-width: 650px) {
+  .business-card-head,
+  .business-detail-heading {
+    flex-wrap: wrap;
+  }
+  .business-tasks-panel .tasks-run-card,
+  .business-tasks-panel .tasks-detail-head {
+    padding: 18px;
+  }
+}
 .business-tasks-panel .tasks-detail-page > section,
 .business-tasks-panel .tasks-detail-page > h3,
 .business-tasks-panel .tasks-detail-page > details,

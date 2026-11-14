@@ -2,6 +2,7 @@
 // leaving an in-flight write before its receipt can be checked. Fake DOM/bridge, no Electron or network.
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
 import { createRendererBusinessTasks } from "../src/renderer/business-tasks-controller.ts";
 import { mountBusinessTasksView } from "../src/renderer/business-tasks-view.ts";
 class Element {
@@ -87,6 +88,9 @@ const item = {
 };
 async function withView(
   action: (controller: ReturnType<typeof createRendererBusinessTasks>, root: Element) => Promise<void>,
+  shown: unknown = item,
+  runDetail?: unknown,
+  options: { paged?: boolean; scrollHost?: HTMLElement } = {},
 ) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
   Object.defineProperty(globalThis, "document", {
@@ -102,14 +106,16 @@ async function withView(
             ok: true,
             data:
               request.operation === "list"
-                ? { items: [item], hasMore: false, nextBefore: null }
-                : { task: item, timeline: { items: [], hasMore: false, nextBefore: null } },
+                ? { items: [shown], hasMore: !!options.paged, nextBefore: options.paged ? "task:1" : null }
+                : { task: shown, timeline: { items: [], hasMore: false, nextBefore: null } },
           }) as never,
+        taskDetail: async () => ({ version: 1, ok: true, data: runDetail }) as never,
         taskAction: () => new Promise(() => {}),
       },
       () => view?.update(),
     );
     view = mountBusinessTasksView(controller, {
+      scrollHost: options.scrollHost,
       diagnostics: { root: new Element("section") as unknown as HTMLElement, init() {}, update() {} },
     });
     view.init();
@@ -137,4 +143,163 @@ test("in-flight answers disable detail back navigation", async () => {
     back.fire();
     assert.equal(controller.selectedKey, "task:1");
   });
+});
+
+// Missing historical identity must not become a giant missing-title button or business completion.
+test("legacy cards have a stable execution heading and round-only status", async () => {
+  const legacy = {
+    ...item,
+    key: "legacy:1",
+    kind: "legacy",
+    state: "active",
+    legacyNotice: "旧记录不可关联",
+    decisions: { items: [], hasMore: false },
+    execution: { state: "done", stopping: false },
+  };
+  await withView(async (controller, root) => {
+    controller.setKind("legacy");
+    await flush();
+    const card = all(root).find((x) => x.dataset.taskKey === "legacy:1")!;
+    assert.ok(card.textContent.includes("执行 #1 · r"));
+    assert.ok(card.textContent.includes("本轮结束"));
+    assert.ok(!card.textContent.includes("任务仍在推进"));
+    assert.ok(!card.textContent.includes("原始需求"));
+    assert.equal(all(card).find((x) => x.tag === "button")?.textContent, "查看详情");
+  }, legacy);
+});
+
+test("task list has one outer page heading and no compatibility essay", async () => {
+  await withView(async (_controller, root) => {
+    const list = all(root).find((x) => x.className === "tasks-list-page")!;
+    assert.equal(all(list).filter((x) => x.tag === "h2").length, 0);
+    assert.ok(!list.textContent.includes("回答后仍是同一任务"));
+  });
+});
+
+// A cancel acknowledgement is not process exit and must not grant another cancel.
+test("claimed stopping keeps truthful waiting feedback and blocks repeated stop", async () => {
+  const run = {
+    id: 2,
+    rule: "r",
+    agent: "a",
+    state: "claimed",
+    attempts: 1,
+    createdAt: null,
+    claimedAt: null,
+    finishedAt: null,
+    notBefore: null,
+    summary: "",
+    error: "",
+    stopping: true,
+    usage: null,
+    truncated: false,
+  };
+  const page = { items: [], hasMore: false, nextCursor: null };
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      for (let i = 0; i < 3; i++) await flush();
+      assert.equal(controller.runReady, true);
+      assert.ok(root.textContent.includes("正在停止，等待执行进程退出"));
+      const stop = all(root).find((x) => x.tag === "button" && x.textContent === "请求停止本轮");
+      assert.ok(!stop || stop.disabled);
+      controller.submitAction({ version: 1, action: "cancel", runId: 2, input: {} });
+      assert.equal(controller.actionBusy, false);
+    },
+    item,
+    { run, association: { kind: "unavailable" }, events: page, cards: page, relatedRuns: page },
+  );
+});
+
+// A pending keyword must start a fresh query, never paginate the old keyword cursor.
+test("load more applies pending search before using any page cursor", async () => {
+  await withView(
+    async (controller, root) => {
+      const queries: unknown[] = [];
+      let moreCalls = 0;
+      const setFilter = controller.setFilter;
+      controller.setFilter = (input) => {
+        queries.push(input);
+        setFilter(input);
+      };
+      controller.more = () => {
+        moreCalls++;
+      };
+      const search = all(root).find((x) => x.tag === "input")!;
+      search.value = "新的需求";
+      search.listeners.get("input")!();
+      const more = all(root).find((x) => x.tag === "button" && x.textContent === "加载更多任务")!;
+      assert.equal(more.hidden, false);
+      more.fire();
+      await flush();
+      assert.deepEqual(queries, [{ q: "新的需求" }]);
+      assert.equal(moreCalls, 0);
+    },
+    item,
+    undefined,
+    { paged: true },
+  );
+});
+
+// Restore position after the asynchronous authoritative re-query, not against an empty list.
+test("return restores the list scroll after refreshed rows arrive", async () => {
+  const scrollHost = {
+    scrollTop: 240,
+    scrollTo(_x: number, y: number) {
+      this.scrollTop = y;
+    },
+  };
+  await withView(
+    async (controller) => {
+      controller.open("task:1");
+      await flush();
+      assert.equal(scrollHost.scrollTop, 0);
+      scrollHost.scrollTop = 70;
+      controller.back();
+      await flush();
+      assert.equal(scrollHost.scrollTop, 240);
+    },
+    item,
+    undefined,
+    { scrollHost: scrollHost as unknown as HTMLElement },
+  );
+});
+
+// A nested generic panel must not consume the full-width list's room or blur individual cards.
+test("list owns no outer panel surface and previews have distinct two/three-line limits", async () => {
+  await withView(async (_controller, root) => {
+    assert.ok(!root.className.split(" ").includes("panel"));
+    const card = all(root).find((x) => x.dataset.taskKey === "task:1")!;
+    assert.equal(all(card).find((x) => x.className === "tasks-run-detail")?.textContent, "原始详情");
+    assert.ok(
+      all(card)
+        .find((x) => x.className === "business-card-progress")
+        ?.textContent.includes("需确认"),
+    );
+  });
+  const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
+  const rule = (selector: string) => css.slice(css.indexOf(selector)).split("}")[0];
+  const outer = rule(".business-tasks-panel {");
+  assert.match(outer, /padding:\s*0;/);
+  assert.match(outer, /border:\s*0;/);
+  assert.match(outer, /background:\s*none;/);
+  assert.match(rule(".business-card-head h3 {"), /-webkit-line-clamp:\s*2;/);
+  assert.match(rule(".business-tasks-panel .tasks-run-detail {"), /-webkit-line-clamp:\s*3;/);
+});
+
+// Available trigger details must not be replaced by their summary or called an original requirement.
+test("legacy preview labels and preserves available trigger details", async () => {
+  const legacy = {
+    ...item,
+    key: "legacy:1",
+    kind: "legacy",
+    legacyNotice: "旧记录",
+    decisions: { items: [], hasMore: false },
+  };
+  await withView(async (controller, root) => {
+    controller.setKind("legacy");
+    await flush();
+    const card = all(root).find((x) => x.dataset.taskKey === "legacy:1")!;
+    assert.equal(all(card).find((x) => x.className === "tasks-run-detail")?.textContent, "触发资料：原始详情");
+  }, legacy);
 });

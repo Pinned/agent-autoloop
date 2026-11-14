@@ -1,7 +1,8 @@
 // Guards exact read-only owner auxiliary routes, rejected bodies and strict query/cursor parsing.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { empty } from "../kernel/evolve.ts";
+import { empty, evolve } from "../kernel/evolve.ts";
+import { listBusinessTasks } from "../host/business-task-query.ts";
 import { businessTaskHttp } from "../host/business-task-http.ts";
 const root = "http://fixture.invalid/v1/ui/business-tasks";
 test("invalid queries never resolve view or read body", async () => {
@@ -44,6 +45,35 @@ test("exact routes and errors", async () => {
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("cache-control"), "no-store");
     assert.deepEqual(await response.json(), { items: [], hasMore: false, nextBefore: null });
+  } finally {
+    view.close();
+  }
+});
+
+// Legacy display must carry committed round state, including unconfirmed stop requests.
+test("legacy display exposes execution facts without claiming business completion", () => {
+  const view = empty();
+  try {
+    evolve(view, [
+      {
+        version: 1,
+        seq: 1,
+        at: 0,
+        type: "fixture",
+        changes: [
+          { table: "runs", key: "1", row: { id: 1, rule: "r", agent: "a", state: "done", attempts: 1 } },
+          {
+            table: "runs",
+            key: "2",
+            row: { id: 2, rule: "r", agent: "a", state: "claimed", attempts: 1, cancel_at: "1970-01-01T00:00:00.000Z" },
+          },
+        ],
+      },
+    ]);
+    const items = listBusinessTasks(view).items;
+    assert.deepEqual(items.find((x) => x.id === 1)?.execution, { state: "done", stopping: false });
+    assert.deepEqual(items.find((x) => x.id === 2)?.execution, { state: "claimed", stopping: true });
+    assert.equal(items.find((x) => x.id === 1)?.finalResult, null);
   } finally {
     view.close();
   }

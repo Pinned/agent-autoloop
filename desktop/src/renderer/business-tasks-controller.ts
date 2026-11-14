@@ -34,6 +34,7 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
   let listGeneration = 0,
     detailGeneration = 0,
     allowed = true;
+  let kind: BusinessTaskItem["kind"] = "task";
   let filter: BusinessTaskListInput = {},
     run: RunDetail | null = null;
   let actionBusy = false,
@@ -47,41 +48,65 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
   function readList(more = false) {
     if (!allowed || busy || (more && !page?.hasMore)) return;
     const generation = ++listGeneration;
-    const request = parseBusinessRequest({
-      operation: "list",
-      input: { ...filter, ...(more ? { before: page!.nextBefore } : {}) },
-    });
+    const target = more ? items.length + 1 : Math.max(items.length, 1);
+    let gathered = more ? [...items] : [];
+    let scanned = 0;
+    const cursors = new Set<string>();
     busy = true;
     error = "";
     notify();
-    const finish = (raw: unknown) => {
-      if (generation !== listGeneration || !allowed) return;
-      busy = false;
-      try {
-        const response = parseBusinessResponse(raw, request);
-        if (!response.ok) error = response.error;
-        else {
-          const next = response.data as BusinessTaskList;
-          const merged = more
-            ? [...items.filter((x) => !next.items.some((y) => y.key === x.key)), ...next.items]
-            : next.items;
-          if (merged.length > 1000 || jsonBytes(merged) > 1024 * 1024) {
-            error = "已达到本页保留上限，请调整筛选条件。";
+    const fetchPage = (before?: BusinessTaskList["nextBefore"]) => {
+      const request = parseBusinessRequest({
+        operation: "list",
+        input: {
+          ...filter,
+          ...(before ? { before } : {}),
+          ...(1000 - scanned < (filter.limit ?? 30) ? { limit: 1000 - scanned } : {}),
+        },
+      });
+      const finish = (raw: unknown) => {
+        if (generation !== listGeneration || !allowed) return;
+        try {
+          const response = parseBusinessResponse(raw, request);
+          if (!response.ok) {
+            error = response.error;
+            busy = false;
           } else {
-            items = merged;
-            page = next;
+            const next = response.data as BusinessTaskList;
+            scanned += next.items.length;
+            gathered = [
+              ...gathered,
+              ...next.items.filter((x) => x.kind === kind && !gathered.some((y) => y.key === x.key)),
+            ];
+            if (gathered.length > 1000 || jsonBytes(gathered) > 1024 * 1024) {
+              error = "已达到本页保留上限，请调整筛选条件。";
+              busy = false;
+            } else {
+              items = gathered;
+              page = next;
+              // Keep the server's mixed-identity cursor. Never filter a page and invent an anchor.
+              if (next.hasMore && gathered.length < target && scanned < 1000) {
+                if (cursors.has(next.nextBefore!)) throw new Error("repeated-cursor");
+                cursors.add(next.nextBefore!);
+                fetchPage(next.nextBefore);
+                return;
+              }
+              busy = false;
+            }
           }
+        } catch {
+          error = "业务任务字段缺失或内容不完整，不能当作任务展示。";
+          busy = false;
         }
+        notify();
+      };
+      try {
+        void Promise.resolve(bridge.businessTasksRead(request)).then(finish, () => finish(undefined));
       } catch {
-        error = "业务任务字段缺失或内容不完整，不能当作任务展示。";
+        finish(undefined);
       }
-      notify();
     };
-    try {
-      void Promise.resolve(bridge.businessTasksRead(request)).then(finish, () => finish(undefined));
-    } catch {
-      finish(undefined);
-    }
+    fetchPage(more ? page!.nextBefore : undefined);
   }
   function readDetail(more = false) {
     if (!selectedKey || !allowed || detailBusy || (more && !detail?.timeline.hasMore)) return;
@@ -109,7 +134,6 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
           else detail = { ...detail!, timeline: { ...timeline, items: merged } };
         } else {
           detail = response.data as BusinessTaskDetail;
-          items = items.map((x) => (x.key === key ? detail!.task : x));
           mustReread = false;
           if (actionMessage === "已提交，正在核对任务的最新状态。") actionMessage = "已核对最新任务状态。";
           detailFresh = true;
@@ -166,7 +190,11 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
     } else {
       if (!runReady || !run || request.runId !== run.run.id || request.runId !== detail.task.latestRunId) return;
       if (request.action === "feedback" && run.run.state !== "done") return;
-      if (request.action === "cancel" && !["queued", "claimed", "unknown"].includes(run.run.state)) return;
+      if (
+        request.action === "cancel" &&
+        (run.run.stopping || !["queued", "claimed", "unknown"].includes(run.run.state))
+      )
+        return;
       if (request.action === "memo" && run.run.state === "queued") return;
     }
     const key = selectedKey,
@@ -237,6 +265,20 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
     }
   });
   return {
+    get kind() {
+      return kind;
+    },
+    setKind(next: BusinessTaskItem["kind"], input: BusinessTaskListInput = filter) {
+      if (next !== "task" && next !== "legacy") return;
+      kind = next;
+      const { before: _before, state, ...rest } = input;
+      filter = { ...rest, ...(next === "task" && state ? { state } : {}) };
+      ++listGeneration;
+      busy = false;
+      page = null;
+      items = [];
+      readList();
+    },
     get items() {
       return items;
     },
@@ -288,7 +330,8 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
     setFilter(input: BusinessTaskListInput) {
       ++listGeneration;
       busy = false;
-      filter = input;
+      const { before: _before, ...next } = input;
+      filter = next;
       page = null;
       items = [];
       readList();
@@ -313,6 +356,9 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
       detailBusy = false;
       detailError = "";
       run = null;
+      ++listGeneration;
+      busy = false;
+      readList();
       notify();
     },
     dispose() {
