@@ -1,3 +1,4 @@
+// Agent editing must use a frameless grouped subpage; returning must restore the list frame.
 // Agent editing must be a subpage, never an inline disclosure; updates must retain its input nodes.
 // The settings page shows only the groups this machine can actually change. A pure worker does
 // not own the hub's sources or notification channels: offering those tabs would promise a save
@@ -396,6 +397,104 @@ test("Agent edit and add use a subpage and keep the same inputs during updates",
   assert.equal(f.tabs.children.find((node) => node.className.includes("active"))!.dataset.tab, "agents");
   click(find(f.root, "添加一项")!);
   assert.ok(all(f.root).find((node) => node.className === "settings-agent-subpage"));
+});
+
+test("Agent subpages remove the list frame and group identity separately from runtime fields", async () => {
+  const f = fixture(() => "hub-worker", loadedBridge());
+  await withDocumentAcross(async () => {
+    f.view.init();
+    await flush();
+  });
+  for (const [action, index, title] of [
+    ["编辑", 0, "编辑 Agent"],
+    ["添加一项", 1, "添加 Agent"],
+  ] as const) {
+    click(find(f.root, action)!);
+    assert.equal(f.root.className, "settings-panel settings-agent-subpage-panel");
+    const page = all(f.root).find((node) => node.className === "settings-agent-subpage")!;
+    const header = page.querySelector(".tasks-detail-head")!;
+    assert.deepEqual(
+      header.children.map((node) => node.textContent),
+      ["← 返回", title],
+    );
+    const groups = page.children.filter((node) => node.className === "settings-agent-group");
+    assert.deepEqual(
+      groups.map((group) => group.children[0].textContent),
+      ["基本信息", "运行配置"],
+    );
+    assert.deepEqual(
+      all(groups[0])
+        .filter((node) => node.id)
+        .map((node) => node.id),
+      ["id", "name"].map((key) => `settings-agents-${index}-${key}`),
+    );
+    assert.deepEqual(
+      all(groups[1])
+        .filter((node) => node.id)
+        .map((node) => node.id),
+      ["worker", "use", "access", "model", "effort", "command", "timeout"].map(
+        (key) => `settings-agents-${index}-${key}`,
+      ),
+    );
+    click(find(page, "← 返回")!);
+    assert.equal(f.root.className, "panel settings-panel");
+  }
+});
+
+test("source and channel editors keep their original inline disclosure shape", async () => {
+  const f = fixture(() => "hub-worker", loadedBridge());
+  await withDocumentAcross(async () => {
+    f.view.init();
+    await flush();
+  });
+  for (const section of ["sources", "channels"]) {
+    click(f.tabs.children.find((node) => node.dataset.tab === section)!);
+    click(find(f.root, "编辑")!);
+    assert.equal(f.root.className, "panel settings-panel");
+    const details = all(f.root).find((node) => node.tagName === "details")!;
+    assert.ok(details);
+    assert.ok(byId(details, `settings-${section}-0-name`));
+    assert.equal(
+      all(f.root).some((node) => node.className === "settings-agent-group"),
+      false,
+    );
+    click(find(f.root, "取消")!);
+  }
+});
+
+test("Agent save barriers retain the grouped draft and never resend or return", async () => {
+  for (const code of ["conflict", "uncertain"] as const) {
+    let puts = 0;
+    const f = fixture(() => "hub-worker", {
+      settingsGet: loadedBridge().settingsGet,
+      settingsPut: async () => {
+        puts++;
+        return {
+          version: 1,
+          ok: false,
+          error: { code, message: "请重新读取", outcome: code === "conflict" ? "rejected" : "uncertain" },
+        };
+      },
+    });
+    await withDocumentAcross(async () => {
+      f.view.init();
+      await flush();
+      find(f.root, "编辑")!.click();
+      const name = byId(f.root, "settings-agents-0-name")!;
+      type(name, "保留草稿");
+      find(f.root, "保存")!.click();
+      await flush();
+      assert.equal(byId(f.root, name.id), name);
+      assert.equal(name.value, "保留草稿");
+      assert.equal(find(f.root, "保存")!.disabled, true);
+      assert.equal(find(f.root, "← 返回")!.disabled, true);
+      find(f.root, "保存")!.click();
+      find(f.root, "← 返回")!.click();
+      assert.equal(puts, 1);
+      assert.ok(byId(f.root, name.id));
+      assert.ok(find(f.root, "丢弃草稿并重新读取"));
+    });
+  }
 });
 
 test("an invalid row is named in the form, never sent", async () => {
