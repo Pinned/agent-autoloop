@@ -262,6 +262,25 @@ export function listRuns(view: View, input: unknown = {}): RunList {
   const items: RunItem[] = [];
   for (const row of rows.slice(0, limit)) {
     const item = runOf(row);
+    // Read bounded display fields, never the full event/card projections or per-row detail snapshots.
+    const eventRow = get(view, `SELECT ${EVENT_SELECT} ${EVENT_JOIN}=? ORDER BY ${field("e", "id")} DESC LIMIT 1`, [
+      item.id,
+    ]);
+    const event = eventRow ? eventOf(eventRow) : null;
+    const cards = all(
+      view,
+      `SELECT ${CARD_SELECT} FROM projections c WHERE c.collection='cards'
+      AND ${field("c", "run_id")}=? AND ${field("c", "kind")}='ask' AND ${field("c", "state")}='open'
+      ORDER BY ${field("c", "id")} DESC LIMIT 4`,
+      [item.id],
+    );
+    if (event || cards.length)
+      item.preview = {
+        title: event?.summary ?? "",
+        detail: event?.detail ?? "",
+        truncated: event?.truncated ?? false,
+        decisions: paged(cards, 3, item.id, "cards", (card) => cardOf(view, card)),
+      };
     if (jsonBytes({ items: [...items, item], hasMore: true, nextBefore: item.id }) > LIST_MAX_BYTES) break;
     items.push(item);
   }

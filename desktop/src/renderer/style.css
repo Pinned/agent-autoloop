@@ -1930,8 +1930,48 @@ main:has(#task-subpage:not([hidden])) {
   background: var(--accent-bg);
   color: var(--blue);
 }
+.run-title {
+  min-width: 0;
+  flex: 1;
+  font-size: 14px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.run-item {
+  min-width: 0;
+}
+.run-task-detail {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted);
+}
+.run-result,
+.run-decision {
+  overflow-wrap: anywhere;
+}
+.run-result p,
+.run-decision p {
+  margin: 0;
+}
+.run-decision {
+  border-left: 3px solid var(--amber);
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--amber) 6%, var(--panel));
+  white-space: pre-wrap;
+}
 .run-meta {
   font-size: 11px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+@media (forced-colors: active) {
+  .run-decision {
+    border-color: CanvasText;
+  }
 }
 main:has(.tasks-detail-page:not([hidden])) {
   padding: 14px 20px 16px;
