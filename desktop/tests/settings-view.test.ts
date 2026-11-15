@@ -1,4 +1,4 @@
-// Agent editing must use a frameless grouped subpage; returning must restore the list frame.
+// Settings must not nest a page frame or duplicate the shell title, including after returning from editing.
 // Agent editing must be a subpage, never an inline disclosure; updates must retain its input nodes.
 // The settings page shows only the groups this machine can actually change. A pure worker does
 // not own the hub's sources or notification channels: offering those tabs would promise a save
@@ -89,6 +89,9 @@ class TestElement {
           : node.tagName === selector,
     );
     return found ?? null;
+  }
+  get options(): TestElement[] {
+    return this.children.filter((node) => node.tagName === "option");
   }
   focus() {}
 }
@@ -399,7 +402,24 @@ test("Agent edit and add use a subpage and keep the same inputs during updates",
   assert.ok(all(f.root).find((node) => node.className === "settings-agent-subpage"));
 });
 
-test("Agent subpages remove the list frame and group identity separately from runtime fields", async () => {
+test("settings groups have no outer card or duplicate page title", async () => {
+  const f = fixture(() => "hub-worker", loadedBridge());
+  await withDocumentAcross(async () => {
+    f.view.init();
+    await flush();
+  });
+  for (const tab of f.tabs.children) {
+    click(tab);
+    assert.equal(f.root.className, "settings-panel");
+    assert.equal(
+      all(f.root).some((node) => node.tagName === "h2" && node.textContent === "设置"),
+      false,
+    );
+    assert.ok(f.root.textContent.includes("配置在别处被改动时"));
+  }
+});
+
+test("Agent subpages stay frameless and group identity separately from runtime fields", async () => {
   const f = fixture(() => "hub-worker", loadedBridge());
   await withDocumentAcross(async () => {
     f.view.init();
@@ -437,7 +457,7 @@ test("Agent subpages remove the list frame and group identity separately from ru
       ),
     );
     click(find(page, "← 返回")!);
-    assert.equal(f.root.className, "panel settings-panel");
+    assert.equal(f.root.className, "settings-panel");
   }
 });
 
@@ -450,7 +470,7 @@ test("source and channel editors keep their original inline disclosure shape", a
   for (const section of ["sources", "channels"]) {
     click(f.tabs.children.find((node) => node.dataset.tab === section)!);
     click(find(f.root, "编辑")!);
-    assert.equal(f.root.className, "panel settings-panel");
+    assert.equal(f.root.className, "settings-panel");
     const details = all(f.root).find((node) => node.tagName === "details")!;
     assert.ok(details);
     assert.ok(byId(details, `settings-${section}-0-name`));

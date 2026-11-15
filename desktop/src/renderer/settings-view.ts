@@ -118,15 +118,13 @@ export function mountSettingsView(
   let hadSnapshot = false;
 
   const root = document.createElement("section");
-  root.className = "panel settings-panel";
+  root.className = "settings-panel";
   const head = document.createElement("div");
   head.className = "rules-head";
-  const title = document.createElement("h2");
-  title.textContent = "设置";
   const intro = document.createElement("p");
   intro.className = "muted rules-intro";
   intro.textContent = "修改都保存到本机中台；配置在别处被改动时，保存会被拒绝而不是覆盖。";
-  head.append(title, intro);
+  head.append(intro);
   const tabs = document.createElement("nav");
   tabs.className = "settings-tabs";
   tabs.setAttribute("aria-label", "设置分组");
@@ -647,7 +645,7 @@ export function mountSettingsView(
       return;
     }
     const agentOpen = editing?.section === "agents";
-    root.className = agentOpen ? "settings-panel settings-agent-subpage-panel" : "panel settings-panel";
+    root.className = agentOpen ? "settings-panel settings-agent-subpage-panel" : "settings-panel";
     head.hidden = agentOpen;
     tabs.hidden = agentOpen;
     status.hidden = agentOpen && !state.loading && !state.saving && state.save.kind !== "confirmed";
