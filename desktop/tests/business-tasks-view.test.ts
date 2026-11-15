@@ -290,6 +290,73 @@ test("detail title shares the back row and stopping uses one armed button withou
   );
 });
 
+// The process must reach the first screen before any correction or feedback editor.
+test("prototype DOM puts current actions before tabs, hides correction and confines feedback to result", async () => {
+  const run = {
+    id: 2,
+    rule: "r",
+    agent: "a",
+    state: "done",
+    attempts: 1,
+    createdAt: null,
+    claimedAt: null,
+    finishedAt: null,
+    notBefore: null,
+    summary: "已结束",
+    error: "",
+    stopping: false,
+    usage: null,
+    truncated: false,
+  };
+  const page = { items: [], hasMore: false, nextCursor: null };
+  for (const kind of ["task", "legacy"]) {
+    const shown = {
+      ...item,
+      key: `${kind}:1`,
+      kind,
+      legacyNotice: kind === "legacy" ? "旧轮" : null,
+      decisions: { items: [], hasMore: false },
+    };
+    await withView(
+      async (controller, root) => {
+        controller.open(`${kind}:1`);
+        for (let i = 0; i < 4; i++) await flush();
+        const detail = all(root).find((x) => x.className === "tasks-detail-page")!;
+        assert.deepEqual(
+          detail.children.slice(0, 3).map((x) => x.className),
+          ["tasks-detail-head", "business-current", "task-detail-tabs"],
+        );
+        const current = detail.children[1];
+        const decisions = all(current).find((x) => x.className === "business-decisions")!;
+        assert.equal(decisions.hidden, true);
+        const memo = all(current).find((x) => x.className === "business-correction")!;
+        assert.equal(memo.hidden, true);
+        const result = all(detail).find((x) => x.className === "business-result-content")!;
+        assert.equal(result.hidden, true);
+        assert.ok(all(result).some((x) => x.textContent === "记录反馈"));
+        assert.ok(!all(current).some((x) => x.textContent === "记录反馈"));
+        const toggle = all(current).find((x) => x.className === "business-correct-toggle")!;
+        toggle.fire();
+        assert.equal(memo.hidden, false);
+        const input = all(memo).find((x) => x.tag === "textarea")!;
+        input.value = "更正草稿";
+        input.listeners.get("input")?.();
+        controller.refreshDetail();
+        for (let i = 0; i < 4; i++) await flush();
+        assert.ok(all(memo).includes(input));
+        assert.equal(input.value, "更正草稿");
+        all(detail)
+          .find((x) => x.tag === "button" && x.textContent === "交付结果")!
+          .fire();
+        assert.equal(result.hidden, false);
+        assert.equal(all(detail).find((x) => x.className === "business-process-content")!.hidden, true);
+      },
+      shown,
+      { run, association: { kind: "unavailable" }, events: page, cards: page, relatedRuns: page },
+    );
+  }
+});
+
 test("a newly arriving decision leaves an existing answer input mounted", async () => {
   const shown = { ...item, decisions: { items: [{ ...card, options: [] as string[] }], hasMore: false } };
   await withView(async (controller, root) => {

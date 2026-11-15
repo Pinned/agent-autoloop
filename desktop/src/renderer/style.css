@@ -2253,17 +2253,67 @@ main:has(.tasks-detail-page:not([hidden])) {
   padding: 12px 0;
   margin-bottom: 16px;
 }
-.task-detail-tabs button[aria-pressed="true"] {
-  background: var(--accent-bg);
-  color: var(--text);
-  border-color: var(--accent);
+.business-tasks-panel .task-detail-tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 8px 0;
+  margin-right: 16px;
+  font: inherit;
   opacity: 1;
 }
+.business-tasks-panel .task-detail-tabs button[aria-pressed="true"] {
+  background: transparent;
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  opacity: 1;
+}
+.business-current {
+  border-bottom: 1px solid var(--soft);
+  padding-bottom: 10px;
+}
+.business-current h3,
+.business-current p {
+  margin: 0 0 6px;
+}
+.business-current h3 {
+  font-size: 13px;
+}
+.business-run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.business-correction,
+.business-feedback {
+  border-top: 1px solid var(--soft);
+  padding: 12px 0;
+}
+.business-correction textarea,
+.business-feedback textarea,
+.business-feedback select {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.business-correction textarea,
+.business-feedback textarea {
+  min-height: 90px;
+  resize: vertical;
+}
+.agent-history-note,
+.agent-history-scope {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 6px 0;
+}
 .agent-history-round {
-  border: 1px solid var(--border);
-  padding: 12px;
-  margin: 12px 0;
-  border-radius: 10px;
+  border-top: 1px solid var(--soft);
+  padding: 10px 0;
+  margin: 10px 0;
 }
 .agent-history-round > summary {
   cursor: pointer;

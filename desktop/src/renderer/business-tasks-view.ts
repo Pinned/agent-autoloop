@@ -177,8 +177,8 @@ export function mountBusinessTasksView(
   const actionStatus = el("p", "", "rules-status");
   actionStatus.setAttribute("role", "status");
   let stopControls = el("section"),
-    memoControls = el("section"),
-    feedbackControls = el("section"),
+    memoControls = el("section", "", "business-correction"),
+    feedbackControls = el("section", "", "business-feedback"),
     stoppingText = el("p");
   const runActions = el("section", "", "business-run-actions"),
     diagnosis = el("details"),
@@ -206,14 +206,16 @@ export function mountBusinessTasksView(
   });
   tabs.append(processTab, originalTab, resultTab);
   function renderHistory() {
-    executionHistory.replaceChildren(
-      el("h3", "执行过程"),
+    const limitation = el("details", "", "agent-history-scope");
+    limitation.append(
+      el("summary", "会话范围与能力说明"),
       el(
         "p",
-        "关联会话历史（可能包含多轮）。仅显示公开消息与工具调用、返回状态；不公开工具参数和原始输出。实时落盘未实机验证。",
+        "关联会话可能包含多轮，不代表准确轮边界。仅显示公开消息与工具名、返回状态，不公开工具参数和原始输出。实时落盘未实机验证；挂接 CLI、远端 worker 和其他 Agent 暂不支持。",
         "muted",
       ),
     );
+    executionHistory.replaceChildren(el("p", "已保存的关联会话历史，可能包含多轮。", "agent-history-note"), limitation);
     const data = controller.detail;
     if (!data) return;
     const ids = [
@@ -239,8 +241,7 @@ export function mountBusinessTasksView(
         const messages: Record<string, string> = {
           missing: "缺少新启动的可信历史关联，或会话文件尚未落盘；不猜会话，也不据此判断派发资料缺失。",
           unavailable: "本机历史不可读（权限、路径安全或运行身份不满足）；已记录触发资料和执行结果仍在其他页签。",
-          unsupported:
-            "当前历史读取仅支持桌面自有运行目录；挂接 CLI 中台、远端 worker 或其他 Agent 暂不读取会话，但仍使用同一详情页展示已记录资料和结果。",
+          unsupported: "此连接暂不支持会话读取；已记录资料与结果仍可查看。",
           changed: "文件或读取上下文已变化，请从头重新读取。",
         };
         if (result.page.status !== "available") round.append(el("p", messages[result.page.status], "muted"));
@@ -300,23 +301,19 @@ export function mountBusinessTasksView(
   }
   const timelineHeading = el("h3", "处理记录（最新在前）");
   back.className = "task-back-button";
-  detailPage.append(
-    detailHead,
-    readDetail,
-    timelineStatus,
-    progress,
-    decisions,
-    actionStatus,
-    runActions,
-    tabs,
-    executionHistory,
-    original,
-    final,
-    timelineHeading,
-    timeline,
-    timelineMore,
-    diagnosis,
-  );
+  const current = el("section", "", "business-current");
+  const processContent = el("section", "", "business-process-content");
+  const resultContent = el("section", "", "business-result-content");
+  current.append(progress, decisions, runActions, memoControls, actionStatus, readDetail, timelineStatus);
+  processContent.append(executionHistory, timelineHeading, timeline, timelineMore, diagnosis);
+  resultContent.append(final, feedbackControls);
+  detailPage.append(detailHead, current, tabs, processContent, original, resultContent);
+  let correctionOpen = false;
+  const correctionToggle = button("提交更正", () => {
+    correctionOpen = !correctionOpen;
+    update();
+  });
+  correctionToggle.className = "business-correct-toggle";
   root.append(listPage, detailPage);
   let formsKey = "",
     runFormsKey = "";
@@ -456,6 +453,12 @@ export function mountBusinessTasksView(
     resultTab.setAttribute("aria-pressed", String(tab === "result"));
     timelineHeading.hidden = !data || tab !== "process";
     executionHistory.hidden = tab !== "process" || !data;
+    processContent.hidden = !data || tab !== "process";
+    resultContent.hidden = !data || tab !== "result";
+    current.hidden = !data && !controller.detailBusy && !controller.detailError;
+    readDetail.hidden = !controller.mustReread && !controller.detailError;
+    actionStatus.hidden = !controller.actionMessage;
+    timelineStatus.hidden = !controller.detailBusy && !controller.detailError;
     if (data?.task.latestRunId && !history.rounds.has(data.task.latestRunId)) {
       expanded.add(data.task.latestRunId);
       history.read(data.task.latestRunId);
@@ -609,7 +612,10 @@ export function mountBusinessTasksView(
     const nextRunKey = `${task.key}/${run?.id}`;
     if (nextRunKey !== runFormsKey) {
       runFormsKey = nextRunKey;
+      correctionOpen = false;
       runActions.replaceChildren();
+      memoControls.replaceChildren();
+      feedbackControls.replaceChildren();
       if (run) {
         stoppingText = el("p", "正在停止，等待执行进程退出。", "business-stopping");
         runActions.append(stoppingText);
@@ -618,34 +624,31 @@ export function mountBusinessTasksView(
           const explanation = el("p", "停止只结束所选这一轮；时间线与成本记录保留。", "muted");
           explanation.hidden = true;
           let armed = false;
+          const disarm = button("不停止", () => {
+            armed = false;
+            stop.textContent = "停止执行";
+            explanation.hidden = disarm.hidden = true;
+          });
+          disarm.hidden = true;
           const stop = button("停止执行", () => {
             if (!armed) {
               armed = true;
               stop.textContent = "确认停止";
-              explanation.hidden = false;
+              explanation.hidden = disarm.hidden = false;
               return;
             }
             armed = false;
             stop.textContent = "停止执行";
-            explanation.hidden = true;
+            explanation.hidden = disarm.hidden = true;
             controller.submitAction({ version: 1, action: "cancel", runId: run.id, input: {} });
           });
-          stopGroup.append(
-            stop,
-            explanation,
-            button("不停止", () => {
-              armed = false;
-              stop.textContent = "停止执行";
-              explanation.hidden = true;
-            }),
-          );
+          stopGroup.append(stop, disarm, explanation);
           stopControls = stopGroup;
           runActions.append(stopControls);
         }
         {
           const text = draftArea(`${task.key}/memo/${run.id}`, "更正说明");
-          memoControls = el("section", "", "business-operation");
-          runActions.append(memoControls);
+          runActions.append(correctionToggle);
           memoControls.append(
             el("h3", "更正说明"),
             text,
@@ -663,8 +666,8 @@ export function mountBusinessTasksView(
             rating.append(option);
           }
           const text = draftArea(`${task.key}/feedback/${run.id}`, "验收反馈说明");
-          feedbackControls = el("section", "", "business-operation");
-          runActions.append(feedbackControls);
+          rating.value = controller.drafts.get(`${task.key}/rating/${run.id}`) ?? FEEDBACK_KINDS[0];
+          rating.addEventListener("change", () => controller.drafts.set(`${task.key}/rating/${run.id}`, rating.value));
           feedbackControls.append(
             el("h3", "验收反馈（记录评价，不自动判定任务完成）"),
             rating,
@@ -683,9 +686,17 @@ export function mountBusinessTasksView(
     }
     stoppingText.hidden = !run?.stopping || !["claimed", "unknown"].includes(run.state);
     stopControls.hidden = !run || run.stopping || !["queued", "claimed", "unknown"].includes(run.state);
-    memoControls.hidden = !run || run.state === "queued";
+    correctionToggle.hidden = !run || run.state === "queued";
+    correctionToggle.textContent = correctionOpen ? "收起更正" : "提交更正";
+    correctionToggle.setAttribute("aria-expanded", String(correctionOpen));
+    memoControls.hidden = !correctionOpen || !run || run.state === "queued";
+    decisions.hidden = !task.decisions.items.length && !task.decisions.hasMore;
     feedbackControls.hidden = run?.state !== "done";
-    for (const control of runActions.querySelectorAll("button"))
+    for (const control of [
+      ...runActions.querySelectorAll("button"),
+      ...memoControls.querySelectorAll("button"),
+      ...feedbackControls.querySelectorAll("button"),
+    ])
       control.disabled =
         !controller.runReady ||
         !controller.detailFresh ||
