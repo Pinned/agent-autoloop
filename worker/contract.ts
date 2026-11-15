@@ -60,7 +60,9 @@ export function promptFor(job: Job, contextFile: string) {
     "",
     "最后一条消息的第一行写结论（只进记录，不发给人）：",
     "- 可以自动重试的临时失败：写“没跑成：”加一句大白话原因，过几分钟会重派。要人决定或恢复的事不写“没跑成”。",
-    "- 看过了，没有要做的：写“没事可做：”加一句原因。",
+    "- 看过了，没有新进展、也没有完成任务收尾：写“没事可做：”加一句原因，不声明 taskStatus: completed。",
+    "- 按本人决定取消并已核实收尾也算本轮办完：核实不会继续执行，取消不再需要的复查，" +
+      '没有其他待处理问题才写 taskStatus: "completed"；第一行写“已按本人决定取消并核实收尾”，不要写“没事可做”。',
     "- 其余：一句话说做成了什么。",
     "",
     "需要中台做事时，在最后一条消息的末尾附一个回执：" +
@@ -145,7 +147,16 @@ export function resultFrom(
   };
   if (message.problem) return { result: base, problem: message.problem };
   try {
-    return { result: parseResult({ ...base, ...message.receipt }) };
+    const result = parseResult({ ...base, ...message.receipt });
+    if (result.outcome === "nothing" && result.taskStatus === "completed") {
+      return {
+        result: base,
+        problem:
+          "“没事可做”不代表任务已完成。只重写回执：已核实取消善后或任务收尾就明确写办完的结论；" +
+          '尚未收尾则保留没事可做并写 taskStatus: "active"，不要重做业务或调用工具。',
+      };
+    }
+    return { result };
   } catch (error) {
     if (error instanceof InputError) return { result: base, problem: error.message };
     throw error;

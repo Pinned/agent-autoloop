@@ -652,6 +652,36 @@ test("a receipt that can't be read is asked for again in the same session, doing
   assert.deepEqual(hub.results[0].usage, { input: 2, output: 2 }, "both turns count; no turn reported a price");
 });
 
+// A contradictory cancellation receipt must resume only for repair, never redo the business turn.
+test("nothing plus completed repairs cancellation wording without rerunning business", async () => {
+  const hub = fakeHub();
+  const wrong = said(
+    "cancellation-wrong",
+    `session=cancellation\n没事可做：本人已取消\n${FENCE}agent-autoloop\n{"taskStatus":"completed"}\n${FENCE}\n`,
+  );
+  const right = said(
+    "cancellation-right",
+    `session=cancellation\n已按本人决定取消并核实收尾\n${FENCE}agent-autoloop\n{"taskStatus":"completed"}\n${FENCE}\n`,
+  );
+  const marker = join(folder, "cancellation-business");
+  const repair = join(folder, "cancellation-repair");
+  hub.jobs.push(
+    job({
+      use: "scripted",
+      command: [
+        `if [ -n "$1" ]; then cat "${right}"; printf '%s' "$2" > "${repair}"; else echo once >> "${marker}"; cat "${wrong}"; fi`,
+      ],
+    }),
+  );
+  const w = worker(hub);
+  await until(w, () => hub.results.length === 1);
+  assert.equal(readFileSync(marker, "utf8"), "once\n");
+  assert.match(readFileSync(repair, "utf8"), /不要重做.*不要调用任何工具/);
+  assert.equal(hub.results[0].outcome, "done");
+  assert.equal(hub.results[0].taskStatus, "completed");
+  assert.equal(hub.results[0].session, "cancellation");
+});
+
 for (const failure of ["exit", "timeout", "unreadable", "empty", "failed-message"] as const) {
   test(`a ${failure} receipt repair keeps the original completed business result`, async () => {
     const hub = fakeHub();

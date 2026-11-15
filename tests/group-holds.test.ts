@@ -101,6 +101,38 @@ function scenario(questions = 1) {
   };
 }
 
+// A cancellation answer followed by nothing must retain its hold, not masquerade as task completion.
+test("cancellation answer needs done to close the decided card and complete the task", () => {
+  for (const outcome of ["nothing", "done"] as const) {
+    const s = scenario();
+    try {
+      s.act("answer", s.card.id, { choice: 1 });
+      const resumed = s.act("claimNext", "w", "cancellation");
+      const result = s.act("finish", resumed.run, resumed.token, { outcome, taskStatus: "completed" });
+      if (outcome === "nothing") {
+        assert.deepEqual(result.rejected, [
+          { what: "taskStatus", reason: "本轮没事可做不代表任务已收尾，不能标为完成" },
+        ]);
+        assert.equal(s.view.get("cards", s.card.id)?.state, "decided");
+        assert.equal(s.view.get("tasks", resumed.task.id)?.status, "active");
+        assert.equal(rows(s.view, "holds").length, 1);
+        assert.equal(s.act("claimNext", "w", "next"), null);
+      } else {
+        assert.deepEqual(result.rejected, []);
+        assert.equal(s.view.get("cards", s.card.id)?.state, "done");
+        assert.equal(s.view.get("tasks", resumed.task.id)?.status, "completed");
+        assert.equal(rows(s.view, "holds").length, 0);
+        assert.equal(s.act("claimNext", "w", "next").rule.name, "乙");
+      }
+      const rebuilt = evolve(empty(), s.log);
+      assert.deepEqual(snapshot(rebuilt), snapshot(s.view));
+      rebuilt.close();
+    } finally {
+      s.view.close();
+    }
+  }
+});
+
 test("answer resumes first and only done without unfinished asks releases the factual hold", () => {
   const s = scenario();
   try {

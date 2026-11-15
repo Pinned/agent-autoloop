@@ -511,7 +511,15 @@ function finish(draft: Draft, id: number, token: string, given: unknown) {
       rows(draft.view, "runs", { task_id: run.task_id, state: ["queued", "claimed", "unknown"] }).length;
     const completed = result.taskStatus === "completed" && result.outcome === "done" && !pending;
     if (result.taskStatus === "completed" && !completed)
-      rejected.push({ what: "taskStatus", reason: "任务还有待处理事项，不能标为完成" });
+      rejected.push({
+        what: "taskStatus",
+        reason:
+          result.outcome === "nothing"
+            ? "本轮没事可做不代表任务已收尾，不能标为完成"
+            : result.outcome !== "done"
+              ? "本轮没有正常办完，不能标为完成"
+              : "任务还有未收尾的提问、复查或执行轮次，不能标为完成",
+      });
     put(draft, "tasks", run.task_id, {
       status: completed ? "completed" : "active",
       updated_at: draft.at,

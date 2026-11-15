@@ -43,6 +43,28 @@ test("explicit task completion survives worker receipt parsing", () => {
   assert.equal(invalid.result.taskStatus, undefined);
 });
 
+// Completion after cancellation must not be silently upgraded from a no-progress result.
+test("nothing with explicit completion requests receipt-only repair", () => {
+  const checked = contract.resultFrom(
+    contract.readMessage('没事可做：本人已取消\n```agent-autoloop\n{"taskStatus":"completed"}\n```'),
+    {},
+  );
+  assert.match(checked.problem ?? "", /没事可做.*完成/);
+  assert.equal(checked.result.outcome, "nothing");
+  assert.equal(checked.result.taskStatus, undefined);
+  const repair = contract.repairPrompt(checked.problem!);
+  assert.match(repair, /不要重做.*不要调用任何工具/);
+  const corrected = contract.resultFrom(
+    contract.readMessage('已按本人决定取消并核实收尾\n```agent-autoloop\n{"taskStatus":"completed"}\n```'),
+    {},
+  );
+  assert.equal(corrected.problem, undefined);
+  assert.equal(corrected.result.outcome, "done");
+  assert.equal(corrected.result.taskStatus, "completed");
+  assert.equal(contract.resultFrom(contract.readMessage("没事可做：没有新进展"), {}).problem, undefined);
+  assert.match(contract.promptFor(job, "/tmp/context.json"), /取消.*收尾/);
+});
+
 test("original task data stays in the context file, never in instructions", () => {
   const text = contract.promptFor(job, "/tmp/context.json");
   assert.match(text, /taskStatus/);
