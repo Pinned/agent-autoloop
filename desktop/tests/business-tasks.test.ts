@@ -485,7 +485,7 @@ test("global filters fence a late prior query", async () => {
   );
   controller.refresh();
   controller.setFilter({ q: "原始需求", state: "running" });
-  assert.deepEqual(calls[1], { operation: "list", input: { q: "原始需求", state: "running" } });
+  assert.deepEqual(calls[1], { operation: "list", input: { q: "原始需求", state: "running", limit: 20 } });
   resolvers[1](list("running"));
   await flush();
   resolvers[0](list("queued"));
@@ -573,13 +573,15 @@ test("task and legacy entrances page independently without guessing identity", a
     ["task:1"],
   );
   assert.equal(calls[1].input.before, "legacy:8");
+  const switchedAt = calls.length;
   controller.setKind("legacy");
-  await flush();
+  for (let i = 0; i < 5; i++) await flush();
   assert.deepEqual(
     controller.items.map((x) => x.key),
     ["legacy:8"],
   );
-  assert.equal(calls.at(-1).input.before, undefined);
+  assert.equal(calls[switchedAt].input.before, undefined);
+  assert.equal(controller.pageNumber, 1);
 });
 
 // A changed detail cannot leave a stale row in an authoritative state-filtered list.
@@ -610,6 +612,6 @@ test("returning from detail re-queries the original filter instead of patching s
   await flush();
   controller.back();
   await flush();
-  assert.deepEqual(calls.at(-1), { operation: "list", input: { q: "需求", state: "running" } });
+  assert.deepEqual(calls.at(-1), { operation: "list", input: { q: "需求", state: "running", limit: 20 } });
   assert.equal(controller.items.length, 0);
 });

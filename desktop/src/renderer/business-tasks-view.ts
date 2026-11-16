@@ -135,23 +135,23 @@ export function mountBusinessTasksView(
   filters.append(search, state);
   const status = el("p", "", "rules-status");
   status.setAttribute("role", "status");
-  const refresh = button("重新读取任务", () => {
-      clearTimeout(timer);
-      timer = undefined;
-      filter();
-    }),
-    more = button("加载更多任务", () => {
+  const previous = button("上一页", () => controller.previous()),
+    pageLabel = el("span"),
+    more = button("下一页", () => {
       if (timer !== undefined) {
         clearTimeout(timer);
         timer = undefined;
         filter();
       } else controller.more();
     });
+  const pagination = el("nav", "", "tasks-filters");
+  pagination.setAttribute("aria-label", "任务分页");
+  pagination.append(previous, pageLabel, more);
   const list = el("ul", "", "run-list");
   let detailWasOpen = false,
     scroll = 0,
     pendingScroll = false;
-  listPage.append(entrances, entranceNote, filters, status, refresh, more, list);
+  listPage.append(entrances, entranceNote, filters, status, list, pagination);
   const back = button("← 返回任务", () => controller.back()),
     title = el("h2");
   title.id = "task-detail-title";
@@ -438,11 +438,11 @@ export function mountBusinessTasksView(
         : controller.items.length
           ? `已加载 ${controller.items.length} 条任务`
           : controller.hasMore
-            ? "已读取的记录中暂无匹配项，可以继续加载。"
+            ? "本页暂无匹配项，可以翻到下一页。"
             : "没有符合条件的任务。";
-    refresh.disabled = controller.busy;
-    more.disabled = controller.busy;
-    more.hidden = !controller.hasMore;
+    previous.disabled = controller.busy || controller.pageNumber === 1;
+    pageLabel.textContent = `第 ${controller.pageNumber} 页`;
+    more.disabled = controller.busy || !controller.hasMore;
     list.replaceChildren();
     for (const task of controller.items) {
       const card = el("li", "", "tasks-run-card");

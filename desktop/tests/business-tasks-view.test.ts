@@ -108,7 +108,17 @@ async function withView(
             ok: true,
             data:
               request.operation === "list"
-                ? { items: [shown], hasMore: !!options.paged, nextBefore: options.paged ? "task:1" : null }
+                ? {
+                    items: options.paged
+                      ? Array.from({ length: 20 }, (_, i) => ({
+                          ...(shown as typeof item),
+                          id: i + 1,
+                          key: `task:${i + 1}`,
+                        }))
+                      : [shown],
+                    hasMore: !!options.paged,
+                    nextBefore: options.paged ? "task:20" : null,
+                  }
                 : { task: shown, timeline: { items: [], hasMore: false, nextBefore: null } },
           }) as never,
         taskDetail: async () => ({ version: 1, ok: true, data: runDetail }) as never,
@@ -541,7 +551,7 @@ test("load more applies pending search before using any page cursor", async () =
       const search = all(root).find((x) => x.tag === "input")!;
       search.value = "新的需求";
       search.listeners.get("input")!();
-      const more = all(root).find((x) => x.tag === "button" && x.textContent === "加载更多任务")!;
+      const more = all(root).find((x) => x.tag === "button" && x.textContent === "下一页")!;
       assert.equal(more.hidden, false);
       more.fire();
       await flush();

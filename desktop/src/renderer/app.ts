@@ -349,6 +349,9 @@ const tasksPage = mountBusinessTasksView(businessTasks, {
 });
 // The running runtime's role is what this machine is now; a configured-but-stopped machine still
 // knows what it was set up as, and only then may the launch record stand in for it.
+document.addEventListener("visibilitychange", () => {
+  businessTasks.setActive(currentPage === "tasks" && currentRole() !== "worker" && !document.hidden);
+});
 function currentRole(): Role {
   if (run.state.kind === "ready" && run.state.snapshot.role) return run.state.snapshot.role;
   const launch = setup.launch;
@@ -492,6 +495,7 @@ function render(id: string, focus = true) {
   localSummaryView = undefined;
   renderedFlavor = isDispatchTask ? "dispatch-task" : isAutomationEntry ? "automation" : pageFlavor(role, id);
   currentPage = id;
+  businessTasks.setActive(id === "tasks" && currentRole() !== "worker" && !document.hidden);
   main.setAttribute("aria-labelledby", "page-title");
   const page = isDispatchTask
     ? {

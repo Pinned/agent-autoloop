@@ -67,23 +67,40 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
       ? enrichLegacyReading(checked, request, bridge, current)
       : raw;
   }
-  function readList(more = false) {
+  let anchors: (BusinessTaskList["nextBefore"] | undefined)[] = [undefined];
+  let pageIndex = 0;
+  let active = false;
+  let poll: ReturnType<typeof setTimeout> | undefined;
+  function schedule() {
+    clearTimeout(poll);
+    if (active && !selectedKey && allowed)
+      poll = setTimeout(() => {
+        readList(false, true);
+        schedule();
+      }, 5000);
+  }
+  function readList(more = false, silent = false) {
     if (!allowed || busy || (more && !page?.hasMore)) return;
+    if (more) {
+      anchors = anchors.slice(0, pageIndex + 1);
+      anchors.push(page!.nextBefore);
+      pageIndex++;
+    }
     const generation = ++listGeneration;
-    const target = more ? items.length + 1 : Math.max(items.length, 1);
-    let gathered = more ? [...items] : [];
+    const target = filter.limit ?? 20;
+    let gathered: BusinessTaskItem[] = [];
     let scanned = 0;
     const cursors = new Set<string>();
     busy = true;
     error = "";
-    notify();
+    if (!silent) notify();
     const fetchPage = (before?: BusinessTaskList["nextBefore"]) => {
       const request = parseBusinessRequest({
         operation: "list",
         input: {
           ...filter,
+          limit: Math.min(target - gathered.length, 1000 - scanned),
           ...(before ? { before } : {}),
-          ...(1000 - scanned < (filter.limit ?? 30) ? { limit: 1000 - scanned } : {}),
         },
       });
       const finish = (raw: unknown) => {
@@ -104,8 +121,6 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
               error = "已达到本页保留上限，请调整筛选条件。";
               busy = false;
             } else {
-              items = gathered;
-              page = next;
               // Keep the server's mixed-identity cursor. Never filter a page and invent an anchor.
               if (next.hasMore && gathered.length < target && scanned < 1000) {
                 if (cursors.has(next.nextBefore!)) throw new Error("repeated-cursor");
@@ -113,6 +128,8 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
                 fetchPage(next.nextBefore);
                 return;
               }
+              items = gathered;
+              page = next;
               busy = false;
             }
           }
@@ -131,7 +148,7 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
         finish(undefined);
       }
     };
-    fetchPage(more ? page!.nextBefore : undefined);
+    fetchPage(anchors[pageIndex]);
   }
   function readDetail(more = false, preserveUncertain = false) {
     if (!selectedKey || !allowed || detailBusy || (more && !detail?.timeline.hasMore)) return;
@@ -309,6 +326,7 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
       if (selectedKey) readDetail(false, true);
       else readList();
     }
+    schedule();
     notify();
   });
   return {
@@ -326,6 +344,8 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
       ++listGeneration;
       busy = false;
       page = null;
+      anchors = [undefined];
+      pageIndex = 0;
       items = [];
       readList();
     },
@@ -373,6 +393,20 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
     },
     drafts,
     submitAction,
+    get pageNumber() {
+      return pageIndex + 1;
+    },
+    previous() {
+      if (busy || pageIndex === 0) return;
+      pageIndex--;
+      readList();
+    },
+    setActive(next: boolean) {
+      if (active === next) return;
+      active = next;
+      if (active && !selectedKey) readList(false, true);
+      schedule();
+    },
     refresh: () => readList(),
     more: () => readList(true),
     refreshDetail: () => readDetail(),
@@ -383,11 +417,16 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
       const { before: _before, ...next } = input;
       filter = next;
       page = null;
+      anchors = [undefined];
+      pageIndex = 0;
       items = [];
       readList();
     },
     open(key: string) {
       selectedKey = businessTaskKey(key);
+      clearTimeout(poll);
+      ++listGeneration;
+      busy = false;
       ++detailGeneration;
       detailBusy = false;
       detail = null;
@@ -409,9 +448,12 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
       ++listGeneration;
       busy = false;
       readList();
+      schedule();
       notify();
     },
     dispose() {
+      active = false;
+      clearTimeout(poll);
       ++listGeneration;
       ++detailGeneration;
       unsubscribe?.();
