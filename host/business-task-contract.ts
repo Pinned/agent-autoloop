@@ -15,6 +15,7 @@ export const BUSINESS_STATES = [
   "running",
   "unknown",
   "active",
+  "cancelling",
   "completed",
   "failed",
   "cancelled",

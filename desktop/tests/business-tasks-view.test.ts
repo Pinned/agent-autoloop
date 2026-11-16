@@ -1,5 +1,7 @@
 // Prevent lifecycle cards from hiding the actual decision/options or silent truncation, and prevent
-// leaving an in-flight write before its receipt can be checked. Fake DOM/bridge, no Electron or network.
+// leaving an in-flight write before its receipt can be checked. Also prevent the removed list-level
+// execution diagnostics entrance from returning while keeping task detail and legacy history reachable.
+// Fake DOM/bridge, no Electron or network.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
@@ -116,7 +118,6 @@ async function withView(
     );
     view = mountBusinessTasksView(controller, {
       scrollHost: options.scrollHost,
-      diagnostics: { root: new Element("section") as unknown as HTMLElement, init() {}, update() {} },
     });
     view.init();
     await flush();
@@ -126,6 +127,61 @@ async function withView(
     else Reflect.deleteProperty(globalThis, "document");
   }
 }
+test("whole-task cancel asks explicitly, works without run diagnosis and blocks duplicate actions", async () => {
+  await withView(async (controller, root) => {
+    controller.open("task:1");
+    await flush();
+    const cancel = all(root).find((x) => x.tag === "button" && x.textContent === "取消任务")!;
+    const confirm = all(root).find((x) => x.tag === "button" && x.textContent === "确认取消整件任务")!;
+    const form = all(root).find((x) => x.children.includes(confirm))!;
+    const reason = form.children.find((x) => x.tag === "textarea")!;
+    assert.equal(controller.actionBusy, false);
+    cancel.fire();
+    assert.equal(controller.actionBusy, false, "opening confirmation must not send a request");
+    assert.ok(root.textContent.includes("不算成功完成"));
+    reason.value = "本人不再需要";
+    confirm.fire();
+    assert.equal(controller.actionBusy, true, "cancelling a task must not depend on a latest run diagnostic");
+    assert.equal(confirm.disabled, true);
+    assert.equal(cancel.disabled, true);
+  });
+});
+test("cancelled business state is explicit and offers no reactivation controls", async () => {
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      await flush();
+      assert.ok(root.textContent.includes("已取消"));
+      const cancel = all(root).find((x) => x.tag === "button" && x.textContent === "取消任务")!;
+      assert.ok(all(root).some((x) => x.hidden && x.children.includes(cancel)));
+    },
+    { ...item, state: "cancelled", decisions: { items: [], hasMore: false } },
+  );
+});
+
+test("task list removes execution diagnostics but keeps detail and legacy entrances", async () => {
+  await withView(async (controller, root) => {
+    const listPage = all(root).find((x) => x.className === "tasks-list-page")!;
+    assert.equal(listPage.textContent.includes("查看执行诊断记录"), false);
+    assert.equal(listPage.children.filter((x) => x.tag === "section").length, 0);
+    all(listPage)
+      .find((x) => x.tag === "button" && x.textContent === "历史执行")!
+      .fire();
+    await flush();
+    assert.equal(controller.kind, "legacy");
+    all(listPage)
+      .find((x) => x.tag === "button" && x.textContent === "业务任务")!
+      .fire();
+    await flush();
+    all(listPage)
+      .find((x) => x.tag === "button" && x.textContent === "查看详情")!
+      .fire();
+    await flush();
+    assert.equal(controller.selectedKey, "task:1");
+    assert.equal(all(root).find((x) => x.className === "tasks-detail-page")!.hidden, false);
+    assert.ok(root.textContent.includes("执行与诊断资料"));
+  });
+});
 test("task detail defaults to process and keeps original and delivery separate", async () => {
   await withView(async (controller, root) => {
     controller.open("task:1");

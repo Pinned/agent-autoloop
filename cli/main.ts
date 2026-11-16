@@ -34,6 +34,7 @@ const HELP = `Agent 自动化中台
                                     发一条事件
   agent-autoloop tell <编号> [--task 定时任务名]
                                     直接告诉你一件事，内容从标准输入读
+  agent-autoloop cancel-task <任务编号> <原因>  取消整件任务，保留历史
   agent-autoloop stop <第几轮>           停掉一轮
   agent-autoloop release-hold <占用轮次> <原因>  本人核实后解除事项占用
   agent-autoloop correct <第几轮> <更正的话>
@@ -271,6 +272,18 @@ async function answer(args: string[]) {
         ? "结案了。"
         : "收到，Agent 接着干。",
   );
+}
+
+async function cancelTask(args: string[]) {
+  const [id, ...words] = args;
+  const task = Number(id);
+  const reason = words.join(" ").trim();
+  if (!Number.isSafeInteger(task) || task < 1 || !reason || [...reason].length > 1000)
+    return fail("用法：agent-autoloop cancel-task <任务编号> <原因>（原因最多 1000 字）");
+  const result = await ownerClient().cancelTask(task, reason);
+  if (result?.status === "cancelled") console.log("整件任务已取消，历史及原回答保留；这不表示成功完成。");
+  else if (result?.status === "cancelling") console.log("任务取消中，等待全部执行退出或核实；占用暂不放行。");
+  else fail("取消结果未确认，请重新读取任务，不要直接重发。");
 }
 
 async function releaseHold(args: string[]) {
@@ -512,6 +525,7 @@ const commands: Record<string, () => unknown> = {
   conformance: () => checkConformance(args),
   answer: () => answer(args),
   resolve: () => resolve(args),
+  "cancel-task": () => cancelTask(args),
   "release-hold": () => releaseHold(args),
   doctor,
   check,

@@ -134,12 +134,13 @@ function taskItem(view: View, key: BusinessTaskKey): BusinessTaskItem {
       [id],
     );
   let state: BusinessTaskItem["state"] = "active";
-  if (decisions.items.length) state = "waiting-decision";
+  if (task.status === "cancelling" || task.status === "cancelled") state = task.status;
+  else if (decisions.items.length) state = "waiting-decision";
   else if (run?.state === "queued") state = "queued";
   else if (run?.state === "claimed") state = "running";
   else if (run?.state === "unknown") state = "unknown";
   else if (task.status === "completed" && !pending) state = "completed";
-  else if (run?.state === "failed" || run?.state === "cancelled") state = run.state;
+  else if (kind === "legacy" && (run?.state === "failed" || run?.state === "cancelled")) state = run.state;
   // A late round may author completion after a newer-numbered round: latest progress is not its result.
   const final =
     state === "completed" && typeof task.completedRunId === "number"
@@ -230,13 +231,14 @@ export function listBusinessTasks(view: View, input: unknown = {}): BusinessTask
   ), display AS (
     SELECT id,kind,substr(COALESCE(json_extract(taskData,'$.created_at'),json_extract(runData,'$.created_at'),''),1,64) AS createdAtSort,json_extract(eventData,'$.summary') AS title,json_extract(eventData,'$.detail') AS detail,
       json_extract(runData,'$.summary') AS summary,json_extract(runData,'$.error') AS error,
-      CASE WHEN EXISTS(SELECT 1 FROM projections c WHERE c.collection='cards' AND ${f("c", "kind")}='ask' AND ${f("c", "state")}='open'
+      CASE WHEN json_extract(taskData,'$.status') IN ('cancelling','cancelled') THEN json_extract(taskData,'$.status')
+      WHEN EXISTS(SELECT 1 FROM projections c WHERE c.collection='cards' AND ${f("c", "kind")}='ask' AND ${f("c", "state")}='open'
         AND ((joined.kind=0 AND ${f("c", "task_id")}=joined.id) OR (joined.kind=1 AND ${f("c", "run_id")}=joined.id))) THEN 'waiting-decision'
       WHEN json_extract(runData,'$.state')='queued' THEN 'queued'
       WHEN json_extract(runData,'$.state')='claimed' THEN 'running'
       WHEN json_extract(runData,'$.state')='unknown' THEN 'unknown'
       WHEN json_extract(taskData,'$.status')='completed' AND NOT EXISTS(SELECT 1 FROM projections tm WHERE tm.collection='timers' AND ${f("tm", "task_id")}=joined.id AND ${f("tm", "event_id")} IS NULL) THEN 'completed'
-      WHEN json_extract(runData,'$.state') IN ('failed','cancelled') THEN json_extract(runData,'$.state') ELSE 'active' END AS businessState FROM joined
+      WHEN joined.kind=1 AND json_extract(runData,'$.state') IN ('failed','cancelled') THEN json_extract(runData,'$.state') ELSE 'active' END AS businessState FROM joined
   ) SELECT id,kind FROM display ${filters.length ? `WHERE ${filters.join(" AND ")}` : ""} ORDER BY createdAtSort DESC,id DESC,kind ASC LIMIT ?`,
     params,
   );
@@ -259,6 +261,8 @@ export function pageBusinessTaskTimeline(view: View, given: unknown, input: unkn
   // Canonical numeric identity is validated above; it is safe as an SQL literal, never event text.
   const eventBelongs = `EXISTS(SELECT 1 FROM projections re JOIN projections rn ON rn.collection='runs' AND rn.key=CAST(${f("re", "run_id")} AS TEXT) WHERE re.collection='run_events' AND ${f("re", "event_id")}=json_extract(ch.value,'$.row.id') AND ${f("rn", kind === "task" ? "task_id" : "id")}=${id})`;
   const childBelongs = `(json_extract(ch.value,'$.row.task_id')=${kind === "task" ? id : 0} OR EXISTS(SELECT 1 FROM projections parent WHERE parent.collection='runs' AND parent.key=CAST(json_extract(ch.value,'$.row.run_id') AS TEXT) AND ${f("parent", kind === "task" ? "task_id" : "id")}=${id}))`;
+  // Filter contact-only facts before LIMIT: hiding them in the UI would still consume business history pages.
+  // Heartbeats that close recovery cards remain business facts. The underlying log is untouched.
   // SQL clips before crossing into JS, including maliciously large fact changes. References are indexed.
   const rows = all(
     view,
@@ -269,15 +273,16 @@ export function pageBusinessTaskTimeline(view: View, given: unknown, input: unkn
     (SELECT json_extract(ch.value,'$.row.id') FROM json_each(f.fact,'$.changes') ch WHERE json_extract(ch.value,'$.table')='feedback' AND ${childBelongs} LIMIT 1) AS feedbackId,
     (SELECT substr(group_concat(line,char(10)),1,4001) FROM (
       SELECT CASE json_extract(ch.value,'$.table')
+        WHEN 'tasks' THEN '任务状态：'||COALESCE(json_extract(ch.value,'$.row.status'),'')||char(10)||substr(COALESCE(json_extract(ch.value,'$.row.cancel_reason'),''),1,1001)
         WHEN 'events' THEN '事件：'||substr(COALESCE(json_extract(ch.value,'$.row.summary'),''),1,501)||char(10)||substr(COALESCE(json_extract(ch.value,'$.row.detail'),''),1,2001)
         WHEN 'cards' THEN '卡片 #'||json_extract(ch.value,'$.row.id')||'：'||substr(COALESCE(json_extract(ch.value,'$.row.title'),''),1,501)||char(10)||CASE WHEN json_extract(f.fact,'$.type')='answer' THEN '回答：'||substr(COALESCE(json_extract(ch.value,'$.row.answer'),CASE WHEN json_type(ch.value,'$.row.choice')='integer' AND json_extract(ch.value,'$.row.choice')>=0 THEN json_extract(json_extract(ch.value,'$.row.options'),'$['||json_extract(ch.value,'$.row.choice')||']') END,'未记录所选选项'),1,2001) ELSE substr(COALESCE(json_extract(ch.value,'$.row.text'),''),1,2001) END
         WHEN 'feedback' THEN '评价：'||substr(COALESCE(json_extract(ch.value,'$.row.kind'),''),1,201)||char(10)||substr(COALESCE(json_extract(ch.value,'$.row.text'),''),1,4001)
         WHEN 'runs' THEN '轮次 #'||json_extract(ch.value,'$.row.id')||'（'||COALESCE(json_extract(ch.value,'$.row.state'),'')||'）：'||substr(COALESCE(json_extract(ch.value,'$.row.summary'),json_extract(ch.value,'$.row.error'),''),1,501)
-      END AS line FROM json_each(f.fact,'$.changes') ch WHERE json_extract(ch.value,'$.table') IN ('feedback','events','runs','cards')
-        AND ((json_extract(ch.value,'$.table')='events' AND ${eventBelongs}) OR json_extract(ch.value,'$.row.task_id')=CAST(? AS INTEGER) OR
+      END AS line FROM json_each(f.fact,'$.changes') ch WHERE json_extract(ch.value,'$.table') IN ('feedback','events','runs','cards','tasks')
+        AND ((json_extract(ch.value,'$.table')='tasks' AND json_extract(ch.value,'$.row.id')=${kind === "task" ? id : 0}) OR (json_extract(ch.value,'$.table')='events' AND ${eventBelongs}) OR json_extract(ch.value,'$.row.task_id')=CAST(? AS INTEGER) OR
           (json_extract(ch.value,'$.table')='runs' AND json_extract(ch.value,'$.row.id')=CAST(? AS INTEGER)) OR
           (json_extract(ch.value,'$.table') IN ('cards','feedback') AND (json_extract(ch.value,'$.row.run_id')=CAST(? AS INTEGER) OR EXISTS(SELECT 1 FROM projections parent WHERE parent.collection='runs' AND parent.key=CAST(json_extract(ch.value,'$.row.run_id') AS TEXT) AND ${f("parent", "task_id")}=CAST(? AS INTEGER))))) LIMIT 20)) AS text
-    FROM projection_refs r JOIN facts f ON f.seq=r.seq WHERE r.collection=? AND r.key=? ${query.before === undefined ? "" : "AND r.seq<?"} ORDER BY r.seq DESC LIMIT ?`,
+    FROM projection_refs r JOIN facts f ON f.seq=r.seq WHERE r.collection=? AND r.key=? AND EXISTS(SELECT 1 FROM json_each(f.fact,'$.changes') meaningful WHERE json_extract(meaningful.value,'$.table') IN ('events','runs','cards','feedback','tasks','timers') AND (json_extract(f.fact,'$.type')!='heartbeat' OR json_extract(meaningful.value,'$.table')='cards')) ${query.before === undefined ? "" : "AND r.seq<?"} ORDER BY r.seq DESC LIMIT ?`,
     [
       kind === "task" ? id : "0",
       kind === "task" ? id : "0",

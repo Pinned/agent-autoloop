@@ -134,6 +134,42 @@ function releaseHold(draft: Draft, id: number, reason: unknown) {
   });
   return { ok: true };
 }
+const cancellation = (draft: Draft, taskId: number | null | undefined) =>
+  taskId != null && ["cancelling", "cancelled"].includes(draft.view.get("tasks", taskId)?.status);
+
+function settleCancellation(draft: Draft, taskId: number) {
+  const task = draft.view.get("tasks", taskId)!;
+  if (task.status !== "cancelling") return task.status;
+  if (rows(draft.view, "runs", { task_id: taskId, state: ["claimed", "unknown"] }).length) return "cancelling";
+  for (const card of rows(draft.view, "cards", { task_id: taskId, state: ["open", "decided"] }))
+    closeCard(draft, card, `因任务取消而终结：${task.cancel_reason}`);
+  for (const hold of rows(draft.view, "holds", { task_id: taskId })) set(draft, "holds", hold.grp, null);
+  put(draft, "tasks", taskId, { status: "cancelled", cancelled_at: draft.at, updated_at: draft.at });
+  return "cancelled";
+}
+
+function cancelTask(draft: Draft, id: number, reason: unknown) {
+  const task = draft.view.get("tasks", id);
+  if (!task) throw new NotFound("没有这件业务任务");
+  if (typeof reason !== "string" || !reason.trim() || [...reason].length > 1000)
+    throw new InputError("请说明取消原因，最多 1000 字");
+  if (task.status === "cancelled" || task.status === "cancelling") return { status: task.status };
+  put(draft, "tasks", id, {
+    status: "cancelling",
+    cancel_requested_at: draft.at,
+    cancel_reason: reason.trim(),
+    updated_at: draft.at,
+    completed_at: null,
+    completed_run_id: null,
+  });
+  for (const run of rows(draft.view, "runs", { task_id: id, state: ["queued", "claimed", "unknown"] })) {
+    if (run.state === "queued") put(draft, "runs", run.id, { state: "cancelled", finished_at: draft.at });
+    else put(draft, "runs", run.id, { cancel_at: draft.at });
+  }
+  for (const timer of rows(draft.view, "timers", { task_id: id, event_id: null })) set(draft, "timers", timer.id, null);
+  return { status: settleCancellation(draft, id) };
+}
+
 const hopsOf = (draft: Draft, run: Row) => Math.max(0, ...eventsOf(draft.view, run.id).map((event) => event.hops ?? 0));
 
 function closeCard(draft: Draft, card: Row, result: string, by: string | null = null) {
@@ -177,6 +213,7 @@ function enqueue(
   thread?: Row,
   taskId?: number | null,
 ) {
+  if (cancellation(draft, taskId)) return;
   if (taskId != null) {
     put(draft, "tasks", taskId, { status: "active", updated_at: draft.at, completed_at: null, completed_run_id: null });
     // Explicit identity retains its scheduling lane even when later source subjects differ.
@@ -258,6 +295,7 @@ function ingest(draft: Draft, source: string, given: unknown) {
         updated_at: draft.at,
         completed_at: null,
       });
+    if (cancellation(draft, task.id)) continue;
     if (existingTask) put(draft, "tasks", task.id, { status: "active", updated_at: draft.at, completed_at: null });
     enqueue(draft, rule, id, event.subject, undefined, undefined, task.id);
   }
@@ -322,10 +360,14 @@ function claimNext(draft: Draft, worker: string, claim: string) {
   const claimed = runs.filter((run) => run.state === "claimed");
   const uncertain = rows(draft.view, "runs", { state: "unknown" }).filter(
     (run) =>
+      cancellation(draft, run.task_id) ||
       configuration(draft.view, run.rules_version).rules.find((rule) => rule.name === run.rule)?.pauseOnAsk ||
       holdsOf(draft).some((hold) => sameThread(hold, run)),
   );
   const occupied = [...claimed, ...uncertain];
+  // A cancellation keeps its original group slot and follows trusted rule regrouping until exit is proved.
+  const occupiesGroup = (other: Row, group: string) =>
+    other.grp === group || (cancellation(draft, other.task_id) && ruleNamed(draft, other.rule)?.group === group);
   const groupLimit = (group: string) => draft.rules.rules.find((rule) => rule.group === group)?.parallel ?? 1;
   const holds = holdsOf(draft);
   const heldByOther = (run: Row) =>
@@ -337,12 +379,13 @@ function claimNext(draft: Draft, worker: string, claim: string) {
     });
   const claimable = (run: Row) =>
     run.state === "queued" &&
+    !cancellation(draft, run.task_id) &&
     !heldByOther(run) &&
     agents.includes(ruleNamed(draft, run.rule)?.to ?? "") &&
     Date.parse(run.not_before) <= draft.now &&
     ruleNamed(draft, run.rule) &&
-    !occupied.some((other) => other.grp === run.grp && other.lane === run.lane) &&
-    occupied.filter((other) => other.grp === run.grp).length < groupLimit(run.grp);
+    !occupied.some((other) => occupiesGroup(other, run.grp) && other.lane === run.lane) &&
+    occupied.filter((other) => occupiesGroup(other, run.grp)).length < groupLimit(run.grp);
   // The same claim again means the answer got lost: it gets back the run it already has.
   const held = claimed.find((run) => run.claim === claim && workerOf(draft.view, run) === worker);
   const run = held ?? runs.find(claimable);
@@ -495,6 +538,21 @@ function finish(draft: Draft, id: number, token: string, given: unknown) {
     : run.usage;
   put(draft, "runs", id, { last_issued: run.issued, last_result: hash, issued: null, session, usage });
   let rejected: Rejected[] = [];
+  if (cancellation(draft, run.task_id)) {
+    // Worker receipts are submitted only after the execution group exits. Ignore business effects of late results.
+    put(draft, "runs", id, {
+      state: "cancelled",
+      finished_at: draft.at,
+      summary: result.summary ?? "",
+      error: result.error ?? null,
+      cancel_at: null,
+    });
+    for (const what of ["ask", "notice", "resolve", "later", "events", "taskStatus"] as const)
+      if (result[what] !== undefined) rejected.push({ what, reason: "任务已请求取消，迟到回执不再改变业务" });
+    settleCancellation(draft, run.task_id!);
+    put(draft, "runs", id, { last_answer: JSON.stringify(rejected) });
+    return { rejected };
+  }
   if (result.outcome === "failed") rejected = retryLater(draft, run, result);
   else if (result.outcome === "cancelled") {
     put(draft, "runs", id, {
@@ -540,7 +598,7 @@ function answer(draft: Draft, id: number, given: Row) {
     const delivery = draft.view.get("deliveries", `${id}:${given.channel}`);
     if (!delivery?.ref || delivery.ref !== given.ref) throw new AuthError("不是发出去的那条消息");
   }
-  if (card.state !== "open") return { changed: false, state: card.state };
+  if (card.state !== "open" || cancellation(draft, card.task_id)) return { changed: false, state: card.state };
   if (card.kind === "notice") {
     closeCard(draft, card, "已处理", given.by ?? null);
     return { changed: true, state: "closed" };
@@ -575,6 +633,7 @@ function answer(draft: Draft, id: number, given: Row) {
 function memo(draft: Draft, id: number, given: Row) {
   const run = draft.view.get("runs", id);
   if (!run) throw new NotFound("没有这一轮");
+  if (cancellation(draft, run.task_id)) throw new Conflict("任务已请求取消，不能继续更正执行");
   const text = typeof given?.text === "string" ? given.text.trim() : "";
   if (!text) throw new InputError("写一句更正的话");
   if ([...text].length > 4000) throw new InputError("更正最多 4000 字");
@@ -748,6 +807,7 @@ const HANDLERS: Record<string, (draft: Draft, ...args: any[]) => unknown> = {
   },
   finish,
   releaseHold,
+  cancelTask,
   cancel(draft, id) {
     const run = draft.view.get("runs", id);
     if (!run) throw new NotFound("没有这一轮");

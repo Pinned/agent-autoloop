@@ -100,7 +100,13 @@ export function createTaskActionSource(options: TaskActionSourceOptions): {
         }
         if (endpoint === "no-hub") return desktopTaskActionFailure("no-hub");
         if (endpoint === "invalid") return desktopTaskActionFailure("config");
-        const target = "cardId" in action ? `cards/${action.cardId}` : `runs/${action.runId}`;
+        const target =
+          "taskId" in action
+            ? `tasks/${action.taskId}`
+            : "cardId" in action
+              ? `cards/${action.cardId}`
+              : `runs/${action.runId}`;
+        const operation = action.action === "cancelTask" ? "cancel" : action.action;
         controller = new AbortController();
         const abort = controller;
         let expired = false;
@@ -113,7 +119,7 @@ export function createTaskActionSource(options: TaskActionSourceOptions): {
           }, timeoutMs);
         });
         const request = (async (): Promise<DesktopTaskActionResponse> => {
-          response = await fetchImpl(`${endpoint.origin}/v1/${target}/${action.action}`, {
+          response = await fetchImpl(`${endpoint.origin}/v1/${target}/${operation}`, {
             method: "POST",
             headers: { authorization: `Bearer ${endpoint.owner}`, "content-type": "application/json" },
             body: JSON.stringify(action.input),
@@ -133,7 +139,11 @@ export function createTaskActionSource(options: TaskActionSourceOptions): {
             version: 1,
             ok: true,
             action: action.action,
-            ...("cardId" in action ? { cardId: action.cardId } : { runId: action.runId }),
+            ...("taskId" in action
+              ? { taskId: action.taskId }
+              : "cardId" in action
+                ? { cardId: action.cardId }
+                : { runId: action.runId }),
             result,
           });
         })();

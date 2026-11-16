@@ -11,7 +11,8 @@ const labels: Record<string, string> = {
   active: "任务仍在推进",
   completed: "已完成",
   failed: "本轮执行失败，任务未完成",
-  cancelled: "本轮已停止，任务未完成",
+  cancelling: "取消中，等待执行退出或核实",
+  cancelled: "已取消",
 };
 const roundLabels: Record<string, string> = {
   queued: "本轮排队",
@@ -32,6 +33,7 @@ function taskTitle(task: BusinessTaskItem) {
       : task.origin.title || `任务 #${task.id} · ${task.rule}`;
 }
 function taskState(task: BusinessTaskItem) {
+  if (task.kind === "task" && ["cancelling", "cancelled"].includes(task.state)) return labels[task.state];
   if (task.execution?.stopping && ["claimed", "unknown"].includes(task.execution.state)) return "正在停止，等待退出";
   if (task.kind === "legacy") return task.execution ? roundLabels[task.execution.state] : "轮次状态未记录";
   return labels[task.state];
@@ -45,6 +47,7 @@ const timelineLabels: Record<string, string> = {
   feedback: "验收反馈",
   memo: "更正说明",
   cancel: "请求停止本轮",
+  cancelTask: "本人取消任务",
   resolve: "提问结案",
   "task.completed": "任务明确完成",
   tick: "到期处理",
@@ -78,7 +81,6 @@ export function mountBusinessTasksView(
     scrollHost?: HTMLElement;
     history?: Partial<Pick<DesktopBridge, "agentHistory">>;
     detailChanged?: (open: boolean) => void;
-    diagnostics: { root: HTMLElement; init(): void; update(): void };
   },
 ) {
   const root = el("section", "", "tasks-panel business-tasks-panel");
@@ -145,18 +147,10 @@ export function mountBusinessTasksView(
       } else controller.more();
     });
   const list = el("ul", "", "run-list");
-  const fallback = el("section");
-  fallback.hidden = true;
-  const diagnosticToggle = button("查看执行诊断记录", () => {
-    diagnosticOpen = !diagnosticOpen;
-    options.diagnostics.init();
-    update();
-  });
-  let diagnosticOpen = false,
-    detailWasOpen = false,
+  let detailWasOpen = false,
     scroll = 0,
     pendingScroll = false;
-  listPage.append(entrances, entranceNote, filters, status, refresh, more, list, diagnosticToggle, fallback);
+  listPage.append(entrances, entranceNote, filters, status, refresh, more, list);
   const back = button("← 返回任务", () => controller.back()),
     title = el("h2");
   title.id = "task-detail-title";
@@ -180,6 +174,45 @@ export function mountBusinessTasksView(
     memoControls = el("section", "", "business-correction"),
     feedbackControls = el("section", "", "business-feedback"),
     stoppingText = el("p");
+  const taskCancelControls = el("section", "", "business-stop-controls");
+  const taskCancelForm = el("section", "", "business-correction");
+  taskCancelForm.hidden = true;
+  const cancelReason = el("textarea");
+  cancelReason.maxLength = 1000;
+  cancelReason.setAttribute("aria-label", "取消任务原因");
+  cancelReason.placeholder = "说明为什么不再需要这件任务";
+  const cancelTask = button("取消任务", () => {
+    taskCancelForm.hidden = false;
+    cancelReason.focus();
+  });
+  const confirmTaskCancel = button("确认取消整件任务", () => {
+    const task = controller.detail?.task;
+    if (task?.kind !== "task" || !cancelReason.value.trim()) return;
+    controller.submitAction({
+      version: 1,
+      action: "cancelTask",
+      taskId: task.id,
+      input: { reason: cancelReason.value },
+    });
+  });
+  const keepTask = button("保留任务", () => {
+    taskCancelForm.hidden = true;
+  });
+  taskCancelForm.append(
+    el(
+      "p",
+      "这会阻止整件任务继续执行，取消排队与复查。正在执行的先停止，全部确认退出后才收尾提问并释放本任务占用；状态不确定时仍保持取消中。历史和原回答保留，不算成功完成。",
+      "muted",
+    ),
+    cancelReason,
+    confirmTaskCancel,
+    keepTask,
+  );
+  taskCancelControls.append(cancelTask, taskCancelForm);
+  let cancelTaskKey = "";
+  cancelReason.addEventListener("input", () => {
+    if (cancelTaskKey) controller.drafts.set(`${cancelTaskKey}/cancel`, cancelReason.value);
+  });
   const runActions = el("section", "", "business-run-actions"),
     diagnosis = el("details"),
     diagnosisText = el("p", "", "muted");
@@ -304,7 +337,16 @@ export function mountBusinessTasksView(
   const current = el("section", "", "business-current");
   const processContent = el("section", "", "business-process-content");
   const resultContent = el("section", "", "business-result-content");
-  current.append(progress, decisions, runActions, memoControls, actionStatus, readDetail, timelineStatus);
+  current.append(
+    progress,
+    decisions,
+    runActions,
+    memoControls,
+    taskCancelControls,
+    actionStatus,
+    readDetail,
+    timelineStatus,
+  );
   processContent.append(executionHistory, timelineHeading, timeline, timelineMore, diagnosis);
   resultContent.append(final, feedbackControls);
   detailPage.append(detailHead, current, tabs, processContent, original, resultContent);
@@ -424,12 +466,6 @@ export function mountBusinessTasksView(
       openDetail.className = "business-card-open";
       card.append(openDetail);
       list.append(card);
-    }
-    fallback.hidden = !diagnosticOpen;
-    if (!fallback.hidden) {
-      fallback.append(options.diagnostics.root);
-      options.diagnostics.init();
-      options.diagnostics.update();
     }
     if (!open && pendingScroll && !controller.busy) {
       if (options.scrollHost) options.scrollHost.scrollTop = scroll;
@@ -600,8 +636,23 @@ export function mountBusinessTasksView(
       decisionMore.hidden = !task.decisions.hasMore;
     }
     actionStatus.textContent = controller.actionMessage;
+    if (cancelTaskKey !== task.key) {
+      cancelTaskKey = task.key;
+      cancelReason.value = controller.drafts.get(`${task.key}/cancel`) ?? "";
+      taskCancelForm.hidden = true;
+    }
+    taskCancelControls.hidden =
+      controller.compatibility || task.kind !== "task" || ["cancelling", "cancelled"].includes(task.state);
+    const cancelDisabled =
+      !controller.detailFresh ||
+      controller.actionBusy ||
+      controller.mustReread ||
+      controller.detailBusy ||
+      !!controller.detailError;
+    for (const control of [cancelTask, confirmTaskCancel, keepTask, cancelReason]) control.disabled = cancelDisabled;
     for (const control of controls)
       control.disabled =
+        ["cancelling", "cancelled"].includes(task.state) ||
         !controller.detailFresh ||
         controller.actionBusy ||
         controller.mustReread ||
@@ -685,11 +736,13 @@ export function mountBusinessTasksView(
       }
     }
     stoppingText.hidden = !run?.stopping || !["claimed", "unknown"].includes(run.state);
-    stopControls.hidden = !run || run.stopping || !["queued", "claimed", "unknown"].includes(run.state);
-    correctionToggle.hidden = !run || run.state === "queued";
+    const taskCancelled = task.kind === "task" && ["cancelling", "cancelled"].includes(task.state);
+    stopControls.hidden =
+      taskCancelled || !run || run.stopping || !["queued", "claimed", "unknown"].includes(run.state);
+    correctionToggle.hidden = taskCancelled || !run || run.state === "queued";
     correctionToggle.textContent = correctionOpen ? "收起更正" : "提交更正";
     correctionToggle.setAttribute("aria-expanded", String(correctionOpen));
-    memoControls.hidden = !correctionOpen || !run || run.state === "queued";
+    memoControls.hidden = taskCancelled || !correctionOpen || !run || run.state === "queued";
     decisions.hidden = !task.decisions.items.length && !task.decisions.hasMore;
     feedbackControls.hidden = run?.state !== "done";
     for (const control of [

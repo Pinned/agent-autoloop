@@ -8,11 +8,11 @@ const edits: [string, string, string, string][] = [
   ["event-duplicate", "decide.ts", "if (existing) return { event:", "if (false && existing) return { event:"],
   ["source-boundary", "decide.ts", "rule.when.source === source", "true"],
   ["parallel-lane", "decide.ts", 'rule.parallel ? subject : ""', 'false ? subject : ""'],
-  ["group-capacity", "decide.ts", "occupied.filter((other) => other.grp === run.grp).length <", "0 <"],
+  ["group-capacity", "decide.ts", "occupied.filter((other) => occupiesGroup(other, run.grp)).length <", "0 <"],
   [
     "lane-exclusion",
     "decide.ts",
-    "!occupied.some((other) => other.grp === run.grp && other.lane === run.lane)",
+    "!occupied.some((other) => occupiesGroup(other, run.grp) && other.lane === run.lane)",
     "true",
   ],
   ["worker-boundary", "decide.ts", 'agents.includes(ruleNamed(draft, run.rule)?.to ?? "")', "true"],
@@ -25,7 +25,7 @@ const edits: [string, string, string, string][] = [
   ],
   ["receipt-conflict", "decide.ts", "if (prior.last_result !== hash)", "if (false)"],
   ["run-capability", "decide.ts", 'credential(draft.env, "run", id, run.issued) !== token', "false"],
-  ["answer-first", "decide.ts", 'if (card.state !== "open")', "if (false)"],
+  ["answer-first", "decide.ts", 'if (card.state !== "open" || cancellation(draft, card.task_id))', "if (false)"],
   ["answer-person", "decide.ts", 'if (allowed && !allowed.includes(given.by ?? ""))', "if (false)"],
   ["answer-message", "decide.ts", "if (!delivery?.ref || delivery.ref !== given.ref)", "if (false)"],
   [

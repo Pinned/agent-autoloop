@@ -452,14 +452,15 @@ test("the workers page shows the hub's own heartbeat through the pure workers co
   assert.match(view, /不含远程环境信息/);
 });
 
-test("the tasks page shows the hub's run history through the pure tasks contract", () => {
+test("the tasks page drops the diagnostic mount while preserving the pure execution query contract", () => {
   const app = read("../src/renderer/app.ts");
   const view = read("../src/renderer/tasks-view.ts");
   const controller = read("../src/renderer/tasks-controller.ts");
   const source = read("../src/state-source.ts");
   const main = read("../src/main.ts");
-  assert.match(app, /mountTasksView\(/);
-  assert.match(app, /tasks\.refresh\(\)/);
+  // Only the business list is mounted; execution queries remain available to details and compatibility.
+  assert.match(app, /mountBusinessTasksView\(/);
+  assert.doesNotMatch(app, /mountTasksView|createRendererTasks|executionDiagnostics/);
   // Pure DOM construction only; the list never serialises markup.
   assert.doesNotMatch(view, /innerHTML|insertAdjacentHTML|console\./);
   assert.doesNotMatch(controller, /node:|from ["'].*host\/(?:config|runtime|setup)\.ts/);

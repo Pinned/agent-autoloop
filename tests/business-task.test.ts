@@ -254,7 +254,7 @@ test("choice text, preserved completed snapshots and mixed-task diagnostics stay
     const page = pageBusinessTaskTimeline(view, "task:1");
     assert.deepEqual(
       page.items.slice(0, 3).map((x) => x.kind),
-      ["result", "heartbeat", "feedback"],
+      ["result", "feedback", "answer"],
     );
     const answer = page.items.find((x) => x.seq === 40)!;
     assert.match(answer.text, /批准/);

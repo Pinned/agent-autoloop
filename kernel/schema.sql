@@ -8,7 +8,10 @@ CREATE TABLE tasks (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   completed_at TEXT,
-  completed_run_id INTEGER
+  completed_run_id INTEGER,
+  cancel_requested_at TEXT,
+  cancel_reason TEXT,
+  cancelled_at TEXT
 );
 
 -- The columns of the read-only SQL views over the projections. host/runtime.ts reads the table and column names and makes

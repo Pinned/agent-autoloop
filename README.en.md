@@ -20,6 +20,8 @@ Most of us use command-line agents like Claude Code or Codex by babysitting a te
 
 Opt into `autoGroup: true` to group rules by worker and absolute working directory; explicit `group` wins and legacy rules still default to their names. Optional `pauseOnAsk: true` requires group concurrency 1: asking exits the process but retains a factual thread hold until a successful answered continuation finishes. Closing a card, failure or cancellation does not release it. Owners can inspect `status` and explicitly `release-hold <origin-run> <reason>` after verification; running or uncertain executions prevent release. See the [protocol](docs/protocol.md#自动分组与待确认占用) for path and compatibility boundaries.
 
+Whole-task cancellation (`agent-autoloop cancel-task <task-id> <reason>`) is an explicit owner action, distinct from stopping one run or releasing a hold. It prevents new executions, and closes this task's pending cards and releases its holds only after all execution groups exit. Cancelled is not successful completion; history is retained. See the [cancellation protocol](docs/protocol.md#整件任务取消).
+
 ## Get started
 
 Works on macOS and Linux. You need Node 24, Git, curl, and at least one command-line agent already signed in; no GitHub account required. You can also hand the [installation guide](INSTALL.md) to your agent and let it install everything for you.

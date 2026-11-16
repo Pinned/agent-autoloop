@@ -15,8 +15,6 @@ import { createRendererRun } from "./run-controller.ts";
 import { mountRunCard } from "./run-view.ts";
 import { createRendererRulesCas } from "./rules-cas-controller.ts";
 import { mountRulesCasView } from "./rules-cas-view.ts";
-import { createRendererTasks } from "./tasks-controller.ts";
-import { mountTasksView } from "./tasks-view.ts";
 import { createRendererBusinessTasks } from "./business-tasks-controller.ts";
 import { mountBusinessTasksView } from "./business-tasks-view.ts";
 import { createRendererSettings } from "./settings-controller.ts";
@@ -336,23 +334,11 @@ const rulesPage = mountRulesCasView(rules, {
   pickWorkingDir: () => window.desktop.pickWorkingDir(),
 });
 // The tasks page is app-level too: page switches only re-attach the list and re-read page one.
-const tasks = createRendererTasks(window.desktop, () => {
-  if (currentPage === "tasks") tasksPage?.update();
-});
-const executionPage = mountTasksView(tasks);
-const executionDiagnostics = {
-  ...executionPage,
-  init() {
-    if (tasks.loadState.kind === "loading" && !tasks.busy) tasks.refresh();
-    executionPage.update();
-  },
-};
 const businessTasks = createRendererBusinessTasks(window.desktop, () => {
   if (currentPage === "tasks") tasksPage?.update();
 });
 const tasksPage = mountBusinessTasksView(businessTasks, {
   history: window.desktop,
-  diagnostics: executionDiagnostics,
   scrollHost: main,
   detailChanged: (open) => {
     if (currentPage !== "tasks") return;

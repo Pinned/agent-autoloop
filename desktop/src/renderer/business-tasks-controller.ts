@@ -212,10 +212,20 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
     } catch {
       return;
     }
-    if ("cardId" in request) {
+    if ("taskId" in request) {
+      if (
+        compatibility ||
+        detail.task.kind !== "task" ||
+        request.taskId !== detail.task.id ||
+        ["cancelling", "cancelled"].includes(detail.task.state)
+      )
+        return;
+    } else if ("cardId" in request) {
+      if (["cancelling", "cancelled"].includes(detail.task.state)) return;
       if (!detail.task.decisions.items.some((c) => c.id === request.cardId && c.state === "open" && c.kind === "ask"))
         return;
     } else {
+      if (request.action !== "feedback" && ["cancelling", "cancelled"].includes(detail.task.state)) return;
       if (!runReady || !run || request.runId !== run.run.id || request.runId !== detail.task.latestRunId) return;
       if (request.action === "feedback" && run.run.state !== "done") return;
       if (
@@ -244,9 +254,11 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
         if (
           response.ok &&
           (response.action !== request.action ||
-            ("cardId" in response
-              ? !("cardId" in request) || response.cardId !== request.cardId
-              : !("runId" in request) || response.runId !== request.runId))
+            ("taskId" in response
+              ? !("taskId" in request) || response.taskId !== request.taskId
+              : "cardId" in response
+                ? !("cardId" in request) || response.cardId !== request.cardId
+                : !("runId" in request) || response.runId !== request.runId))
         )
           throw new Error("mismatched-receipt");
         confirmed = response.ok;

@@ -4,12 +4,13 @@ export const DESKTOP_TASK_ACTION_RAW_MAX_UTF16 = 16 * 1024;
 export const DESKTOP_TASK_ACTION_INPUT_MAX_BYTES = 32 * 1024;
 export const DESKTOP_TASK_ACTION_RESULT_MAX_BYTES = 1024;
 
-export type DesktopTaskAction = "answer" | "resolve" | "cancel" | "memo" | "feedback";
+export type DesktopTaskAction = "answer" | "resolve" | "cancel" | "cancelTask" | "memo" | "feedback";
 export type DesktopTaskFeedbackKind = "交付满意" | "需要改善" | "内容错误";
 export type DesktopTaskAnswerInput = { choice: number } | { text: string } | Record<string, never>;
 export type DesktopTaskActionInput =
   | { version: 1; action: "answer"; cardId: number; input: DesktopTaskAnswerInput }
   | { version: 1; action: "resolve"; cardId: number; input: { reason: string } }
+  | { version: 1; action: "cancelTask"; taskId: number; input: { reason: string } }
   | { version: 1; action: "cancel"; runId: number; input: Record<string, never> }
   | { version: 1; action: "memo"; runId: number; input: { text: string } }
   | {
@@ -20,10 +21,16 @@ export type DesktopTaskActionInput =
     };
 export type DesktopTaskAnswerResult = { changed: boolean; state: "open" | "decided" | "closed" | "done" };
 export type DesktopTaskActionResult =
-  DesktopTaskAnswerResult | { changed: boolean } | { ok: true } | { stopped: boolean } | { ok: true; id: number };
+  | DesktopTaskAnswerResult
+  | { changed: boolean }
+  | { ok: true }
+  | { stopped: boolean }
+  | { ok: true; id: number }
+  | { status: "cancelling" | "cancelled" };
 export type DesktopTaskActionSuccess =
   | { version: 1; ok: true; action: "answer"; cardId: number; result: DesktopTaskAnswerResult }
   | { version: 1; ok: true; action: "resolve"; cardId: number; result: { changed: boolean } }
+  | { version: 1; ok: true; action: "cancelTask"; taskId: number; result: { status: "cancelling" | "cancelled" } }
   | { version: 1; ok: true; action: "cancel"; runId: number; result: { ok: true } }
   | { version: 1; ok: true; action: "memo"; runId: number; result: { stopped: boolean } }
   | { version: 1; ok: true; action: "feedback"; runId: number; result: { ok: true; id: number } };
@@ -47,7 +54,9 @@ export type DesktopTaskActionResponse =
       error: { code: DesktopTaskActionCode; message: string };
     };
 const encoder = new TextEncoder();
-const actions: readonly DesktopTaskAction[] = ["answer", "resolve", "cancel", "memo", "feedback"];
+const actions: readonly DesktopTaskAction[] = ["answer", "resolve", "cancel", "cancelTask", "memo", "feedback"];
+const actionTarget = (action: DesktopTaskAction) =>
+  action === "cancelTask" ? "taskId" : action === "answer" || action === "resolve" ? "cardId" : "runId";
 const feedbackKinds: readonly DesktopTaskFeedbackKind[] = ["交付满意", "需要改善", "内容错误"];
 function invalid(): never {
   throw new Error(DESKTOP_TASK_ACTION_MESSAGES.invalid);
@@ -99,12 +108,11 @@ function text(value: unknown, reason = false): string {
 }
 
 export function parseDesktopTaskActionInput(value: unknown): DesktopTaskActionInput {
-  const item = record(value, ["version", "action", "input"], ["cardId", "runId"]);
+  const item = record(value, ["version", "action", "input"], ["cardId", "runId", "taskId"]);
   if (item.version !== 1) invalid();
   const action = actionOf(item.action);
-  const card = action === "answer" || action === "resolve";
-  const target = card ? "cardId" : "runId";
-  if (!Object.hasOwn(item, target) || Object.hasOwn(item, card ? "runId" : "cardId")) invalid();
+  const target = actionTarget(action);
+  record(item, ["version", "action", "input", target]);
   const id = integer(item[target], 1);
   let raw: Record<string, unknown>;
   let input: DesktopTaskActionInput["input"];
@@ -116,7 +124,7 @@ export function parseDesktopTaskActionInput(value: unknown): DesktopTaskActionIn
       : Object.hasOwn(raw, "text")
         ? { text: text(raw.text) }
         : {};
-  } else if (action === "resolve") {
+  } else if (action === "resolve" || action === "cancelTask") {
     raw = record(item.input, ["reason"]);
     input = { reason: text(raw.reason, true) };
   } else if (action === "memo") {
@@ -144,6 +152,10 @@ export function projectDesktopTaskActionResult(action: DesktopTaskAction, value:
     result = { changed: boolean(item.changed), state: item.state as DesktopTaskAnswerResult["state"] };
   } else if (action === "resolve") {
     result = { changed: boolean(record(value, ["changed"]).changed) };
+  } else if (action === "cancelTask") {
+    const status = record(value, ["status"]).status;
+    if (status !== "cancelling" && status !== "cancelled") invalid();
+    result = { status };
   } else if (action === "cancel") {
     if (record(value, ["ok"]).ok !== true) invalid();
     result = { ok: true };
@@ -170,7 +182,7 @@ export function desktopTaskActionFailure(
 }
 
 export function parseDesktopTaskActionResponse(value: unknown): DesktopTaskActionResponse {
-  const item = record(value, ["version", "ok"], ["action", "cardId", "runId", "result", "error"]);
+  const item = record(value, ["version", "ok"], ["action", "cardId", "runId", "taskId", "result", "error"]);
   if (item.version !== 1) invalid();
   if (item.ok === false) {
     record(item, ["version", "ok", "error"]);
@@ -182,7 +194,7 @@ export function parseDesktopTaskActionResponse(value: unknown): DesktopTaskActio
   }
   if (item.ok !== true) invalid();
   const action = actionOf(item.action);
-  const target = action === "answer" || action === "resolve" ? "cardId" : "runId";
+  const target = actionTarget(action);
   record(item, ["version", "ok", "action", target, "result"]);
   const id = integer(item[target], 1);
   const result = projectDesktopTaskActionResult(action, item.result);

@@ -148,8 +148,8 @@ export function jobOf(view: View, run: Row, env: Environment): Job {
 }
 
 export function cancels(view: View, worker: string): number[] {
-  const stopping = (run: Row) => run.state === "claimed" && run.cancel_at !== null && workerOf(view, run) === worker;
-  return rows(view, "runs", { state: "claimed" })
+  const stopping = (run: Row) => run.cancel_at !== null && workerOf(view, run) === worker;
+  return rows(view, "runs", { state: ["claimed", "unknown"] })
     .filter(stopping)
     .map((run) => run.id);
 }
