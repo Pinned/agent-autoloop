@@ -22,6 +22,8 @@ Opt into `autoGroup: true` to group rules by worker and absolute working directo
 
 Whole-task cancellation (`agent-autoloop cancel-task <task-id> <reason>`) is an explicit owner action, distinct from stopping one run or releasing a hold. It prevents new executions, and closes this task's pending cards and releases its holds only after all execution groups exit. Cancelled is not successful completion; history is retained. See the [cancellation protocol](docs/protocol.md#整件任务取消).
 
+Owners may settle an answered but unfinished question with `agent-autoloop settle-card <card-id> <reason>`. It preserves the answer, records owner attribution and starts no agent. Pending executions or reviews block it; only fully verified same-task holds are released. This does not complete the business task; use complete-task separately after acceptance. Upgrade both hub and CLI; no desktop entry is added.
+
 Use `agent-autoloop complete-task <task-id> <acceptance-reason>` after owner acceptance. It records completion without starting an agent or incurring model-call costs. Pending executions, cards, reviews or task holds block acceptance and are never automatically cleared. Original reports remain intact; owner acceptance is not a claim that all automated tests passed. See the [owner completion protocol](docs/protocol.md#本人确认完成).
 
 ## Get started

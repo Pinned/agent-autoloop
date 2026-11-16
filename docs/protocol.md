@@ -64,6 +64,20 @@ POST /v1/tasks/42/cancel  Authorization: Bearer <本人密钥>
 
 最后一项执行退出后，同事务关闭该 task_id 的 open/decided 卡片（原因「因任务取消而终结」，保留原回答）、释放仅属于此任务的占用，记录 `cancelled_at`，任务变为 `cancelled`。无正在执行的任务可在首次请求中直接完成这一闭环。已取消与 completed（成功完成）不同；stop 不改变业务完成状态。业务查询优先显示取消中/已取消，active 筛选不包含已取消；旧轮次仍按本轮状态展示。新状态需同步更新严格 DTO 客户端，旧接口和 Result.taskStatus 的 active/completed 约定不变，不让 Agent 自行宣布任务 cancelled。所有业务变更仍走 decide/commit/evolve，无迁移或历史改写。
 
+### 本人收尾已回答卡片
+
+```text
+POST /v1/cards/56/settle  Authorization: Bearer <本人密钥>
+{"reason":"本人已核实原决定的善后已办完"}
+→ 200 {"status":"done"}
+```
+
+CLI 为 `agent-autoloop settle-card <卡号> <本人收尾原因>`。仅本人可调用；来源、通道、接单程序、轮次 token 和卡片链接无权收尾。路径只接受无前导零的正安全整数，禁止查询（含裸 `?`）；正文只能含 reason，trim 后非空、原输入最多 1000 个 Unicode 码点。只接受有已记录 task_id 的 ask 且状态为 decided；未回答、通知、旧无身份卡片、普通关闭或 Agent 已收尾卡片返回 409。任务取消中或已取消、有 queued/claimed/unknown 执行或 event_id 为空的复查也返回 409，不自动清理阻塞。
+
+独立 `settleCard` 事实将卡片置为 done，原 choice、answer、by、answer_event、decided_at 保留；既有 result 记录本人原因，卡片行新增 settled_by: "owner" 记录独立收尾归因并用于幂等，closed_at 记录时间，version 加一。原回答者 by 不被收尾归因覆盖。重复本人收尾返回原状态，不覆盖原因或新增事实；Agent 的 done 不会被重标为本人收尾。既有 Card DTO 与查询继续展示 done/result，严格客户端无需新增字段；旧中台无此路由时返回 404，需同步升级中台与 CLI，不回退到 resolve 或直接写库。本版本不增加桌面入口。
+
+只有同任务所有卡片无 open/decided、占用关联卡片都属于同 task 且已 done 或由 Agent 正式核实 closed，并无未结束执行或复查，才在同一事务释放该任务占用；缺失、跨任务及本人普通关闭卡片都不能作为核实证明。其他任务的占用不变。操作不创建轮次、不伪造回执、不改原执行结果、不产生模型调用费用；业务任务仍独立，验收后另用 complete-task。日志可重放，无迁移，不绕过 evolve 改投影。
+
 ### 本人确认完成
 
 ```text

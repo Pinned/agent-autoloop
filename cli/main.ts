@@ -35,6 +35,7 @@ const HELP = `Agent 自动化中台
   agent-autoloop tell <编号> [--task 定时任务名]
                                     直接告诉你一件事，内容从标准输入读
   agent-autoloop cancel-task <任务编号> <原因>  取消整件任务，保留历史
+  agent-autoloop settle-card <卡号> <原因>      本人收尾已回答卡片，不启动 Agent
   agent-autoloop complete-task <任务编号> <原因>  本人确认完成，不启动 Agent
   agent-autoloop stop <第几轮>           停掉一轮
   agent-autoloop release-hold <占用轮次> <原因>  本人核实后解除事项占用
@@ -273,6 +274,17 @@ async function answer(args: string[]) {
         ? "结案了。"
         : "收到，Agent 接着干。",
   );
+}
+
+async function settleCard(args: string[]) {
+  const [id, ...words] = args;
+  const card = Number(id);
+  const reason = words.join(" ");
+  if (!/^[1-9][0-9]*$/.test(id ?? "") || !Number.isSafeInteger(card) || !reason.trim() || [...reason].length > 1000)
+    return fail("用法：agent-autoloop settle-card <卡号> <本人收尾原因>（原因最多 1000 字）");
+  const result = await ownerClient().settleCard(card, reason);
+  if (result?.status === "done") console.log("本人已收尾卡片，保留原回答；不会启动 Agent，不代表整件任务已完成。");
+  else fail("收尾结果未确认，请重新读取卡片，不要直接重发。");
 }
 
 async function completeTask(args: string[]) {
@@ -539,6 +551,7 @@ const commands: Record<string, () => unknown> = {
   answer: () => answer(args),
   resolve: () => resolve(args),
   "cancel-task": () => cancelTask(args),
+  "settle-card": () => settleCard(args),
   "complete-task": () => completeTask(args),
   "release-hold": () => releaseHold(args),
   doctor,

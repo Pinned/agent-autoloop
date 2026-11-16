@@ -141,6 +141,42 @@ function releaseHold(draft: Draft, id: number, reason: unknown) {
 const cancellation = (draft: Draft, taskId: number | null | undefined) =>
   taskId != null && ["cancelling", "cancelled"].includes(draft.view.get("tasks", taskId)?.status);
 
+function settleCard(draft: Draft, id: number, reason: unknown) {
+  const card = draft.view.get("cards", id);
+  if (!card) throw new NotFound("没有这张卡片");
+  if (typeof reason !== "string" || !reason.trim() || [...reason].length > 1000)
+    throw new InputError("请说明本人收尾原因，最多 1000 字");
+  if (card.kind !== "ask" || card.task_id == null || !draft.view.get("tasks", card.task_id))
+    throw new Conflict("只能收尾有业务任务身份的提问卡片");
+  if (card.state === "done" && card.settled_by === "owner" && card.closed_at) return { status: "done" };
+  if (card.state !== "decided") throw new Conflict("卡片不是已回答未收尾状态");
+  if (cancellation(draft, card.task_id)) throw new Conflict("已请求取消的任务不能收尾卡片");
+  if (rows(draft.view, "runs", { task_id: card.task_id, state: ["queued", "claimed", "unknown"] }).length)
+    throw new Conflict("任务还有排队、运行或待核实的执行，不能收尾卡片");
+  if (rows(draft.view, "timers", { task_id: card.task_id, event_id: null }).length)
+    throw new Conflict("任务还有未完成的复查，不能收尾卡片");
+  put(draft, "cards", id, {
+    state: "done",
+    result: reason.trim(),
+    settled_by: "owner",
+    closed_at: draft.at,
+    version: card.version + 1,
+  });
+  for (const hold of rows(draft.view, "holds", { task_id: card.task_id })) {
+    const unfinished = rows(draft.view, "cards", { task_id: card.task_id, state: ["open", "decided"] }).length;
+    const verified = (hold.cards ?? []).every((cardId: number) => {
+      const related = draft.view.get("cards", cardId);
+      return (
+        related &&
+        related.task_id === card.task_id &&
+        (related.state === "done" || (related.state === "closed" && /^第 [1-9][0-9]* 轮$/.test(related.by ?? "")))
+      );
+    });
+    if (!unfinished && verified) set(draft, "holds", hold.grp, null);
+  }
+  return { status: "done" };
+}
+
 function completeTask(draft: Draft, id: number, reason: unknown) {
   const task = draft.view.get("tasks", id);
   if (!task) throw new NotFound("没有这件业务任务");
@@ -887,6 +923,7 @@ const HANDLERS: Record<string, (draft: Draft, ...args: any[]) => unknown> = {
   releaseHold,
   cancelTask,
   completeTask,
+  settleCard,
   cancel(draft, id) {
     const run = draft.view.get("runs", id);
     if (!run) throw new NotFound("没有这一轮");
