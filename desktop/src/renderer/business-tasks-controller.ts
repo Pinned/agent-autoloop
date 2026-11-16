@@ -133,7 +133,7 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
     };
     fetchPage(more ? page!.nextBefore : undefined);
   }
-  function readDetail(more = false) {
+  function readDetail(more = false, preserveUncertain = false) {
     if (!selectedKey || !allowed || detailBusy || (more && !detail?.timeline.hasMore)) return;
     const key = businessTaskKey(selectedKey),
       generation = ++detailGeneration;
@@ -159,7 +159,7 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
           else detail = { ...detail!, timeline: { ...timeline, items: merged } };
         } else {
           detail = response.data as BusinessTaskDetail;
-          mustReread = false;
+          if (!preserveUncertain) mustReread = false;
           if (actionMessage === "已提交，正在核对任务的最新状态。") actionMessage = "已核对最新任务状态。";
           detailFresh = true;
           readRun(detail.task.latestRunId, generation);
@@ -282,32 +282,34 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
     }
   }
   const unsubscribe = bridge.onRuntimeEvent?.((raw) => {
+    let next = false;
     try {
       const event = parseDesktopRuntimeEvent(raw);
-      compatibility = false;
-      const next = event.state.status === "running" && event.state.role === "hub-worker";
-      ++listGeneration;
-      ++detailGeneration;
-      busy = false;
-      detailBusy = false;
-      runReady = false;
-      detailFresh = false;
-      allowed = next;
-      if (!next) {
-        error = "unavailable";
-        detailError = "unavailable";
-      }
-      notify();
+      next = event.state.status === "running" && event.state.role === "hub-worker";
     } catch {
-      allowed = false;
-      ++listGeneration;
-      ++detailGeneration;
-      busy = false;
-      detailBusy = false;
-      runReady = false;
-      detailFresh = false;
-      notify();
+      /* Invalid runtime snapshots cannot grant admission. */
     }
+    // Healthy probes update presentation, not the authority of an admitted query.
+    if (next && allowed) return;
+    ++listGeneration;
+    ++detailGeneration;
+    busy = false;
+    detailBusy = false;
+    runReady = false;
+    detailFresh = false;
+    allowed = next;
+    if (!next) {
+      error = "unavailable";
+      detailError = "unavailable";
+    } else {
+      compatibility = false;
+      error = "";
+      detailError = "";
+      // Reconnection is not acknowledgement of an uncertain write.
+      if (selectedKey) readDetail(false, true);
+      else readList();
+    }
+    notify();
   });
   return {
     get compatibility() {
