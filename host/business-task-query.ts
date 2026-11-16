@@ -209,6 +209,10 @@ export function listBusinessTasks(view: View, input: unknown = {}): BusinessTask
     filters.push("(createdAtSort<? OR (createdAtSort=? AND (id<? OR (id=? AND kind>?))))");
     params.push(time, time, beforeId, beforeId, beforeOrder);
   }
+  if (query.rule) {
+    filters.push("ruleName=?");
+    params.push(query.rule);
+  }
   if (query.state) {
     filters.push("businessState=?");
     params.push(query.state);
@@ -233,6 +237,7 @@ export function listBusinessTasks(view: View, input: unknown = {}): BusinessTask
     LEFT JOIN projections e ON e.collection='events' AND e.key=CAST(json_extract(taskData,'$.origin_event_id') AS TEXT)
   ), display AS (
     SELECT id,kind,substr(COALESCE(json_extract(taskData,'$.created_at'),json_extract(runData,'$.created_at'),''),1,64) AS createdAtSort,json_extract(eventData,'$.summary') AS title,json_extract(eventData,'$.detail') AS detail,
+      COALESCE(json_extract(taskData,'$.rule'),json_extract(runData,'$.rule')) AS ruleName,
       json_extract(runData,'$.summary') AS summary,json_extract(runData,'$.error') AS error,
       CASE WHEN json_extract(taskData,'$.status') IN ('cancelling','cancelled') THEN json_extract(taskData,'$.status')
       WHEN EXISTS(SELECT 1 FROM projections c WHERE c.collection='cards' AND ${f("c", "kind")}='ask' AND ${f("c", "state")}='open'
@@ -245,15 +250,37 @@ export function listBusinessTasks(view: View, input: unknown = {}): BusinessTask
   ) SELECT id,kind FROM display ${filters.length ? `WHERE ${filters.join(" AND ")}` : ""} ORDER BY createdAtSort DESC,id DESC,kind ASC LIMIT ?`,
     params,
   );
+  // Rule choices come from the full stored history, never the current filtered page.
+  const names = all(
+    view,
+    `SELECT DISTINCT ${f("p", "rule")} AS name FROM projections p WHERE p.collection IN ('tasks','runs') ORDER BY name LIMIT 1001`,
+    [],
+  ).map((row) => String(row.name));
+  const rules =
+    names.length &&
+    names.length <= 1000 &&
+    names.every((name) => [...name].length <= 200) &&
+    jsonBytes(names) <= 32 * 1024
+      ? names
+      : undefined;
   const items: BusinessTaskItem[] = [];
   for (const row of rows.slice(0, limit)) {
     const item = taskItem(view, businessTaskKey(`${row.kind === 0 ? "task" : "legacy"}:${row.id}`));
-    if (jsonBytes({ items: [...items, item], hasMore: true, nextBefore: item.key }) > BUSINESS_LIST_MAX_BYTES) break;
+    if (
+      jsonBytes({ items: [...items, item], hasMore: true, nextBefore: item.key, ...(rules ? { rules } : {}) }) >
+      BUSINESS_LIST_MAX_BYTES
+    )
+      break;
     items.push(item);
   }
   const hasMore = rows.length > items.length;
   if (hasMore && !items.length) throw new Error("business-task-budget");
-  return parseBusinessTaskList({ items, hasMore, nextBefore: hasMore ? items.at(-1)!.key : null });
+  return parseBusinessTaskList({
+    items,
+    hasMore,
+    nextBefore: hasMore ? items.at(-1)!.key : null,
+    ...(rules ? { rules } : {}),
+  });
 }
 export function pageBusinessTaskTimeline(view: View, given: unknown, input: unknown = {}): BusinessTimeline {
   const key = businessTaskKey(given),

@@ -57,7 +57,12 @@ export type BusinessTimelineItem = {
   truncated: boolean;
 };
 export type BusinessTimeline = { items: BusinessTimelineItem[]; hasMore: boolean; nextBefore: number | null };
-export type BusinessTaskList = { items: BusinessTaskItem[]; hasMore: boolean; nextBefore: BusinessTaskKey | null };
+export type BusinessTaskList = {
+  items: BusinessTaskItem[];
+  hasMore: boolean;
+  nextBefore: BusinessTaskKey | null;
+  rules?: string[];
+};
 export type BusinessTaskDetail = { task: BusinessTaskItem; timeline: BusinessTimeline };
 function invalid(): never {
   throw new Error("invalid-business-task-query");
@@ -124,16 +129,21 @@ export type BusinessTaskListInput = {
   limit?: number;
   before?: BusinessTaskKey;
   q?: string;
+  rule?: string;
   state?: BusinessTaskItem["state"];
 };
 export type BusinessTaskDetailInput = { key: BusinessTaskKey; limit?: number; before?: number };
 export function parseBusinessTaskListInput(v: unknown = {}): BusinessTaskListInput {
-  const r = record(v, ["limit", "before", "q", "state"], true);
-  const { q, state, ...page } = r;
+  const r = record(v, ["limit", "before", "q", "state", "rule"], true);
+  const { q, state, rule, ...page } = r;
   const result = parseBusinessInput(page) as BusinessTaskListInput;
   if ("q" in r) {
     result.q = text(q, 200);
     if (!result.q.length) invalid();
+  }
+  if ("rule" in r) {
+    result.rule = text(rule, 200);
+    if (!result.rule.length) invalid();
   }
   if ("state" in r) result.state = one(state, BUSINESS_STATES);
   return result;
@@ -229,7 +239,8 @@ export function parseBusinessTaskItem(v: unknown): BusinessTaskItem {
   return result;
 }
 export function parseBusinessTaskList(v: unknown): BusinessTaskList {
-  const r = record(v, ["items", "hasMore", "nextBefore"]);
+  const r = record(v, ["items", "hasMore", "nextBefore", "rules"], true);
+  if (!["items", "hasMore", "nextBefore"].every((key) => key in r)) invalid();
   const items = array(r.items, 60).map(parseBusinessTaskItem);
   const hasMore = bool(r.hasMore),
     nextBefore = r.nextBefore === null ? null : businessTaskKey(r.nextBefore);
@@ -239,7 +250,9 @@ export function parseBusinessTaskList(v: unknown): BusinessTaskList {
     new Set(items.map((x) => x.key)).size !== items.length
   )
     invalid();
-  const result = { items, hasMore, nextBefore };
+  const rules = "rules" in r ? array(r.rules, 1000).map((value) => text(value, 200)) : undefined;
+  if (rules && (rules.some((name) => !name) || new Set(rules).size !== rules.length || jsonBytes(rules) > 32 * 1024)) invalid();
+  const result = { items, hasMore, nextBefore, ...(rules ? { rules } : {}) };
   if (jsonBytes(result) > BUSINESS_LIST_MAX_BYTES) invalid();
   return result;
 }

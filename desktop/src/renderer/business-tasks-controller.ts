@@ -47,6 +47,7 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
   const drafts = new Map<string, string>();
   const notify = () => changed();
   let compatibility = false;
+  let ruleNames: string[] = [];
   async function readBusiness(request: BusinessRequest, current: () => boolean) {
     if (compatibility) return readLegacyTask(request, bridge, current);
     const raw = await bridge.businessTasksRead(request);
@@ -348,6 +349,9 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
       pageIndex = 0;
       items = [];
       readList();
+    },
+    get rules() {
+      return page?.rules ?? [];
     },
     get items() {
       return items;

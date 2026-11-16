@@ -140,6 +140,7 @@ export async function readLegacyTask(
     if (before && !before.startsWith("legacy:")) return { ok: false, error: "invalid" };
     const input = {
       ...(request.input.q ? { q: request.input.q } : {}),
+      ...(request.input.rule ? { rule: request.input.rule } : {}),
       ...(before ? { before: Number(before.split(":")[1]) } : {}),
       ...(request.input.limit ? { limit: Math.min(request.input.limit, 60) } : {}),
     };

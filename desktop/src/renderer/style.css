@@ -66,7 +66,7 @@ button:hover {
 button:disabled,
 select:disabled {
   opacity: 0.6;
-  cursor: wait;
+  cursor: not-allowed;
 }
 /* The OS draws its own select arrow hugging the right border in system grey; the app takes over
    instead, so the chevron's spacing and colour follow the design tokens like every other control.
@@ -1033,7 +1033,7 @@ main:has(#task-subpage:not([hidden])) {
 .business-tasks-panel .business-entrances {
   display: flex;
   gap: 8px;
-  margin-bottom: 18px;
+  margin-bottom: 0;
   border-bottom: 1px solid var(--border);
 }
 .business-entrances button {
@@ -1041,7 +1041,7 @@ main:has(#task-subpage:not([hidden])) {
   border: 0;
   border-bottom: 2px solid transparent;
   border-radius: 0;
-  padding: 10px 14px;
+  padding: 7px 10px;
   color: var(--muted);
   font: inherit;
   cursor: pointer;
@@ -1050,7 +1050,36 @@ main:has(#task-subpage:not([hidden])) {
   color: var(--accent);
   border-bottom-color: var(--accent);
   opacity: 1;
-  cursor: default;
+  cursor: not-allowed;
+}
+.business-list-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.business-list-toolbar .tasks-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.business-list-toolbar select,
+.business-list-toolbar input {
+  width: auto;
+  max-width: 100%;
+}
+.business-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 20px;
+}
+.business-tasks-panel button:disabled:hover {
+  cursor: not-allowed;
 }
 .business-tasks-panel .run-list {
   gap: 16px;

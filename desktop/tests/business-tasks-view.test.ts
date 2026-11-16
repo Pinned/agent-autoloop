@@ -137,6 +137,20 @@ async function withView(
     else Reflect.deleteProperty(globalThis, "document");
   }
 }
+// The compact toolbar must not retain search/count copy or hide rule filtering behind page-local rows.
+test("business list exposes rule and state in one compact toolbar without search or loaded count", async () => {
+  await withView(async (_controller, root) => {
+    const page = all(root).find((x) => x.className === "tasks-list-page")!;
+    assert.equal(
+      all(page).some((x) => x.tag === "input" && x.type === "search"),
+      false,
+    );
+    assert.equal(all(page).filter((x) => x.tag === "select").length, 2);
+    assert.doesNotMatch(page.textContent, /已加载|旧记录按轮次/);
+    const toolbar = all(page).find((x) => x.className === "business-list-toolbar")!;
+    assert.equal(all(toolbar).filter((x) => x.tag === "select").length, 2);
+  });
+});
 test("owner completion displays acceptance separately from the original executor report", async () => {
   await withView(
     async (controller, root) => {
@@ -534,8 +548,8 @@ test("claimed stopping keeps truthful waiting feedback and blocks repeated stop"
   );
 });
 
-// A pending keyword must start a fresh query, never paginate the old keyword cursor.
-test("load more applies pending search before using any page cursor", async () => {
+// A changed rule must start a fresh server query, never reuse the old page cursor.
+test("rule changes reset the server query before pagination", async () => {
   await withView(
     async (controller, root) => {
       const queries: unknown[] = [];
@@ -549,13 +563,12 @@ test("load more applies pending search before using any page cursor", async () =
         moreCalls++;
       };
       const search = all(root).find((x) => x.tag === "input")!;
-      search.value = "新的需求";
-      search.listeners.get("input")!();
+      search.value = "新的规则";
+      search.listeners.get("change")!();
       const more = all(root).find((x) => x.tag === "button" && x.textContent === "下一页")!;
       assert.equal(more.hidden, false);
-      more.fire();
       await flush();
-      assert.deepEqual(queries, [{ q: "新的需求" }]);
+      assert.deepEqual(queries, [{ rule: "新的规则" }]);
       assert.equal(moreCalls, 0);
     },
     item,

@@ -21,6 +21,40 @@ const item = (id: number) => ({
   updatedAt: null,
   legacyNotice: null,
 });
+// Combined filters must survive page navigation and refresh, and reset the anchor when changed.
+test("rule and state remain server query fields across every page", async () => {
+  const queries: any[] = [];
+  const controller = createRendererBusinessTasks(
+    {
+      businessTasksRead: async (request) => {
+        queries.push(request.input);
+        return {
+          ok: true,
+          data: {
+            items: Array.from({ length: 20 }, (_, i) => item(40 - i)),
+            hasMore: true,
+            nextBefore: "task:21",
+            rules: ["r", "另一规则"],
+          },
+        } as never;
+      },
+    },
+    () => {},
+  );
+  controller.setFilter({ rule: "r", state: "active" });
+  await flush();
+  assert.deepEqual(controller.rules, ["r", "另一规则"]);
+  controller.more();
+  await flush();
+  controller.refresh();
+  await flush();
+  assert.deepEqual(queries.at(-1), { rule: "r", state: "active", limit: 20, before: "task:21" });
+  controller.setFilter({ rule: "另一规则", state: "completed" });
+  await flush();
+  assert.equal(controller.pageNumber, 1);
+  assert.deepEqual(queries.at(-1), { rule: "另一规则", state: "completed", limit: 20 });
+  controller.dispose();
+});
 test("visible list polls every five seconds and pauses off page or in details", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   let reads = 0;

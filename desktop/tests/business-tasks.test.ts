@@ -178,6 +178,25 @@ const legacyRun = {
   usage: null,
   truncated: false,
 };
+// The old-hub adapter must pass rule filtering to its server instead of filtering a returned page.
+test("legacy compatibility forwards rule to the bounded execution query", async () => {
+  const controller = createRendererBusinessTasks(
+    {
+      businessTasksRead: async () => ({ ok: false, error: "unsupported" }),
+      taskList: async (request) => {
+        assert.deepEqual(request.input, { rule: "规则 & 全名", limit: 20 });
+        return { version: 1, ok: true, data: { items: [], hasMore: false, nextBefore: null } } as never;
+      },
+      taskDetail: async () => undefined as never,
+    },
+    () => {},
+  );
+  controller.setFilter({ rule: "规则 & 全名" });
+  for (let i = 0; i < 12; i++) await Promise.resolve();
+  assert.equal(controller.compatibility, true);
+  assert.equal(controller.error, "");
+  controller.dispose();
+});
 test("old hub native run queries enter the unified legacy detail without inventing completion or missing data", async () => {
   const controller = createRendererBusinessTasks(
     {
@@ -254,7 +273,11 @@ test("business transport binds paths, global filters and timeline page, and old 
       return Response.json(String(url).includes("/task/") ? timeline : list().data);
     },
   });
-  assert.equal((await source.read({ operation: "list", input: { q: "原始需求", state: "queued" } })).ok, true);
+  assert.equal(
+    (await source.read({ operation: "list", input: { q: "原始需求", state: "queued", rule: "规则 & 全名" } })).ok,
+    true,
+  );
+  assert.equal(new URL(urls[0]).searchParams.get("rule"), "规则 & 全名");
   assert.equal(new URL(urls[0]).searchParams.get("q"), "原始需求");
   assert.equal(new URL(urls[0]).searchParams.get("state"), "queued");
   assert.deepEqual(await source.read({ operation: "timeline", input: { key: "task:1", before: 9, limit: 20 } }), {

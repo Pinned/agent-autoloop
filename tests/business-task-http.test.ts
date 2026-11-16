@@ -12,6 +12,9 @@ test("invalid queries never resolve view or read body", async () => {
     "?wat=1",
     "?limit=0",
     "?q=%FF",
+    "?rule=",
+    "?rule=a&rule=b",
+    "/task/1?rule=a",
     "/task/01",
     "/task/1?before=NaN",
     "/task/1?before=01",
@@ -34,6 +37,47 @@ test("invalid queries never resolve view or read body", async () => {
     throw Error("resolved");
   });
   assert.equal(response?.status, 400);
+});
+// Rule matching must happen before pagination, use full names, and compose with business state.
+test("rule and state filter all records before applying the page limit", async () => {
+  const view = empty();
+  try {
+    evolve(view, [
+      {
+        version: 1,
+        seq: 1,
+        at: 0,
+        type: "fixture",
+        changes: [
+          ...Array.from({ length: 35 }, (_, i) => ({
+            table: "runs" as const,
+            key: String(i + 1),
+            row: {
+              id: i + 1,
+              rule: i < 3 ? "目标规则" : "其他规则",
+              agent: "a",
+              state: i === 1 ? "failed" : "queued",
+              attempts: 1,
+            },
+          })),
+        ],
+      },
+    ]);
+    const response = businessTaskHttp(
+      new Request(root + "?rule=" + encodeURIComponent("目标规则") + "&state=queued&limit=1"),
+      view,
+    )!;
+    assert.equal(response.status, 200);
+    const first = await response.json();
+    assert.equal(first.items[0].id, 3);
+    assert.equal(first.hasMore, true);
+    const second = listBusinessTasks(view, { rule: "目标规则", state: "queued", limit: 1, before: first.nextBefore });
+    assert.equal(second.items[0].id, 1);
+    assert.equal(second.hasMore, false);
+    assert.equal(listBusinessTasks(view, { rule: "目标" }).items.length, 0);
+  } finally {
+    view.close();
+  }
 });
 test("exact routes and errors", async () => {
   const view = empty();

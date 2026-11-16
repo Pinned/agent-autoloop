@@ -91,15 +91,15 @@ export function mountBusinessTasksView(
   const tasksTab = button("业务任务", () => switchKind("task"));
   const legacyTab = button("历史执行", () => switchKind("legacy"));
   entrances.append(tasksTab, legacyTab);
-  const entranceNote = el("p", "", "muted");
-  const search = el("input");
-  search.type = "search";
-  search.maxLength = 200;
-  search.placeholder = "搜索原始需求或当前进展";
-  search.setAttribute("aria-label", "搜索全部业务任务");
+  const rule = el("select");
+  rule.setAttribute("aria-label", "筛选规则");
+  const ruleName = el("input");
+  ruleName.maxLength = 200;
+  ruleName.placeholder = "输入完整规则名";
+  ruleName.setAttribute("aria-label", "筛选规则（完整名称）");
   const state = el("select");
   state.setAttribute("aria-label", "筛选业务状态");
-  const all = el("option", "全部任务");
+  const all = el("option", "全部状态");
   all.value = "";
   state.append(all);
   for (const value of BUSINESS_STATES) {
@@ -107,51 +107,36 @@ export function mountBusinessTasksView(
     option.value = value;
     state.append(option);
   }
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  const selectedRule = () => (rule.hidden ? ruleName.value : rule.value);
   const filter = () =>
     controller.setFilter({
-      ...(search.value.trim() ? { q: search.value.trim() } : {}),
+      ...(selectedRule() ? { rule: selectedRule() } : {}),
       ...(controller.kind === "task" && state.value ? { state: state.value as (typeof BUSINESS_STATES)[number] } : {}),
     });
   function switchKind(kind: BusinessTaskItem["kind"]) {
-    clearTimeout(timer);
-    timer = undefined;
     state.value = "";
-    controller.setKind(kind, { ...(search.value.trim() ? { q: search.value.trim() } : {}) });
+    controller.setKind(kind, { ...(selectedRule() ? { rule: selectedRule() } : {}) });
   }
-  search.addEventListener("input", () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      timer = undefined;
-      filter();
-    }, 250);
-  });
-  state.addEventListener("change", () => {
-    clearTimeout(timer);
-    timer = undefined;
-    filter();
-  });
+  rule.addEventListener("change", filter);
+  ruleName.addEventListener("change", filter);
+  state.addEventListener("change", filter);
   const filters = el("div", "", "tasks-filters");
-  filters.append(search, state);
+  filters.append(rule, ruleName, state);
+  const toolbar = el("div", "", "business-list-toolbar");
+  toolbar.append(entrances, filters);
   const status = el("p", "", "rules-status");
   status.setAttribute("role", "status");
   const previous = button("上一页", () => controller.previous()),
     pageLabel = el("span"),
-    more = button("下一页", () => {
-      if (timer !== undefined) {
-        clearTimeout(timer);
-        timer = undefined;
-        filter();
-      } else controller.more();
-    });
-  const pagination = el("nav", "", "tasks-filters");
+    more = button("下一页", () => controller.more());
+  const pagination = el("nav", "", "business-pagination");
   pagination.setAttribute("aria-label", "任务分页");
   pagination.append(previous, pageLabel, more);
   const list = el("ul", "", "run-list");
   let detailWasOpen = false,
     scroll = 0,
     pendingScroll = false;
-  listPage.append(entrances, entranceNote, filters, status, list, pagination);
+  listPage.append(toolbar, status, list, pagination);
   const back = button("← 返回任务", () => controller.back()),
     title = el("h2");
   title.id = "task-detail-title";
@@ -410,14 +395,21 @@ export function mountBusinessTasksView(
   function update() {
     tasksTab.disabled = controller.kind === "task" || controller.compatibility;
     legacyTab.disabled = controller.kind === "legacy";
-    entranceNote.textContent = controller.compatibility
-      ? "旧中台通过已有执行查询展示，同一详情页面；触发资料不等于最初业务需求，轮次结束不代表业务完成。"
-      : controller.kind === "legacy"
-        ? "旧记录按轮次展示，不合并，也不代表业务完成。"
-        : "";
-    entranceNote.hidden = controller.kind !== "legacy";
-    search.placeholder = controller.kind === "legacy" ? "搜索执行结果或错误" : "搜索原始需求或当前进展";
-    search.setAttribute("aria-label", controller.kind === "legacy" ? "搜索全部历史执行" : "搜索全部业务任务");
+    const chosen = selectedRule();
+    const names = controller.rules;
+    rule.hidden = names.length === 0;
+    ruleName.hidden = !rule.hidden;
+    ruleName.value = chosen;
+    rule.replaceChildren();
+    const anyRule = el("option", "全部规则");
+    anyRule.value = "";
+    rule.append(anyRule);
+    for (const name of [...new Set([...names, ...(chosen ? [chosen] : [])])]) {
+      const option = el("option", name);
+      option.value = name;
+      rule.append(option);
+    }
+    rule.value = chosen;
     state.hidden = controller.kind === "legacy";
     const open = controller.selectedKey !== null;
     if (!open && detailWasOpen) pendingScroll = true;
@@ -436,10 +428,11 @@ export function mountBusinessTasksView(
       : controller.error
         ? (messages[controller.error] ?? controller.error)
         : controller.items.length
-          ? `已加载 ${controller.items.length} 条任务`
+          ? ""
           : controller.hasMore
             ? "本页暂无匹配项，可以翻到下一页。"
             : "没有符合条件的任务。";
+    status.hidden = !status.textContent;
     previous.disabled = controller.busy || controller.pageNumber === 1;
     pageLabel.textContent = `第 ${controller.pageNumber} 页`;
     more.disabled = controller.busy || !controller.hasMore;
