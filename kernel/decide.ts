@@ -115,8 +115,12 @@ const threadAsks = (draft: Draft, thread: Row) =>
 const holdsOf = (draft: Draft) => rows(draft.view, "holds");
 function canResumeHold(draft: Draft, run: Row, hold: Row) {
   if (!sameThread(run, hold)) return false;
-  const events = eventsOf(draft.view, run.id).map((event) => event.id);
-  return threadAsks(draft, hold).some((card) => events.includes(card.answer_event));
+  const events = eventsOf(draft.view, run.id);
+  return (
+    events.some((event) =>
+      rows(draft.view, "timers", { event_id: event.id }).some((timer) => sameThread(timer, hold)),
+    ) || threadAsks(draft, hold).some((card) => events.some((event) => event.id === card.answer_event))
+  );
 }
 function releaseHold(draft: Draft, id: number, reason: unknown) {
   const hold = holdsOf(draft).find((item) => item.run_id === id);
@@ -530,15 +534,38 @@ function applyReceipt(draft: Draft, run: Row, result: Result) {
         cards: threadAsks(draft, run).map((card) => card.id),
       });
   }
+  for (const later of result.later ?? []) scheduleReview(draft, run, later);
   if (hold) {
     const pending = [...new Set([...(hold.cards ?? []), ...threadAsks(draft, hold).map((card) => card.id)])];
+    const completedGroups = new Set(answered.map((card) => card.run_id));
     const unfinished = pending.filter((cardId) => {
       const card = draft.view.get("cards", cardId)!;
       return (
-        card.state !== "done" && !(result.outcome === "done" && card.state === "closed" && card.by === `第 ${id} 轮`)
+        card.state !== "done" &&
+        !(
+          result.outcome === "done" &&
+          card.state === "closed" &&
+          (card.by === `第 ${id} 轮` || completedGroups.has(card.run_id))
+        )
       );
     });
-    if (result.outcome === "done" && answered.length && !unfinished.length) set(draft, "holds", hold.grp, null);
+    const pendingReview = rows(draft.view, "timers", {
+      rule: run.rule,
+      lane: run.lane,
+      ...taskScope(run),
+      event_id: null,
+    }).length;
+    const pendingRun = rows(draft.view, "runs", {
+      rule: run.rule,
+      lane: run.lane,
+      ...taskScope(run),
+      state: ["queued", "claimed", "unknown"],
+    }).length;
+    const review = eventsOf(draft.view, id).some((event) =>
+      rows(draft.view, "timers", { event_id: event.id }).some((timer) => sameThread(timer, run)),
+    );
+    if (result.outcome === "done" && (answered.length || review) && !unfinished.length && !pendingReview && !pendingRun)
+      set(draft, "holds", hold.grp, null);
     else put(draft, "holds", hold.grp, { cards: unfinished });
   }
   for (const notice of result.notice ?? []) cardFromReceipt(draft, run, "notice", notice);
@@ -546,7 +573,6 @@ function applyReceipt(draft: Draft, run: Row, result: Result) {
     const once = { fyi: true, once: true, ...threadOf(run), source: sourceOf(draft.view, id), run: id };
     notify(draft, `run:${id}:done`, run.rule, summary, once);
   }
-  for (const later of result.later ?? []) scheduleReview(draft, run, later);
   for (const event of result.events ?? []) {
     if (rule?.emits && typeMatches(rule.emits.types, event.type)) {
       ingest(draft, rule.emits.source, { ...event, hops: hopsOf(draft, run) + 1 });
@@ -624,6 +650,32 @@ function finish(draft: Draft, id: number, token: string, given: unknown) {
   return { rejected };
 }
 
+function resumeDecisionGroup(draft: Draft, card: Row) {
+  const group = rows(draft.view, "cards", { run_id: card.run_id, kind: "ask" }).filter(
+    (item) => sameThread(item, card) && !String(item.key).startsWith("memo:"),
+  );
+  if (group.some((item) => item.state === "open")) return;
+  const answers = group.filter((item) => item.state === "decided" && item.answer_event != null);
+  // Old groups that already dispatched an answer must never be dispatched again on upgrade.
+  if (
+    group.some(
+      (item) => item.answer_event != null && rows(draft.view, "run_events", { event_id: item.answer_event }).length,
+    )
+  )
+    return;
+  const rule = ruleNamed(draft, card.rule);
+  if (!rule) return;
+  for (const item of answers)
+    enqueue(
+      draft,
+      rule,
+      item.answer_event,
+      card.lane,
+      card.agent === rule.to ? card.session : null,
+      holdsOf(draft).find((hold) => sameThread(hold, card)),
+      card.task_id,
+    );
+}
 function answer(draft: Draft, id: number, given: Row) {
   const card = draft.view.get("cards", id);
   if (!card) throw new NotFound("没有这张卡片");
@@ -649,16 +701,7 @@ function answer(draft: Draft, id: number, given: Row) {
   const eventId = recordEvent(draft, card.source ?? SCHEDULE, event, rule ? [rule.name] : []);
   const decision = { choice: given.choice ?? null, answer: text, by: given.by ?? null, decided_at: draft.at };
   put(draft, "cards", id, { state: "decided", ...decision, answer_event: eventId, version: card.version + 1 });
-  if (rule)
-    enqueue(
-      draft,
-      rule,
-      eventId,
-      card.lane,
-      card.agent === rule.to ? card.session : null,
-      holdsOf(draft).find((hold) => sameThread(hold, card)),
-      card.task_id,
-    );
+  resumeDecisionGroup(draft, card);
   return { changed: true, state: "decided" };
 }
 
@@ -856,6 +899,7 @@ const HANDLERS: Record<string, (draft: Draft, ...args: any[]) => unknown> = {
     if (!card) throw new NotFound("没有这张卡片");
     if (card.state !== "open") return false;
     closeCard(draft, card, reason, by);
+    if (card.kind === "ask" && !cancellation(draft, card.task_id)) resumeDecisionGroup(draft, card);
     return true;
   },
   answer,

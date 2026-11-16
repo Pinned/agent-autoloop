@@ -75,6 +75,7 @@ function scenario(questions = 1) {
   act("ingest", "app", { id: "a", type: "a", subject: "one" });
   const job = act("claimNext", "w", "first");
   const receipt = {
+    session: "test-session",
     outcome: "done",
     ask: Array.from({ length: questions }, (_, index) => ({
       key: `confirm${index}`,
@@ -154,18 +155,19 @@ test("answer resumes first and only done without unfinished asks releases the fa
   }
 });
 
-test("one answer resumes its thread while another unanswered ask still retains the hold", () => {
+test("same-round answers wait for the complete decision group and close together", () => {
   const s = scenario(2);
   try {
     s.act("answer", s.card.id, { choice: 0 });
     const resumed = s.act("claimNext", "w", "first-answer");
-    assert.ok(resumed);
-    s.act("finish", resumed.run, resumed.token, { outcome: "done" });
+    assert.equal(resumed, null);
     assert.equal(rows(s.view, "holds").length, 1);
     assert.equal(s.act("claimNext", "w", "blocked"), null);
     const second = rows(s.view, "cards", { kind: "ask", state: "open" })[0];
     s.act("answer", second.id, { choice: 0 });
     const next = s.act("claimNext", "w", "second-answer");
+    assert.equal(next.context.answers.length, 2);
+    assert.equal(s.act("answer", second.id, { choice: 0 }).changed, false);
     s.act("finish", next.run, next.token, { outcome: "done" });
     assert.equal(rows(s.view, "holds").length, 0);
   } finally {
@@ -173,6 +175,84 @@ test("one answer resumes its thread while another unanswered ask still retains t
   }
 });
 
+test("owner correction dispatch does not suppress the original decision group", () => {
+  const s = scenario(2);
+  try {
+    s.act("memo", s.job.run, { text: "补充资料" });
+    const correction = s.act("claimNext", "w", "correction");
+    s.act("finish", correction.run, correction.token, { outcome: "done" });
+    const cards = rows(s.view, "cards", { run_id: s.job.run, kind: "ask", state: "open" });
+    for (const card of cards) s.act("answer", card.id, { choice: 0 });
+    const continuation = s.act("claimNext", "w", "answers");
+    assert.ok(continuation);
+    assert.equal(continuation.context.answers.length, 2);
+  } finally {
+    s.view.close();
+  }
+});
+test("reverse answers keep both decisions and dispatch only once", () => {
+  const s = scenario(2);
+  try {
+    const cards = rows(s.view, "cards", { kind: "ask" });
+    s.act("answer", cards[1].id, { choice: 1 });
+    assert.equal(s.act("claimNext", "w", "partial"), null);
+    s.act("answer", cards[0].id, { choice: 0 });
+    const job = s.act("claimNext", "w", "complete");
+    assert.deepEqual(job.context.answers.map((answer: any) => answer.card).sort(), cards.map((card) => card.id).sort());
+    assert.equal(rows(s.view, "runs", { task_id: job.task.id, state: "queued" }).length, 0);
+  } finally {
+    s.view.close();
+  }
+});
+test("closing the remaining question dispatches the saved answer once, but closing all dispatches nobody", () => {
+  for (const answered of [true, false]) {
+    const s = scenario(2);
+    try {
+      const cards = rows(s.view, "cards", { kind: "ask" });
+      if (answered) s.act("answer", cards[0].id, { choice: 0 });
+      else s.act("resolve", cards[0].id, "不再需要决定");
+      assert.equal(s.act("claimNext", "w", "partial"), null);
+      s.act("resolve", cards[1].id, "不再需要决定");
+      const job = s.act("claimNext", "w", "complete");
+      if (answered) {
+        assert.ok(job);
+        assert.equal(job.context.answers.length, 1);
+        s.act("finish", job.run, job.token, { outcome: "done", taskStatus: "completed" });
+        assert.equal(rows(s.view, "holds").length, 0);
+      } else assert.equal(job, null);
+      assert.equal(s.act("resolve", cards[1].id, "重复关闭"), false);
+      const rebuilt = evolve(empty(), s.log);
+      assert.deepEqual(snapshot(rebuilt), snapshot(s.view));
+      rebuilt.close();
+    } finally {
+      s.view.close();
+    }
+  }
+});
+// A review of the held task must run before unrelated queued work, without releasing its reservation early.
+test("held task keeps its reservation through a scheduled review and releases after review completion", () => {
+  const s = scenario();
+  try {
+    s.act("answer", s.card.id, { choice: 0 });
+    const resumed = s.act("claimNext", "w", "answer");
+    s.act("finish", resumed.run, resumed.token, {
+      outcome: "done",
+      later: [{ key: "verify", at: new Date(10000).toISOString(), about: "核实剩余事项" }],
+    });
+    assert.equal(rows(s.view, "holds").length, 1);
+    assert.equal(s.act("claimNext", "w", "other"), null);
+    s.advance(10000);
+    s.act("tick");
+    const review = s.act("claimNext", "w", "review");
+    assert.ok(review);
+    assert.equal(review.task.id, resumed.task.id);
+    s.act("finish", review.run, review.token, { outcome: "done", taskStatus: "completed" });
+    assert.equal(rows(s.view, "holds").length, 0);
+    assert.ok(s.act("claimNext", "w", "other-after"));
+  } finally {
+    s.view.close();
+  }
+});
 test("failed, cancelled and unknown continuations retain their hold", () => {
   for (const outcome of ["failed", "cancelled", "unknown"]) {
     const s = scenario();

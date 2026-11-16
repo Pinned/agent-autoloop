@@ -28,12 +28,7 @@ const edits: [string, string, string, string][] = [
   ["answer-first", "decide.ts", 'if (card.state !== "open" || cancellation(draft, card.task_id))', "if (false)"],
   ["answer-person", "decide.ts", 'if (allowed && !allowed.includes(given.by ?? ""))', "if (false)"],
   ["answer-message", "decide.ts", "if (!delivery?.ref || delivery.ref !== given.ref)", "if (false)"],
-  [
-    "answer-wakeup",
-    "decide.ts",
-    "if (rule)\n    enqueue(\n      draft,\n      rule,\n      eventId,\n      card.lane,",
-    "if (false)\n    enqueue(\n      draft,\n      rule,\n      eventId,\n      card.lane,",
-  ],
+  ["answer-wakeup", "decide.ts", "  resumeDecisionGroup(draft, card);", "  // Mutation: omit grouped answer dispatch."],
   ["quiet-delivery", "decide.ts", "if (card.quiet ||", "if (false ||"],
   ["delivery-lease", "decide.ts", "not_before: iso(now + MINUTE)", "not_before: iso(now)"],
   ["delivery-version", "decide.ts", "version: Math.max(delivery.version, version)", "version: version"],

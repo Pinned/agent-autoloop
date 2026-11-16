@@ -251,7 +251,8 @@ export function parseBusinessTaskList(v: unknown): BusinessTaskList {
   )
     invalid();
   const rules = "rules" in r ? array(r.rules, 1000).map((value) => text(value, 200)) : undefined;
-  if (rules && (rules.some((name) => !name) || new Set(rules).size !== rules.length || jsonBytes(rules) > 32 * 1024)) invalid();
+  if (rules && (rules.some((name) => !name) || new Set(rules).size !== rules.length || jsonBytes(rules) > 32 * 1024))
+    invalid();
   const result = { items, hasMore, nextBefore, ...(rules ? { rules } : {}) };
   if (jsonBytes(result) > BUSINESS_LIST_MAX_BYTES) invalid();
   return result;

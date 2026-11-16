@@ -40,17 +40,28 @@ export function invariants(current: View, log: Fact[], before?: Snapshot) {
         (view.tables.config.rules.value.rules.find((r: Row) => r.group === group)?.parallel ?? 1),
       "超出同组并发数",
     );
+  const waitingGroup = (card: Row) =>
+    cards.some(
+      (other: Row) =>
+        other.run_id === card.run_id &&
+        other.kind === "ask" &&
+        other.state === "open" &&
+        (other.task_id ?? null) === (card.task_id ?? null) &&
+        other.rule === card.rule &&
+        other.lane === card.lane,
+    );
   for (const e of events)
     for (const rule of JSON.parse(e.routed))
       assert.ok(
-        links.some((l) => l.event_id === e.id && view.tables.runs[l.run_id]?.rule === rule),
+        links.some((l) => l.event_id === e.id && view.tables.runs[l.run_id]?.rule === rule) ||
+          cards.some((card: Row) => card.answer_event === e.id && card.rule === rule && waitingGroup(card)),
         "已收事件丢了派发关系",
       );
   for (const card of cards)
     if (card.answer_event !== null) {
       const event = view.tables.events[card.answer_event];
       assert.equal(event?.type, "card.answered");
-      if (view.tables.config.rules.value.rules.some((r: Row) => r.name === card.rule))
+      if (view.tables.config.rules.value.rules.some((r: Row) => r.name === card.rule) && !waitingGroup(card))
         assert.ok(
           links.some(
             (l) =>
