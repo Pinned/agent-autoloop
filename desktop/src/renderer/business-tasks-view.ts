@@ -214,6 +214,36 @@ export function mountBusinessTasksView(
   cancelReason.addEventListener("input", () => {
     if (cancelTaskKey) controller.drafts.set(`${cancelTaskKey}/cancel`, cancelReason.value);
   });
+  const taskCompleteControls = el("section", "", "business-complete-controls");
+  const taskCompleteForm = el("section", "", "business-correction");
+  taskCompleteForm.hidden = true;
+  const completeReason = el("textarea");
+  completeReason.maxLength = 1000;
+  completeReason.setAttribute("aria-label", "本人验收原因");
+  completeReason.placeholder = "说明验收完成的原因";
+  const completeTask = button("本人确认完成", () => {
+    taskCompleteForm.hidden = false;
+    completeReason.focus();
+  });
+  const confirmTaskComplete = button("确认完成任务", () => {
+    const task = controller.detail?.task;
+    if (task?.kind !== "task" || !completeReason.value.trim()) return;
+    controller.submitAction({
+      version: 1,
+      action: "completeTask",
+      taskId: task.id,
+      input: { reason: completeReason.value },
+    });
+  });
+  const keepTaskActive = button("暂不完成", () => {
+    taskCompleteForm.hidden = true;
+  });
+  taskCompleteForm.append(completeReason, confirmTaskComplete, keepTaskActive);
+  taskCompleteControls.append(completeTask, taskCompleteForm);
+  let completeTaskKey = "";
+  completeReason.addEventListener("input", () => {
+    if (completeTaskKey) controller.drafts.set(`${completeTaskKey}/complete`, completeReason.value);
+  });
   const runActions = el("section", "", "business-run-actions"),
     diagnosis = el("details"),
     diagnosisText = el("p", "", "muted");
@@ -344,6 +374,7 @@ export function mountBusinessTasksView(
     runActions,
     memoControls,
     taskCancelControls,
+    taskCompleteControls,
     actionStatus,
     readDetail,
     timelineStatus,
@@ -449,8 +480,7 @@ export function mountBusinessTasksView(
       const cardProgress = el("section", "", "business-card-progress");
       cardProgress.append(el("p", `${legacy ? "本轮结果" : "当前进展"}：${task.latestProgress || "尚无已记录的进展"}`));
       card.append(cardProgress);
-      if (task.completion)
-        cardProgress.append(el("p", `本人确认完成：${task.completion.reason}。不代表自动测试全部通过。`));
+      if (task.completion) cardProgress.append(el("p", `本人确认完成：${task.completion.reason}`));
       if (task.finalResult !== null)
         cardProgress.append(el("p", `最终结果：${task.finalResult || "明确完成，未填写最终结果"}`));
       if (task.origin.truncated)
@@ -585,7 +615,7 @@ export function mountBusinessTasksView(
         task.kind === "legacy"
           ? `本轮执行结果：${task.latestProgress || "未记录执行结果"}。轮次结束也不代表业务完成，旧记录没有明确业务收尾声明。`
           : task.completion
-            ? `本人确认完成：${task.completion.reason}（${task.completion.at}）。这是本人验收，不代表自动测试全部通过；原执行报告保留，不会启动 Agent。`
+            ? `本人确认完成：${task.completion.reason}（${task.completion.at}）。原执行报告保留。`
             : task.finalResult === null
               ? "尚无明确收尾的交付结果，不把当前进展当作最终结果。"
               : task.finalResult || "已明确完成，但未填写最终结果。",
@@ -655,6 +685,15 @@ export function mountBusinessTasksView(
       controller.detailBusy ||
       !!controller.detailError;
     for (const control of [cancelTask, confirmTaskCancel, keepTask, cancelReason]) control.disabled = cancelDisabled;
+    if (completeTaskKey !== task.key) {
+      completeTaskKey = task.key;
+      completeReason.value = controller.drafts.get(`${task.key}/complete`) ?? "";
+      taskCompleteForm.hidden = true;
+    }
+    taskCompleteControls.hidden =
+      controller.compatibility || task.kind !== "task" || ["completed", "cancelling", "cancelled"].includes(task.state);
+    for (const control of [completeTask, confirmTaskComplete, keepTaskActive, completeReason])
+      control.disabled = cancelDisabled;
     for (const control of controls)
       control.disabled =
         ["cancelling", "cancelled"].includes(task.state) ||

@@ -220,6 +220,7 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
         ["cancelling", "cancelled"].includes(detail.task.state)
       )
         return;
+      if (request.action === "completeTask" && detail.task.state === "completed") return;
     } else if ("cardId" in request) {
       if (["cancelling", "cancelled"].includes(detail.task.state)) return;
       if (!detail.task.decisions.items.some((c) => c.id === request.cardId && c.state === "open" && c.kind === "ask"))
@@ -269,7 +270,10 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
         actionMessage = "提交结果不明，请重新读取任务；不要重复发送。";
       }
       notify();
-      if (confirmed) readDetail();
+      if (confirmed) {
+        readDetail();
+        if (request.action === "completeTask") readList();
+      }
     };
     try {
       void Promise.resolve(bridge.taskAction(request)).then(finish, () => finish(undefined));

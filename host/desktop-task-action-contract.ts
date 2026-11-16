@@ -4,12 +4,13 @@ export const DESKTOP_TASK_ACTION_RAW_MAX_UTF16 = 16 * 1024;
 export const DESKTOP_TASK_ACTION_INPUT_MAX_BYTES = 32 * 1024;
 export const DESKTOP_TASK_ACTION_RESULT_MAX_BYTES = 1024;
 
-export type DesktopTaskAction = "answer" | "resolve" | "cancel" | "cancelTask" | "memo" | "feedback";
+export type DesktopTaskAction = "answer" | "resolve" | "cancel" | "cancelTask" | "completeTask" | "memo" | "feedback";
 export type DesktopTaskFeedbackKind = "交付满意" | "需要改善" | "内容错误";
 export type DesktopTaskAnswerInput = { choice: number } | { text: string } | Record<string, never>;
 export type DesktopTaskActionInput =
   | { version: 1; action: "answer"; cardId: number; input: DesktopTaskAnswerInput }
   | { version: 1; action: "resolve"; cardId: number; input: { reason: string } }
+  | { version: 1; action: "completeTask"; taskId: number; input: { reason: string } }
   | { version: 1; action: "cancelTask"; taskId: number; input: { reason: string } }
   | { version: 1; action: "cancel"; runId: number; input: Record<string, never> }
   | { version: 1; action: "memo"; runId: number; input: { text: string } }
@@ -26,10 +27,12 @@ export type DesktopTaskActionResult =
   | { ok: true }
   | { stopped: boolean }
   | { ok: true; id: number }
+  | { status: "completed" }
   | { status: "cancelling" | "cancelled" };
 export type DesktopTaskActionSuccess =
   | { version: 1; ok: true; action: "answer"; cardId: number; result: DesktopTaskAnswerResult }
   | { version: 1; ok: true; action: "resolve"; cardId: number; result: { changed: boolean } }
+  | { version: 1; ok: true; action: "completeTask"; taskId: number; result: { status: "completed" } }
   | { version: 1; ok: true; action: "cancelTask"; taskId: number; result: { status: "cancelling" | "cancelled" } }
   | { version: 1; ok: true; action: "cancel"; runId: number; result: { ok: true } }
   | { version: 1; ok: true; action: "memo"; runId: number; result: { stopped: boolean } }
@@ -43,6 +46,11 @@ export const DESKTOP_TASK_ACTION_MESSAGES = Object.freeze({
   auth: "身份验证未通过，操作未获确认。",
   "not-found": "目标不存在或接口不可用，操作未获确认。",
   rejected: "中台未接受此操作，请检查目标状态。",
+  "completion-cancelled": "已请求取消的任务不能确认完成",
+  "completion-execution": "任务还有排队、运行或待核实的执行，不能确认完成",
+  "completion-card": "任务还有未收尾的卡片，不能确认完成",
+  "completion-review": "任务还有未完成的复查，不能确认完成",
+  "completion-hold": "任务还有未核实释放的事项占用，不能确认完成",
   uncertain: "无法确认操作结果，可能已执行，请勿直接重试。",
 });
 export type DesktopTaskActionCode = keyof typeof DESKTOP_TASK_ACTION_MESSAGES;
@@ -54,9 +62,21 @@ export type DesktopTaskActionResponse =
       error: { code: DesktopTaskActionCode; message: string };
     };
 const encoder = new TextEncoder();
-const actions: readonly DesktopTaskAction[] = ["answer", "resolve", "cancel", "cancelTask", "memo", "feedback"];
+const actions: readonly DesktopTaskAction[] = [
+  "answer",
+  "resolve",
+  "cancel",
+  "cancelTask",
+  "completeTask",
+  "memo",
+  "feedback",
+];
 const actionTarget = (action: DesktopTaskAction) =>
-  action === "cancelTask" ? "taskId" : action === "answer" || action === "resolve" ? "cardId" : "runId";
+  action === "cancelTask" || action === "completeTask"
+    ? "taskId"
+    : action === "answer" || action === "resolve"
+      ? "cardId"
+      : "runId";
 const feedbackKinds: readonly DesktopTaskFeedbackKind[] = ["交付满意", "需要改善", "内容错误"];
 function invalid(): never {
   throw new Error(DESKTOP_TASK_ACTION_MESSAGES.invalid);
@@ -124,7 +144,7 @@ export function parseDesktopTaskActionInput(value: unknown): DesktopTaskActionIn
       : Object.hasOwn(raw, "text")
         ? { text: text(raw.text) }
         : {};
-  } else if (action === "resolve" || action === "cancelTask") {
+  } else if (action === "resolve" || action === "cancelTask" || action === "completeTask") {
     raw = record(item.input, ["reason"]);
     input = { reason: text(raw.reason, true) };
   } else if (action === "memo") {
@@ -152,6 +172,9 @@ export function projectDesktopTaskActionResult(action: DesktopTaskAction, value:
     result = { changed: boolean(item.changed), state: item.state as DesktopTaskAnswerResult["state"] };
   } else if (action === "resolve") {
     result = { changed: boolean(record(value, ["changed"]).changed) };
+  } else if (action === "completeTask") {
+    if (record(value, ["status"]).status !== "completed") invalid();
+    result = { status: "completed" };
   } else if (action === "cancelTask") {
     const status = record(value, ["status"]).status;
     if (status !== "cancelling" && status !== "cancelled") invalid();

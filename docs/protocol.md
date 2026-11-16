@@ -70,7 +70,7 @@ POST /v1/tasks/42/complete  Authorization: Bearer <本人密钥>
 → 200 {"status":"completed"}
 ```
 
-CLI 为 `agent-autoloop complete-task <任务编号> <本人验收原因>`。这只记录本人验收决定，不派发执行、不调用 Agent，也不产生模型调用费用。仅接受已记录的业务任务身份和本人密钥；来源、接单程序、通道及轮次 token 无权调用。只接受 reason，trim 后非空，原输入最多 1000 个 Unicode 码点，禁止任何查询（含裸 `?`）。已完成返回原状态且不覆盖原验收记录；取消中或已取消返回 409。任务还有 queued/claimed/unknown 执行、open/decided 卡片、event_id 为空的复查或未释放任务占用时返回 409，不取消、不关闭、不释放、不安排 Agent 自动处理这些阻塞。
+CLI 为 `agent-autoloop complete-task <任务编号> <本人验收原因>`。桌面业务详情提供原因表单与确认按钮，IPC 使用 completeTask/taskId，经主进程调用同一接口，成功后权威重读详情及原筛选列表；旧执行及终态不提供此操作，失败不自动处理阻塞。这只记录本人验收决定，不派发执行、不调用 Agent，也不产生模型调用费用。仅接受已记录的业务任务身份和本人密钥；来源、接单程序、通道及轮次 token 无权调用。只接受 reason，trim 后非空，原输入最多 1000 个 Unicode 码点，禁止任何查询（含裸 `?`）。已完成返回原状态且不覆盖原验收记录；取消中或已取消返回 409。任务还有 queued/claimed/unknown 执行、open/decided 卡片、event_id 为空的复查或未释放任务占用时返回 409，不取消、不关闭、不释放、不安排 Agent 自动处理这些阻塞。
 
 `completeTask` 是独立事实，在同一事务内记录 `completion_by: "owner"`、`completion_reason`、`completed_at`，状态变为 completed。原需求、轮次回执、历史回答均保留，`completed_run_id` 不伪造为最新轮次。本人验收不代表中台或自动测试验证通过。业务查询新增可选 `completion: { by: "owner", reason, at }`（仅本人完成的当前 completed 任务提供），此时 finalResult 为 null，latestProgress 仍为原执行报告；时间线显示「本人确认完成」及原因。严格 DTO 客户端需同步升级接受可选字段，旧中台/旧任务可不提供。后续显式关联事件或更正沿用既有重开语义，清除当前本人完成引用，但历史事实不改写。无需数据迁移，不直接改数据库投影。
 

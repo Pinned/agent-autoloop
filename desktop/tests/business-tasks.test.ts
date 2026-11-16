@@ -283,6 +283,47 @@ test("business transport deadline settles an uncooperative fetch and revocation 
   assert.deepEqual(await source.read({ operation: "list", input: {} }), { ok: false, error: "timeout" });
 });
 
+test("confirmed owner completion rereads detail and the active-filter list; terminal and legacy targets cannot write", async () => {
+  let completed = false,
+    writes = 0;
+  const reads: string[] = [];
+  const controller = createRendererBusinessTasks(
+    {
+      businessTasksRead: async (request) => {
+        reads.push(request.operation);
+        const item = task(completed ? "completed" : "active");
+        return {
+          ok: true,
+          data:
+            request.operation === "list"
+              ? { items: completed ? [] : [item], hasMore: false, nextBefore: null }
+              : { task: item, timeline: { items: [], hasMore: false, nextBefore: null } },
+        } as never;
+      },
+      taskAction: async () => {
+        writes++;
+        completed = true;
+        return { version: 1, ok: true, action: "completeTask", taskId: 1, result: { status: "completed" } } as never;
+      },
+    },
+    () => {},
+  );
+  controller.refresh();
+  await flush();
+  controller.open("task:1");
+  await flush();
+  const request = { version: 1 as const, action: "completeTask" as const, taskId: 1, input: { reason: "已验收" } };
+  controller.submitAction(request);
+  await flush();
+  await flush();
+  assert.equal(writes, 1);
+  assert.equal(controller.detail?.task.state, "completed");
+  assert.equal(controller.items.length, 0);
+  assert.deepEqual(reads, ["list", "detail", "detail", "list"]);
+  controller.submitAction(request);
+  assert.equal(writes, 1);
+});
+
 test("uncertain answer cannot be sent twice until fresh detail is read", async () => {
   const card = {
     id: 4,

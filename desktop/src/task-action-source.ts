@@ -1,5 +1,6 @@
 import {
   DESKTOP_TASK_ACTION_RESULT_MAX_BYTES,
+  DESKTOP_TASK_ACTION_MESSAGES,
   desktopTaskActionFailure,
   parseDesktopTaskActionInput,
   parseDesktopTaskActionResponse,
@@ -106,7 +107,8 @@ export function createTaskActionSource(options: TaskActionSourceOptions): {
             : "cardId" in action
               ? `cards/${action.cardId}`
               : `runs/${action.runId}`;
-        const operation = action.action === "cancelTask" ? "cancel" : action.action;
+        const operation =
+          action.action === "cancelTask" ? "cancel" : action.action === "completeTask" ? "complete" : action.action;
         controller = new AbortController();
         const abort = controller;
         let expired = false;
@@ -131,6 +133,17 @@ export function createTaskActionSource(options: TaskActionSourceOptions): {
             throw new Error("action-timeout");
           }
           if (response.status !== 200) {
+            if (action.action === "completeTask" && response.status === 409) {
+              const receipt = await readReceipt(response, abort.signal);
+              if (receipt && typeof receipt === "object" && Object.keys(receipt).join() === "error") {
+                const message = (receipt as { error: unknown }).error;
+                const known = Object.entries(DESKTOP_TASK_ACTION_MESSAGES).find(
+                  ([code, text]) => code.startsWith("completion-") && text === message,
+                );
+                if (known) return desktopTaskActionFailure(known[0] as DesktopTaskActionCode);
+              }
+              return desktopTaskActionFailure("rejected");
+            }
             discard(response);
             return desktopTaskActionFailure(statusCode(response.status));
           }

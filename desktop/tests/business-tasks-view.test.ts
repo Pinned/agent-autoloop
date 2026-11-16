@@ -136,7 +136,7 @@ test("owner completion displays acceptance separately from the original executor
       const resultTab = all(root).find((x) => x.tag === "button" && x.textContent === "交付结果")!;
       resultTab.fire();
       assert.match(root.textContent, /本人确认完成：已验收界面/);
-      assert.match(root.textContent, /不代表自动测试全部通过/);
+      assert.doesNotMatch(root.textContent, /不代表自动测试全部通过|不会启动 Agent|这是本人验收/);
       assert.match(root.textContent, /原执行报告/);
     },
     {
@@ -149,6 +149,42 @@ test("owner completion displays acceptance separately from the original executor
   );
 });
 
+test("owner completion opens a reason form without sending and blocks duplicate submission", async () => {
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      await flush();
+      const start = all(root).find((x) => x.tag === "button" && x.textContent === "本人确认完成")!;
+      assert.ok(start);
+      const confirm = all(root).find((x) => x.tag === "button" && x.textContent === "确认完成任务")!;
+      const form = all(root).find((x) => x.children.includes(confirm))!;
+      assert.equal(form.hidden, true);
+      start.fire();
+      assert.equal(form.hidden, false);
+      assert.equal(controller.actionBusy, false);
+      confirm.fire();
+      assert.equal(controller.actionBusy, false);
+      form.children.find((x) => x.tag === "textarea")!.value = "本人已验收";
+      confirm.fire();
+      assert.equal(controller.actionBusy, true);
+      assert.equal(confirm.disabled, true);
+      assert.equal(start.disabled, true);
+    },
+    { ...item, state: "active", decisions: { items: [], hasMore: false } },
+  );
+});
+test("terminal tasks and legacy executions hide owner completion", async () => {
+  for (const state of ["completed", "cancelled", "cancelling"])
+    await withView(
+      async (controller, root) => {
+        controller.open("task:1");
+        await flush();
+        const start = all(root).find((x) => x.tag === "button" && x.textContent === "本人确认完成")!;
+        assert.ok(all(root).some((x) => x.hidden && x.children.includes(start)));
+      },
+      { ...item, state, decisions: { items: [], hasMore: false } },
+    );
+});
 test("whole-task cancel asks explicitly, works without run diagnosis and blocks duplicate actions", async () => {
   await withView(async (controller, root) => {
     controller.open("task:1");
