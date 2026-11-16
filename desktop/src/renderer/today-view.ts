@@ -144,12 +144,35 @@ export function mountTodayView(
       const row = element("li", "", "today-run-row");
       const copy = element("div", "", "today-run-copy");
       const title = element("div", "", "today-run-title");
-      title.append(element("span", `#${run.id}`, "today-run-id muted"), element("strong", run.rule || "任务"));
-      copy.append(title, element("p", run.agent || "未指定 Agent", "today-run-meta muted"));
-      if (run.summary) copy.append(element("p", run.summary, "today-run-summary muted"));
+      const request = run.request;
+      title.append(
+        element("span", request?.taskId ? `任务 #${request.taskId}` : `执行 #${run.id}`, "today-run-id muted"),
+        element("strong", request?.title || (request?.taskId ? "原始任务名称未记录" : "触发资料未记录")),
+      );
+      copy.append(
+        title,
+        element(
+          "p",
+          `${request?.taskId ? `执行 #${run.id} · ` : ""}${run.agent || "未指定 Agent"}`,
+          "today-run-meta muted",
+        ),
+      );
+      const detail =
+        request?.availability === "recorded"
+          ? request.detail
+          : request?.availability === "empty"
+            ? "未填写详情"
+            : "资料未记录";
+      const preview = element("p", detail, "today-run-summary muted");
+      preview.setAttribute("title", detail + (request?.truncated ? "（资料已截断）" : ""));
+      copy.append(preview);
       row.append(
         copy,
-        element("span", `${runSymbols[run.state]} ${runNames[run.state]}`, `today-run-state ${run.state}`),
+        element(
+          "span",
+          `${runSymbols[run.state]} ${run.stopping && run.state !== "queued" ? "正在停止（等待退出确认）" : runNames[run.state]}`,
+          `today-run-state ${run.state}`,
+        ),
       );
       rows.append(row);
     }

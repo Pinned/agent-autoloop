@@ -784,7 +784,9 @@ main {
   margin-top: 3px;
 }
 .today-run-summary {
-  white-space: pre-wrap;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .today-run-state.claimed {
   color: var(--blue);

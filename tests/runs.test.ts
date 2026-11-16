@@ -43,6 +43,22 @@ const clean = () => {
 const claim = (worker: string, now: number) => claimNext(worker, `c${Math.random()}`, now);
 const state = (id: number) => one<{ state: string }>("SELECT state FROM runs WHERE id = ?", [id])!.state;
 
+// Guards today original request identity through retries, without changing facts on read.
+test("owner state keeps fixed original request rather than retry updates", async () => {
+  clean();
+  ingest("app", { ...note(1), detail: "最初详情" }, at(0));
+  // A queued run exercises the owner snapshot without launching an agent.
+  ingest("app", { ...note(1, "updated"), summary: "后续补充", detail: "不是原始详情" }, at(1));
+  const { stateOf } = await import("../host/runtime.ts");
+  const before = all("SELECT * FROM facts");
+  const snapshot = stateOf(at(2));
+  const row = snapshot.runs[0];
+  assert.equal(row.request?.title, "第 1 条");
+  assert.equal(row.request?.detail, "最初详情");
+  assert.equal(row.request?.taskId, one<{ task_id: number }>("SELECT task_id FROM runs WHERE id=?", [row.id])!.task_id);
+  assert.deepEqual(all("SELECT * FROM facts"), before);
+});
+
 test("usage accumulates across attempts once, without inventing unreported fields", () => {
   clean();
   ingest("app", note(1), at(0));

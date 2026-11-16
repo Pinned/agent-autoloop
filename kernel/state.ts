@@ -38,6 +38,29 @@ type Reads = {
   unrouted: () => Row[];
 };
 
+function requestOfRun(all: Reads["all"], run: Row) {
+  const taskId = run.task_id ?? null;
+  const origin =
+    taskId !== null
+      ? all<Row>(
+          `SELECT substr(e.summary,1,501) AS title, substr(e.detail,1,2001) AS detail FROM tasks t JOIN events e ON e.id=t.origin_event_id WHERE t.id=?`,
+          [taskId],
+        )[0]
+      : all<Row>(
+          `SELECT substr(e.summary,1,501) AS title, substr(e.detail,1,2001) AS detail FROM run_events re JOIN events e ON e.id=re.event_id WHERE re.run_id=? ORDER BY CASE WHEN e.type IN ('card.answered','owner.memo','timer.due') THEN 1 ELSE 0 END, e.id ASC LIMIT 1`,
+          [run.id],
+        )[0];
+  const title = [...String(origin?.title ?? "")];
+  const detail = [...String(origin?.detail ?? "")];
+  return {
+    taskId,
+    title: title.slice(0, 500).join(""),
+    detail: detail.slice(0, 2000).join(""),
+    availability: !origin || origin.detail == null ? "missing-history" : origin.detail === "" ? "empty" : "recorded",
+    truncated: title.length > 500 || detail.length > 2000,
+  };
+}
+
 const sum = (counted: Row[], field: string): number => counted.reduce((total, row) => total + row[field], 0);
 
 export function spendingOf(all: Reads["all"], now: number, timezone: string) {
@@ -126,7 +149,10 @@ export function stateOf(now: number, before: number | undefined, rules: Rules, {
       link: run.link ?? "",
       session: run.session,
       usage: run.usage ? JSON.parse(run.usage) : null,
-      stopping: run.cancel_at !== null,
+      stopping: run.cancel_at != null,
+      ...(run.state === "queued" || run.state === "claimed" || run.state === "unknown"
+        ? { request: requestOfRun(all, run) }
+        : {}),
       events: all<Row>(EVENTS_OF_RUN, [run.id]),
     })),
     hasMore,

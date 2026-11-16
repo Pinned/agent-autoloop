@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { readFileSync } from "node:fs";
 import { mountTodayView } from "../src/renderer/today-view.ts";
 
+// Prevent original task requests being replaced by rule names or execution reports.
 // Prevent long cost values from wrapping, losing the full bill, or changing accounting data.
 // The production view only needs these DOM operations. Keep this test independent of
 // Electron and third-party DOM packages; browser layout is verified separately.
@@ -115,6 +116,40 @@ function update(f: ReturnType<typeof fixture>) {
   }
 }
 
+test("active rows show fixed original requests, explicit legacy ids and real stopping state", () => {
+  const f = fixture({
+    kind: "ready",
+    snapshot: snapshot({
+      activeRuns: [
+        {
+          id: 7,
+          rule: "不能冒充需求的规则",
+          agent: "codex",
+          state: "claimed",
+          summary: "不能冒充详情的摘要",
+          stopping: true,
+          request: {
+            taskId: 42,
+            title: "原始任务名称",
+            detail: "<b>原始详情</b>",
+            availability: "recorded",
+            truncated: false,
+          },
+        },
+        { id: 8, rule: "旧规则", agent: "codex", state: "unknown", summary: "旧摘要" },
+      ],
+    }),
+  });
+  const text = byId(f.root, "today-active").textContent;
+  assert.match(text, /任务 #42原始任务名称/);
+  assert.match(text, /<b>原始详情<\/b>/);
+  assert.match(text, /正在停止/);
+  assert.match(text, /执行 #8/);
+  assert.match(text, /资料未记录/);
+  assert.ok(!/不能冒充|旧规则|旧摘要/.test(text));
+  assert.equal(byClass(f.root, "today-run-summary")[0].attributes.get("title"), "<b>原始详情</b>");
+});
+
 test("four independent headline tiles use exact ask/running/doneToday and real USD cost", () => {
   const f = fixture();
   const tiles = byClass(f.root, "today-stat");
@@ -174,7 +209,7 @@ test("asks and active runs are the page; notices and completed history leave no 
   assert.match(byId(f.root, "today-asks").textContent, /25 项/);
   assert.equal(byClass(byId(f.root, "today-asks"), "today-decision").length, 1);
   assert.match(byId(f.root, "today-asks").textContent, /仅展示最近 1 项，共 25 项待决策/);
-  assert.match(byId(f.root, "today-active").textContent, /推进规则/);
+  assert.match(byId(f.root, "today-active").textContent, /执行 #7触发资料未记录/);
   assert.match(byId(f.root, "today-active").textContent, /仅展示最近/);
   // The removed sections are gone entirely: no notice group, no completed group, no wrapper.
   for (const gone of ["today-notices", "today-recent", "today-completed"])

@@ -59,6 +59,47 @@ const hubState = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+// Guards original request metadata across the owner snapshot and strict IPC boundary.
+test("request preview survives projection without exposing extra fields", () => {
+  const request = { taskId: 42, title: "原需求", detail: "原详情", availability: "recorded", truncated: false };
+  const snapshot = projectDesktopTodaySnapshot(
+    hubState({ runs: [{ id: 7, rule: "r", agent: "a", state: "claimed", summary: "进展", stopping: true, request }] }),
+  );
+  assert.deepEqual(snapshot.activeRuns[0].request, request);
+  assert.equal(snapshot.activeRuns[0].stopping, true);
+  for (const bad of [
+    { ...request, title: "字".repeat(501) },
+    { ...request, detail: "字".repeat(2001) },
+    { ...request, link: "secret" },
+    { ...request, taskId: 0 },
+  ]) {
+    assert.throws(
+      () =>
+        projectDesktopTodaySnapshot(
+          hubState({ runs: [{ id: 7, rule: "r", agent: "a", state: "claimed", summary: "", request: bad }] }),
+        ),
+      /invalid-request/,
+    );
+  }
+  const maximum = projectDesktopTodaySnapshot(
+    hubState({
+      runs: Array.from({ length: 6 }, (_, i) => ({
+        id: i + 1,
+        rule: "r",
+        agent: "a",
+        state: "queued",
+        summary: "",
+        request: { ...request, title: "字".repeat(500), detail: "字".repeat(2000) },
+      })),
+    }),
+  );
+  assert.ok(new TextEncoder().encode(JSON.stringify(maximum)).byteLength < DESKTOP_TODAY_RESPONSE_MAX_BYTES);
+  assert.deepEqual(parseDesktopTodayResponse({ version: 3, ok: true, state: { kind: "ready", snapshot } }).state, {
+    kind: "ready",
+    snapshot,
+  });
+});
+
 test("projection selects only display fields and drops the credential link", () => {
   const snapshot = projectDesktopTodaySnapshot(hubState());
   assert.deepEqual(snapshot.cards, [

@@ -359,6 +359,8 @@ POST /v1/runs/12/cancel     {}
 
 `agent-autoloop status`、`answer`、`resolve`、`stop` 就是这几个请求。`/v1/state` 一次给最近 60 轮，`?before=<nextBefore>` 翻更早的。
 
+`/v1/state` 的正在推进轮次新增可选 `request: { taskId, title, detail, availability, truncated }`，taskId 为业务任务编号或 null。新任务从固定首次事件读名称与详情；旧轮次只沿实际 run_events 读取本轮触发资料，优先非回答/更正/复查事件，不猜最初业务需求。名称最多 500、详情最多 2000 个 Unicode 码点，超过时 truncated 为真；availability 区分 recorded、empty、missing-history。桌面今天页显示业务编号或明确「执行 #编号」，原始详情单行省略，缺资料如实提示，不以规则名或执行摘要替代。执行状态沿用轮次 state 与 stopping；等待停止确认不显示已停止。旧响应缺 request/stopping 仍能读取，缺资料显示未记录；严格拒绝额外字段的旧客户端需同步升级。本人鉴权、分页、只读事实与既有响应字节上限不变，不新增请求或修改调度。
+
 `/v1/state` 的 `spending.today`、`spending.week` 独立于分页，按规则时区的今天和过去 7 × 24 小时的完成时间汇总。每项含 `rounds`、`tokens`、`cost`、`missingTokens`、`missingCost`，后两项是没报对应用量的轮数；从未开始就取消的轮次不计入。旧请求和响应字段保持不变，旧客户端可以忽略新增字段；新版 `status` 需要中台一起更新，不再逐页读取历史来算费用。
 
 安装与卸载不改变 HTTP 协议。`agent-autoloop --version` 显示包版本与提交；`agent-autoloop uninstall` 确认后移除自身程序、链接和服务，始终保留规则、密钥和记录；`--yes` 只跳过确认。

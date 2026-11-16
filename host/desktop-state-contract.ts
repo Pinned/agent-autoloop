@@ -6,9 +6,9 @@
 // what it can display — open asks and active runs. Notice cards and done runs are dropped in
 // projection rather than shipped to a view that will never paint them.
 export const DESKTOP_TODAY_VERSION = 3 as const;
-// Enough for 20 full protocol cards, 6 active run summaries, and worst-case JSON escaping.
+// Enough for 20 full protocol cards, 6 active run summaries and original requests, and JSON escaping.
 // Every Unicode code point consumes at most 6 serialized bytes (including control/lone-surrogate escapes).
-// 20 * (200 + 4000 + 200) * 6 + 6 * (200 + 200 + 2000) * 6 < 0.14 MiB;
+// 20 * (200 + 4000 + 200) * 6 + 6 * (200 + 200 + 2000 + 500 + 2000) * 6 < 0.7 MiB;
 // 1.5 MiB leaves ample bounded space for identifiers, metadata, and JSON structure.
 export const DESKTOP_TODAY_RESPONSE_MAX_BYTES = 1536 * 1024;
 export const DESKTOP_TODAY_CARDS_MAX = 20 as const;
@@ -20,6 +20,14 @@ export type DesktopTodayRun = {
   agent: string;
   state: DesktopTodayRunState;
   summary: string;
+  stopping?: boolean;
+  request?: {
+    taskId: number | null;
+    title: string;
+    detail: string;
+    availability: "recorded" | "empty" | "missing-history";
+    truncated: boolean;
+  };
 };
 export type DesktopTodaySpending = { rounds: number; cost: number; missingCost: number };
 export type DesktopTodayCardKind = "ask";
@@ -155,14 +163,30 @@ function parseSpending(value: unknown): DesktopTodaySpending {
   if (typeof item.cost !== "number" || !Number.isFinite(item.cost) || item.cost < 0 || missingCost > rounds) invalid();
   return { rounds, cost: item.cost, missingCost };
 }
+function parseRequest(value: unknown): NonNullable<DesktopTodayRun["request"]> {
+  const item = record(value, ["taskId", "title", "detail", "availability", "truncated"]);
+  const taskId = item.taskId === null ? null : count(item.taskId);
+  if (taskId === 0) invalid();
+  return {
+    taskId,
+    title: protocolText(item.title, 500),
+    detail: protocolText(item.detail, 2000),
+    availability: oneOf(item.availability, ["recorded", "empty", "missing-history"]),
+    truncated: boolean(item.truncated),
+  };
+}
 function parseRun(value: unknown): DesktopTodayRun {
-  const item = record(value, ["id", "rule", "agent", "state", "summary"]);
+  const raw = displayRecord(value);
+  const optional = ["stopping", "request"].filter((name) => Object.hasOwn(raw, name));
+  const item = record(value, ["id", "rule", "agent", "state", "summary", ...optional]);
   return {
     id: count(item.id),
     rule: text(item.rule, 200),
     agent: text(item.agent, 200),
     state: oneOf(item.state, activeStates),
     summary: text(item.summary, 2000),
+    ...(optional.includes("stopping") ? { stopping: boolean(item.stopping) } : {}),
+    ...(optional.includes("request") ? { request: parseRequest(item.request) } : {}),
   };
 }
 function parseSnapshot(value: unknown): DesktopTodaySnapshot {
@@ -262,6 +286,8 @@ export function projectDesktopTodaySnapshot(value: unknown): DesktopTodaySnapsho
           agent: field(view, "agent"),
           state,
           summary: field(view, "summary"),
+          ...(Object.hasOwn(view, "stopping") ? { stopping: field(view, "stopping") } : {}),
+          ...(Object.hasOwn(view, "request") ? { request: field(view, "request") } : {}),
         }),
       );
     }
