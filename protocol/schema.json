@@ -2,6 +2,28 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:agent-autoloop:protocol:v1",
   "$defs": {
+    "taskOwnerCompletion": {
+      "type": "object",
+      "properties": { "reason": { "type": "string", "minLength": 1, "maxLength": 1000 } },
+      "required": ["reason"],
+      "additionalProperties": false
+    },
+    "taskOwnerCompletionResult": {
+      "type": "object",
+      "properties": { "status": { "const": "completed" } },
+      "required": ["status"],
+      "additionalProperties": false
+    },
+    "taskOwnerAcceptance": {
+      "type": "object",
+      "properties": {
+        "by": { "const": "owner" },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["by", "reason", "at"],
+      "additionalProperties": false
+    },
     "taskCancellation": {
       "type": "object",
       "properties": { "reason": { "type": "string", "minLength": 1, "maxLength": 1000 } },

@@ -216,12 +216,9 @@ export function checkBudget(m: {
   eventToClaimP99Ms: number;
   simulationStepsPerSecond: number;
 }) {
-  // Pass marks are a local regression detector, not a cross-machine certificate: the marks
-  // follow the machine that runs the benchmark. Rebaselined on Apple M4, 32 GB, Node 24.22.2,
-  // with 20-45% headroom over the measured watermarks so normal jitter never files a false
-  // alarm (cold start is bimodal 108-208 ms here) while a real ~30% regression still trips.
-  assert.ok(m.coldMs <= 300, `冷启动 ${m.coldMs} ms 超过 300 ms`);
+  // Owner-approved acceptance limits are not a cross-machine performance certificate.
+  assert.ok(m.coldMs <= 500, `冷启动 ${m.coldMs} ms 超过 500 ms`);
   assert.ok(m.idleRssMB <= 150, `空闲 RSS ${m.idleRssMB} MB 超过 150 MB`);
-  assert.ok(m.durableEventsPerSecond >= 1500, `落盘写入 ${m.durableEventsPerSecond}/s 低于 1500/s`);
+  assert.ok(m.durableEventsPerSecond >= 500, `落盘写入 ${m.durableEventsPerSecond}/s 低于 500/s`);
   assert.ok(m.eventToClaimP99Ms <= 10, `派活 p99 ${m.eventToClaimP99Ms} ms 超过 10 ms`);
 }

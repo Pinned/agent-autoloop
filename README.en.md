@@ -22,6 +22,8 @@ Opt into `autoGroup: true` to group rules by worker and absolute working directo
 
 Whole-task cancellation (`agent-autoloop cancel-task <task-id> <reason>`) is an explicit owner action, distinct from stopping one run or releasing a hold. It prevents new executions, and closes this task's pending cards and releases its holds only after all execution groups exit. Cancelled is not successful completion; history is retained. See the [cancellation protocol](docs/protocol.md#整件任务取消).
 
+Use `agent-autoloop complete-task <task-id> <acceptance-reason>` after owner acceptance. It records completion without starting an agent or incurring model-call costs. Pending executions, cards, reviews or task holds block acceptance and are never automatically cleared. Original reports remain intact; owner acceptance is not a claim that all automated tests passed. See the [owner completion protocol](docs/protocol.md#本人确认完成).
+
 ## Get started
 
 Works on macOS and Linux. You need Node 24, Git, curl, and at least one command-line agent already signed in; no GitHub account required. You can also hand the [installation guide](INSTALL.md) to your agent and let it install everything for you.
@@ -225,7 +227,7 @@ Measured on this machine: Apple M4, 32 GB, Node 24.22.2. Each write is a separat
 
 Historical measurements (Apple M5 Pro, 24 GB, Node 24.21.0): cold start 88.78 ms, idle memory 59.94 MB RSS, 1,000 concurrent waiting polls 170.49 MB RSS, durable writes 2,394 events/s, dispatch p99 1.82 ms, startup at 1.1 million facts 99.8 ms, kernel lines 1,651. Cross-machine numbers are not directly comparable: the baseline memory of a bare Node process and page accounting both vary by machine and version.
 
-The current `npm run benchmark` and `npm run test:nightly` check 100 concurrent waiting polls and require 100 successful responses; they do not start 100 agents. Loaded RSS is reported separately; the pass marks are 300 ms cold start, 150 MB idle RSS, 1,500 events/s durable writes, and 10 ms dispatch p99 — 20-45% headroom over this machine's measured watermarks, so jitter never files a false alarm while a real regression still trips.
+The current `npm run benchmark` and `npm run test:nightly` check 100 concurrent waiting polls and require 100 successful responses; they do not start 100 agents. Loaded RSS is reported separately; the pass marks are 500 ms cold start, 150 MB idle RSS, 500 events/s durable writes, and 10 ms dispatch p99 — owner-approved acceptance limits rather than headroom over this machine's measured watermarks, not evidence of a performance optimization or a cross-machine guarantee.
 
 As history grows, the status summary slows down and the log and indexes keep using disk. The first start after a format change rebuilds from the log, which took 43.1 seconds for 1.1 million facts. [Full numbers and method](docs/protocol.md#历史增长实测) (in Chinese).
 

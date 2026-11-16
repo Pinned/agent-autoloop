@@ -38,6 +38,7 @@ export type BusinessTaskItem = {
   latestRunId: number | null;
   latestProgress: string;
   finalResult: string | null;
+  completion?: { by: "owner"; reason: string; at: string };
   decisions: { items: CardItem[]; hasMore: boolean };
   createdAt: string | null;
   updatedAt: string | null;
@@ -174,7 +175,7 @@ export function parseBusinessTaskItem(v: unknown): BusinessTaskItem {
       "legacyNotice",
     ],
     false,
-    ["execution"],
+    ["execution", "completion"],
   );
   const key = businessTaskKey(r.key),
     kind = one(r.kind, ["task", "legacy"]),
@@ -210,6 +211,12 @@ export function parseBusinessTaskItem(v: unknown): BusinessTaskItem {
     updatedAt: stamp(r.updatedAt),
     legacyNotice: r.legacyNotice === null ? null : text(r.legacyNotice, 500),
   };
+  if ("completion" in r) {
+    const completion = record(r.completion, ["by", "reason", "at"]);
+    const at = stamp(completion.at);
+    if (kind !== "task" || result.state !== "completed" || !at || result.finalResult !== null) invalid();
+    result.completion = { by: one(completion.by, ["owner"]), reason: text(completion.reason, 1000), at };
+  }
   if ("execution" in r) {
     const execution = record(r.execution, ["state", "stopping"]);
     result.execution = { state: one(execution.state, RUN_STATES), stopping: bool(execution.stopping) };

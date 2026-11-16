@@ -222,6 +222,16 @@ async function route(call: Call): Promise<Response> {
   }
   if (method === "POST" && path === "/v1/tell") return tell(call);
   if (method === "GET" && path === "/v1/work") return work(call);
+  const taskComplete = /^\/v1\/tasks\/([1-9][0-9]*)\/complete$/.exec(path);
+  if (method === "POST" && taskComplete) {
+    requireKey(call, "owner");
+    if (request.url.includes("?")) throw new InputError("确认完成不能带查询");
+    const id = Number(taskComplete[1]);
+    if (!Number.isSafeInteger(id)) throw new InputError("任务编号不正确");
+    const given = await readJson(request);
+    if (!given || Object.keys(given).join() !== "reason") throw new InputError("只填写本人验收原因");
+    return json(act(call, "completeTask", id, given.reason));
+  }
   const taskCancel = /^\/v1\/tasks\/([1-9][0-9]*)\/cancel$/.exec(path);
   if (method === "POST" && taskCancel) {
     requireKey(call, "owner");

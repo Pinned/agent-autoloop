@@ -76,7 +76,7 @@ function taskItem(view: View, key: BusinessTaskKey): BusinessTaskItem {
     kind === "task"
       ? get(
           view,
-          `SELECT ${f("t", "origin_event_id")} AS eventId, substr(${f("t", "rule")},1,201) AS rule, substr(${f("t", "source")},1,201) AS source, ${f("t", "status")} AS status, ${f("t", "completed_run_id")} AS completedRunId, substr(${f("t", "created_at")},1,65) AS createdAt, substr(${f("t", "updated_at")},1,65) AS updatedAt FROM projections t WHERE t.collection='tasks' AND t.key=?`,
+          `SELECT ${f("t", "origin_event_id")} AS eventId, substr(${f("t", "rule")},1,201) AS rule, substr(${f("t", "source")},1,201) AS source, ${f("t", "status")} AS status, ${f("t", "completed_run_id")} AS completedRunId, ${f("t", "completion_by")} AS completionBy, substr(${f("t", "completion_reason")},1,1001) AS completionReason, ${f("t", "completed_at")} AS completedAt, substr(${f("t", "created_at")},1,65) AS createdAt, substr(${f("t", "updated_at")},1,65) AS updatedAt FROM projections t WHERE t.collection='tasks' AND t.key=?`,
           [idText],
         )
       : get(
@@ -174,7 +174,10 @@ function taskItem(view: View, key: BusinessTaskKey): BusinessTaskItem {
     ...(run ? { execution: { state: run.state, stopping: run.stopping } } : {}),
     latestRunId: run?.id ?? null,
     latestProgress: run?.summary ?? "",
-    finalResult: state === "completed" ? cut(final?.summary, 500) : null,
+    finalResult: state === "completed" && task.completionBy !== "owner" ? cut(final?.summary, 500) : null,
+    ...(state === "completed" && task.completionBy === "owner"
+      ? { completion: { by: "owner", reason: cut(task.completionReason, 1000), at: timestamp(task.completedAt) } }
+      : {}),
     decisions,
     createdAt: timestamp(task.createdAt),
     updatedAt: timestamp(task.updatedAt) ?? run?.finishedAt ?? timestamp(task.createdAt),
@@ -273,7 +276,7 @@ export function pageBusinessTaskTimeline(view: View, given: unknown, input: unkn
     (SELECT json_extract(ch.value,'$.row.id') FROM json_each(f.fact,'$.changes') ch WHERE json_extract(ch.value,'$.table')='feedback' AND ${childBelongs} LIMIT 1) AS feedbackId,
     (SELECT substr(group_concat(line,char(10)),1,4001) FROM (
       SELECT CASE json_extract(ch.value,'$.table')
-        WHEN 'tasks' THEN '任务状态：'||COALESCE(json_extract(ch.value,'$.row.status'),'')||char(10)||substr(COALESCE(json_extract(ch.value,'$.row.cancel_reason'),''),1,1001)
+        WHEN 'tasks' THEN '任务状态：'||COALESCE(json_extract(ch.value,'$.row.status'),'')||char(10)||CASE WHEN json_extract(f.fact,'$.type')='completeTask' THEN '本人确认完成：'||substr(COALESCE(json_extract(ch.value,'$.row.completion_reason'),''),1,1001)||char(10)||'本人验收，不代表执行者或自动测试验收；不会启动 Agent。' ELSE substr(COALESCE(json_extract(ch.value,'$.row.cancel_reason'),''),1,1001) END
         WHEN 'events' THEN '事件：'||substr(COALESCE(json_extract(ch.value,'$.row.summary'),''),1,501)||char(10)||substr(COALESCE(json_extract(ch.value,'$.row.detail'),''),1,2001)
         WHEN 'cards' THEN '卡片 #'||json_extract(ch.value,'$.row.id')||'：'||substr(COALESCE(json_extract(ch.value,'$.row.title'),''),1,501)||char(10)||CASE WHEN json_extract(f.fact,'$.type')='answer' THEN '回答：'||substr(COALESCE(json_extract(ch.value,'$.row.answer'),CASE WHEN json_type(ch.value,'$.row.choice')='integer' AND json_extract(ch.value,'$.row.choice')>=0 THEN json_extract(json_extract(ch.value,'$.row.options'),'$['||json_extract(ch.value,'$.row.choice')||']') END,'未记录所选选项'),1,2001) ELSE substr(COALESCE(json_extract(ch.value,'$.row.text'),''),1,2001) END
         WHEN 'feedback' THEN '评价：'||substr(COALESCE(json_extract(ch.value,'$.row.kind'),''),1,201)||char(10)||substr(COALESCE(json_extract(ch.value,'$.row.text'),''),1,4001)

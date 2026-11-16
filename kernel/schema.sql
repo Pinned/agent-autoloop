@@ -9,6 +9,8 @@ CREATE TABLE tasks (
   updated_at TEXT NOT NULL,
   completed_at TEXT,
   completed_run_id INTEGER,
+  completion_by TEXT,
+  completion_reason TEXT,
   cancel_requested_at TEXT,
   cancel_reason TEXT,
   cancelled_at TEXT

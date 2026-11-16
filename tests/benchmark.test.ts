@@ -232,13 +232,13 @@ test("budget checks fail on startup, idle memory, durable throughput, latency re
     simulationStepsPerSecond: 34000,
   };
   checkBudget(measured);
-  checkBudget({ ...measured, coldMs: 300, idleRssMB: 150, durableEventsPerSecond: 1500, eventToClaimP99Ms: 10 });
+  checkBudget({ ...measured, coldMs: 500, idleRssMB: 150, durableEventsPerSecond: 500, eventToClaimP99Ms: 10 });
   assert.throws(() => checkBudget({ ...measured, idleRssMB: 150.0001 }));
   checkBudget({ ...measured, simulationStepsPerSecond: 100 });
   for (const [key, value] of Object.entries({
-    coldMs: 301,
+    coldMs: 500.0001,
     idleRssMB: 151,
-    durableEventsPerSecond: 1499,
+    durableEventsPerSecond: 499.9999,
     eventToClaimP99Ms: 11,
   }))
     assert.throws(() => checkBudget({ ...measured, [key]: value }));

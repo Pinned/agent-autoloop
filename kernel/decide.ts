@@ -137,6 +137,32 @@ function releaseHold(draft: Draft, id: number, reason: unknown) {
 const cancellation = (draft: Draft, taskId: number | null | undefined) =>
   taskId != null && ["cancelling", "cancelled"].includes(draft.view.get("tasks", taskId)?.status);
 
+function completeTask(draft: Draft, id: number, reason: unknown) {
+  const task = draft.view.get("tasks", id);
+  if (!task) throw new NotFound("没有这件业务任务");
+  if (typeof reason !== "string" || !reason.trim() || [...reason].length > 1000)
+    throw new InputError("请说明本人验收原因，最多 1000 字");
+  if (task.status === "completed") return { status: "completed" };
+  if (cancellation(draft, id)) throw new Conflict("已请求取消的任务不能确认完成");
+  if (rows(draft.view, "runs", { task_id: id, state: ["queued", "claimed", "unknown"] }).length)
+    throw new Conflict("任务还有排队、运行或待核实的执行，不能确认完成");
+  if (rows(draft.view, "cards", { task_id: id, state: ["open", "decided"] }).length)
+    throw new Conflict("任务还有未收尾的卡片，不能确认完成");
+  if (rows(draft.view, "timers", { task_id: id, event_id: null }).length)
+    throw new Conflict("任务还有未完成的复查，不能确认完成");
+  if (rows(draft.view, "holds", { task_id: id }).length)
+    throw new Conflict("任务还有未核实释放的事项占用，不能确认完成");
+  put(draft, "tasks", id, {
+    status: "completed",
+    completed_at: draft.at,
+    updated_at: draft.at,
+    completed_run_id: null,
+    completion_by: "owner",
+    completion_reason: reason.trim(),
+  });
+  return { status: "completed" };
+}
+
 function settleCancellation(draft: Draft, taskId: number) {
   const task = draft.view.get("tasks", taskId)!;
   if (task.status !== "cancelling") return task.status;
@@ -215,7 +241,14 @@ function enqueue(
 ) {
   if (cancellation(draft, taskId)) return;
   if (taskId != null) {
-    put(draft, "tasks", taskId, { status: "active", updated_at: draft.at, completed_at: null, completed_run_id: null });
+    put(draft, "tasks", taskId, {
+      status: "active",
+      updated_at: draft.at,
+      completed_at: null,
+      completed_run_id: null,
+      completion_by: null,
+      completion_reason: null,
+    });
     // Explicit identity retains its scheduling lane even when later source subjects differ.
     thread ??= rows(draft.view, "runs", { task_id: taskId }, 1, true)[0];
   }
@@ -583,6 +616,8 @@ function finish(draft: Draft, id: number, token: string, given: unknown) {
       updated_at: draft.at,
       completed_at: completed ? draft.at : null,
       completed_run_id: completed ? id : null,
+      completion_by: null,
+      completion_reason: null,
     });
   }
   put(draft, "runs", id, { last_answer: JSON.stringify(rejected) });
@@ -808,6 +843,7 @@ const HANDLERS: Record<string, (draft: Draft, ...args: any[]) => unknown> = {
   finish,
   releaseHold,
   cancelTask,
+  completeTask,
   cancel(draft, id) {
     const run = draft.view.get("runs", id);
     if (!run) throw new NotFound("没有这一轮");

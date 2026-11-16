@@ -48,6 +48,7 @@ const timelineLabels: Record<string, string> = {
   memo: "更正说明",
   cancel: "请求停止本轮",
   cancelTask: "本人取消任务",
+  completeTask: "本人确认完成",
   resolve: "提问结案",
   "task.completed": "任务明确完成",
   tick: "到期处理",
@@ -448,6 +449,8 @@ export function mountBusinessTasksView(
       const cardProgress = el("section", "", "business-card-progress");
       cardProgress.append(el("p", `${legacy ? "本轮结果" : "当前进展"}：${task.latestProgress || "尚无已记录的进展"}`));
       card.append(cardProgress);
+      if (task.completion)
+        cardProgress.append(el("p", `本人确认完成：${task.completion.reason}。不代表自动测试全部通过。`));
       if (task.finalResult !== null)
         cardProgress.append(el("p", `最终结果：${task.finalResult || "明确完成，未填写最终结果"}`));
       if (task.origin.truncated)
@@ -581,9 +584,11 @@ export function mountBusinessTasksView(
         "p",
         task.kind === "legacy"
           ? `本轮执行结果：${task.latestProgress || "未记录执行结果"}。轮次结束也不代表业务完成，旧记录没有明确业务收尾声明。`
-          : task.finalResult === null
-            ? "尚无明确收尾的交付结果，不把当前进展当作最终结果。"
-            : task.finalResult || "已明确完成，但未填写最终结果。",
+          : task.completion
+            ? `本人确认完成：${task.completion.reason}（${task.completion.at}）。这是本人验收，不代表自动测试全部通过；原执行报告保留，不会启动 Agent。`
+            : task.finalResult === null
+              ? "尚无明确收尾的交付结果，不把当前进展当作最终结果。"
+              : task.finalResult || "已明确完成，但未填写最终结果。",
       ),
     );
     const formKey = `${task.key}/${task.decisions.items.map((c) => `${c.id}:${c.options.join("|")}`).join(",")}`;

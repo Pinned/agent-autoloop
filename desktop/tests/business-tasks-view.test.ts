@@ -127,6 +127,28 @@ async function withView(
     else Reflect.deleteProperty(globalThis, "document");
   }
 }
+test("owner completion displays acceptance separately from the original executor report", async () => {
+  await withView(
+    async (controller, root) => {
+      assert.match(root.textContent, /本人确认完成：已验收界面/);
+      controller.open("task:1");
+      await flush();
+      const resultTab = all(root).find((x) => x.tag === "button" && x.textContent === "交付结果")!;
+      resultTab.fire();
+      assert.match(root.textContent, /本人确认完成：已验收界面/);
+      assert.match(root.textContent, /不代表自动测试全部通过/);
+      assert.match(root.textContent, /原执行报告/);
+    },
+    {
+      ...item,
+      state: "completed",
+      latestProgress: "原执行报告",
+      decisions: { items: [], hasMore: false },
+      completion: { by: "owner", reason: "已验收界面", at: "2026-11-16T00:00:00.000Z" },
+    },
+  );
+});
+
 test("whole-task cancel asks explicitly, works without run diagnosis and blocks duplicate actions", async () => {
   await withView(async (controller, root) => {
     controller.open("task:1");
