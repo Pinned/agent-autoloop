@@ -153,6 +153,48 @@ async function withView(
     else Reflect.deleteProperty(globalThis, "document");
   }
 }
+// Prevent duplicate detail controls and stale or inaccessible card navigation after refresh.
+test("task title is the keyboard entrance and card whitespace opens the exact task after refresh", async () => {
+  await withView(async (controller, root) => {
+    const getCard = () => all(root).find((x) => x.className.includes("tasks-run-card"))!;
+    let card = getCard();
+    assert.equal(
+      all(card).some((x) => x.tag === "button" && x.textContent === "查看详情"),
+      false,
+    );
+    const title = all(card).find((x) => x.className === "business-task-link")!;
+    assert.ok(title);
+    assert.equal(title.attributes.get("role"), "link");
+    assert.equal(title.tabIndex, 0);
+    const click = { button: 0, target: { closest: () => null } };
+    card.listeners.get("click")?.({ ...click, target: { closest: () => ({}) } });
+    assert.equal(controller.selectedKey, null);
+    let selection = "selected text";
+    Object.assign(globalThis.document, { getSelection: () => ({ toString: () => selection }) });
+    card.listeners.get("pointerdown")?.();
+    selection = "";
+    card.listeners.get("click")?.(click);
+    assert.equal(controller.selectedKey, null, "selection present at gesture start must suppress navigation");
+    card.listeners.get("pointerdown")?.();
+    selection = "dragged text";
+    card.listeners.get("pointerup")?.();
+    selection = "";
+    card.listeners.get("click")?.(click);
+    assert.equal(controller.selectedKey, null, "drag selection must suppress navigation even after clearing");
+    title.listeners.get("keydown")?.({ key: "Enter", target: {}, preventDefault() {} });
+    assert.equal(controller.selectedKey, null);
+    title.listeners.get("keydown")?.({ key: "Enter", target: title, preventDefault() {} });
+    assert.equal(controller.selectedKey, "task:1");
+    await flush();
+    controller.back();
+    await flush();
+    await controller.refresh();
+    card = getCard();
+    card.listeners.get("click")?.({ button: 0, target: { closest: () => null } });
+    assert.equal(controller.selectedKey, "task:1");
+    controller.dispose();
+  });
+});
 // The compact toolbar must not retain search/count copy or hide rule filtering behind page-local rows.
 test("business list exposes rule and state in one compact toolbar without search or loaded count", async () => {
   await withView(async (_controller, root) => {
@@ -209,6 +251,8 @@ test("owner completion opens a reason form without sending and blocks duplicate 
       form.children.find((x) => x.tag === "textarea")!.value = "本人已验收";
       confirm.fire();
       assert.equal(controller.actionBusy, true);
+      controller.open("task:2");
+      assert.equal(controller.selectedKey, "task:1", "navigation cannot leave an in-flight write");
       assert.equal(confirm.disabled, true);
       assert.equal(start.disabled, true);
     },

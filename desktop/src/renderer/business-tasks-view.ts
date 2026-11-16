@@ -1,5 +1,6 @@
 import { BUSINESS_STATES, type BusinessTaskItem } from "../../../host/business-task-contract.ts";
 import { createAgentHistoryController } from "./agent-history-controller.ts";
+import { permitsTaskNavigation } from "./task-item-navigation.ts";
 import type { DesktopBridge } from "../policy.ts";
 import { FEEDBACK_KINDS } from "../../../host/desktop-task-query-contract.ts";
 import type { createRendererBusinessTasks } from "./business-tasks-controller.ts";
@@ -480,7 +481,72 @@ export function mountBusinessTasksView(
       card.dataset.state = task.kind === "legacy" ? (task.execution?.state ?? "unknown") : task.state;
       const legacy = task.kind === "legacy";
       const heading = el("div", "", "business-card-head");
-      heading.append(el("h3", taskTitle(task)), el("span", taskState(task), "tasks-run-state"));
+      const taskLink = el("span", taskTitle(task), "business-task-link");
+      taskLink.setAttribute("role", "link");
+      taskLink.tabIndex = 0;
+      const taskHeading = el("h3");
+      taskHeading.append(taskLink);
+      heading.append(taskHeading, el("span", taskState(task), "tasks-run-state"));
+      let selectedDuringGesture = false;
+      const hasSelection = () => !!document.getSelection?.()?.toString();
+      const navigate = () => controller.open(task.key);
+      card.addEventListener("pointerdown", () => {
+        selectedDuringGesture = hasSelection();
+      });
+      card.addEventListener("pointerup", () => {
+        selectedDuringGesture ||= hasSelection();
+      });
+      card.addEventListener("click", (event) => {
+        const selected = selectedDuringGesture || hasSelection();
+        selectedDuringGesture = false;
+        if (
+          permitsTaskNavigation(
+            {
+              ...event,
+              target: event.target as Element,
+              button: event.button,
+              defaultPrevented: event.defaultPrevented,
+              ctrlKey: event.ctrlKey,
+              metaKey: event.metaKey,
+              shiftKey: event.shiftKey,
+              altKey: event.altKey,
+            },
+            selected,
+          )
+        )
+          navigate();
+      });
+      taskLink.addEventListener("click", (event) => {
+        if (
+          permitsTaskNavigation(
+            {
+              button: event.button,
+              target: null,
+              defaultPrevented: event.defaultPrevented,
+              ctrlKey: event.ctrlKey,
+              metaKey: event.metaKey,
+              shiftKey: event.shiftKey,
+              altKey: event.altKey,
+            },
+            selectedDuringGesture || hasSelection(),
+          )
+        )
+          navigate();
+      });
+      taskLink.addEventListener("keydown", (event) => {
+        if (
+          event.key !== "Enter" ||
+          event.target !== taskLink ||
+          event.repeat ||
+          event.ctrlKey ||
+          event.metaKey ||
+          event.altKey ||
+          event.shiftKey
+        )
+          return;
+        event.preventDefault();
+        navigate();
+      });
       const meta = el("div", "", "business-card-meta");
       meta.append(
         el("span", legacy ? `历史执行 · 执行 #${task.id} · ${task.rule}` : `任务 #${task.id} · ${task.rule}`),
@@ -525,9 +591,6 @@ export function mountBusinessTasksView(
         cardProgress.append(decision);
       }
       if (task.decisions.hasMore) card.append(el("p", "还有待决策问题，请进入详情查看。", "muted"));
-      const openDetail = button("查看详情", () => controller.open(task.key));
-      openDetail.className = "business-card-open";
-      card.append(openDetail);
       list.append(card);
     }
     if (!open && listScroll !== undefined && options.scrollHost) options.scrollHost.scrollTop = listScroll;

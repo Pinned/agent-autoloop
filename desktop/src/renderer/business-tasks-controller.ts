@@ -415,6 +415,7 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
       readList();
     },
     open(key: string) {
+      if (actionBusy || mustReread) return;
       if (businessTaskKey(key).startsWith("legacy:")) {
         this.back();
         error = "旧执行不在业务任务列表中。";
