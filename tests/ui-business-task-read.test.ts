@@ -33,6 +33,18 @@ test("business task reads reuse the owner door and leave the fact view unchanged
     assert.equal(response.headers.get("cache-control"), "no-store");
     assert.deepEqual(await response.json(), { items: [], hasMore: false, nextBefore: null });
     assert.deepEqual(snapshot(view), before);
+    const businessRequest = new Request(request.url + "?scope=business", {
+      headers: { authorization: "Bearer owner-token" },
+    });
+    requireOwner(businessRequest, view);
+    assert.deepEqual(await uiRead(businessRequest, view)!.json(), {
+      items: [],
+      hasMore: false,
+      nextBefore: null,
+      rules: [],
+      scope: "business",
+    });
+    assert.deepEqual(snapshot(view), before);
     for (const token of ["", "worker-token", "wrong"]) {
       assert.throws(
         () => requireOwner(new Request(request.url, { headers: { authorization: `Bearer ${token}` } }), view),

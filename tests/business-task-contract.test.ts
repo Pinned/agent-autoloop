@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  parseBusinessTaskList,
   parseBusinessTaskListInput,
   parseBusinessTaskDetailInput,
   parseBusinessTaskListBytes,
@@ -36,6 +37,25 @@ test("strict pure inputs reject accessors, prototypes, symbols, extras and overs
   assert.throws(() => businessTaskKey("task:9007199254740992"));
   assert.throws(() => parseBusinessTaskListBytes(new Uint8Array(LIST_MAX_BYTES + 1)));
   assert.throws(() => parseBusinessTaskListBytes(new Uint8Array([255])));
+});
+// Scope confirmation must survive strict parsing without accepting invented capabilities.
+test("business scope is optional but accepts only the real business capability", () => {
+  assert.deepEqual(parseBusinessTaskListInput({ scope: "business", limit: 20 }), { scope: "business", limit: 20 });
+  const response = { items: [], hasMore: false, nextBefore: null, rules: [], scope: "business" };
+  assert.deepEqual(parseBusinessTaskList(response), response);
+  assert.deepEqual(parseBusinessTaskList({ items: [], hasMore: false, nextBefore: null }), {
+    items: [],
+    hasMore: false,
+    nextBefore: null,
+  });
+  for (const scope of ["", "legacy", "all", null, undefined, 1]) {
+    assert.throws(() => parseBusinessTaskListInput({ scope }));
+    assert.throws(() => parseBusinessTaskList({ ...response, scope }));
+  }
+  assert.throws(() => parseBusinessTaskDetailInput({ key: "task:1", scope: "business" }));
+  // An identity-entry change must not reuse a cursor from mixed legacy history.
+  assert.throws(() => parseBusinessTaskListInput({ scope: "business", before: "legacy:1" }));
+  assert.deepEqual(parseBusinessTaskListInput({ before: "legacy:1" }), { before: "legacy:1" });
 });
 test("timeline ordering and pagination cannot claim a cursor that skips its last fact", () => {
   const item = {

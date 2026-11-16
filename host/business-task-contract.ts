@@ -62,6 +62,7 @@ export type BusinessTaskList = {
   hasMore: boolean;
   nextBefore: BusinessTaskKey | null;
   rules?: string[];
+  scope?: "business";
 };
 export type BusinessTaskDetail = { task: BusinessTaskItem; timeline: BusinessTimeline };
 function invalid(): never {
@@ -131,11 +132,12 @@ export type BusinessTaskListInput = {
   q?: string;
   rule?: string;
   state?: BusinessTaskItem["state"];
+  scope?: "business";
 };
 export type BusinessTaskDetailInput = { key: BusinessTaskKey; limit?: number; before?: number };
 export function parseBusinessTaskListInput(v: unknown = {}): BusinessTaskListInput {
-  const r = record(v, ["limit", "before", "q", "state", "rule"], true);
-  const { q, state, rule, ...page } = r;
+  const r = record(v, ["limit", "before", "q", "state", "rule", "scope"], true);
+  const { q, state, rule, scope, ...page } = r;
   const result = parseBusinessInput(page) as BusinessTaskListInput;
   if ("q" in r) {
     result.q = text(q, 200);
@@ -146,6 +148,8 @@ export function parseBusinessTaskListInput(v: unknown = {}): BusinessTaskListInp
     if (!result.rule.length) invalid();
   }
   if ("state" in r) result.state = one(state, BUSINESS_STATES);
+  if ("scope" in r) result.scope = one(scope, ["business"] as const);
+  if (result.scope === "business" && result.before?.startsWith("legacy:")) invalid();
   return result;
 }
 export function parseBusinessTaskDetailInput(v: unknown): BusinessTaskDetailInput {
@@ -239,7 +243,7 @@ export function parseBusinessTaskItem(v: unknown): BusinessTaskItem {
   return result;
 }
 export function parseBusinessTaskList(v: unknown): BusinessTaskList {
-  const r = record(v, ["items", "hasMore", "nextBefore", "rules"], true);
+  const r = record(v, ["items", "hasMore", "nextBefore", "rules", "scope"], true);
   if (!["items", "hasMore", "nextBefore"].every((key) => key in r)) invalid();
   const items = array(r.items, 60).map(parseBusinessTaskItem);
   const hasMore = bool(r.hasMore),
@@ -253,7 +257,9 @@ export function parseBusinessTaskList(v: unknown): BusinessTaskList {
   const rules = "rules" in r ? array(r.rules, 1000).map((value) => text(value, 200)) : undefined;
   if (rules && (rules.some((name) => !name) || new Set(rules).size !== rules.length || jsonBytes(rules) > 32 * 1024))
     invalid();
-  const result = { items, hasMore, nextBefore, ...(rules ? { rules } : {}) };
+  const scope = "scope" in r ? one(r.scope, ["business"] as const) : undefined;
+  if (scope && (items.some((item) => item.kind !== "task") || nextBefore?.startsWith("legacy:"))) invalid();
+  const result = { items, hasMore, nextBefore, ...(rules ? { rules } : {}), ...(scope ? { scope } : {}) };
   if (jsonBytes(result) > BUSINESS_LIST_MAX_BYTES) invalid();
   return result;
 }

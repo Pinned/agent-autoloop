@@ -10,6 +10,12 @@ test("invalid queries never resolve view or read body", async () => {
     "?",
     "?limit=1&limit=2",
     "?wat=1",
+    "?scope=",
+    "?scope=legacy",
+    "?scope=Business",
+    "?scope=business&scope=business",
+    "?scope=business&before=legacy:1",
+    "/task/1?scope=business",
     "?limit=0",
     "?q=%FF",
     "?rule=",
@@ -75,6 +81,99 @@ test("rule and state filter all records before applying the page limit", async (
     assert.equal(second.items[0].id, 1);
     assert.equal(second.hasMore, false);
     assert.equal(listBusinessTasks(view, { rule: "目标" }).items.length, 0);
+  } finally {
+    view.close();
+  }
+});
+// Legacy volume must not consume business pages or pollute the full business rule directory.
+test("business scope paginates only tasks and composes global rule/state filters", async () => {
+  const view = empty();
+  try {
+    evolve(view, [
+      {
+        version: 1,
+        seq: 1,
+        at: 0,
+        type: "fixture",
+        changes: [
+          ...Array.from({ length: 1200 }, (_, i) => ({
+            table: "runs" as const,
+            key: String(i + 100),
+            row: {
+              id: i + 100,
+              rule: "旧执行规则",
+              agent: "a",
+              state: "queued",
+              attempts: 1,
+            },
+          })),
+          ...Array.from({ length: 5 }, (_, i) => ({
+            table: "tasks" as const,
+            key: String(i + 1),
+            row: {
+              id: i + 1,
+              rule: i === 4 ? "另一业务规则" : "目标业务规则",
+              source: "local",
+              status: i === 1 ? "completed" : "active",
+            },
+          })),
+        ],
+      },
+    ]);
+    const first = await businessTaskHttp(
+      new Request(root + "?scope=business&limit=2&rule=" + encodeURIComponent("目标业务规则") + "&state=active"),
+      view,
+    )!.json();
+    assert.equal(first.scope, "business");
+    assert.deepEqual(
+      first.items.map((item: { key: string }) => item.key),
+      ["task:4", "task:3"],
+    );
+    assert.deepEqual(first.rules, ["另一业务规则", "目标业务规则"]);
+    assert.equal(first.hasMore, true);
+    const second = listBusinessTasks(view, {
+      scope: "business",
+      limit: 2,
+      rule: "目标业务规则",
+      state: "active",
+      before: first.nextBefore,
+    });
+    assert.deepEqual(
+      second.items.map((item) => item.key),
+      ["task:1"],
+    );
+    assert.equal(second.hasMore, false);
+    assert.deepEqual(second.rules, first.rules);
+    assert.ok(listBusinessTasks(view, { limit: 1 }).items[0].kind === "legacy");
+    assert.ok(listBusinessTasks(view).rules?.includes("旧执行规则"));
+    assert.equal("scope" in listBusinessTasks(view), false);
+    const noMatch = listBusinessTasks(view, { scope: "business", rule: "不存在" });
+    assert.equal(noMatch.items.length, 0);
+    assert.deepEqual(noMatch.rules, first.rules);
+  } finally {
+    view.close();
+  }
+});
+// Empty business history remains an authoritative empty directory even when legacy history exists.
+test("business scope with only legacy history confirms an empty task list and rules", async () => {
+  const view = empty();
+  try {
+    evolve(view, [
+      {
+        version: 1,
+        seq: 1,
+        at: 0,
+        type: "fixture",
+        changes: [{ table: "runs", key: "1", row: { id: 1, rule: "旧规则", agent: "a", state: "done", attempts: 1 } }],
+      },
+    ]);
+    assert.deepEqual(await businessTaskHttp(new Request(root + "?scope=business"), view)!.json(), {
+      items: [],
+      hasMore: false,
+      nextBefore: null,
+      rules: [],
+      scope: "business",
+    });
   } finally {
     view.close();
   }

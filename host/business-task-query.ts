@@ -192,6 +192,7 @@ const cardCursor = (run: number, lastId: number) => encodeRunCursor({ version: 1
 export function listBusinessTasks(view: View, input: unknown = {}): BusinessTaskList {
   const query = parseBusinessTaskListInput(input),
     limit = query.limit ?? 30;
+  const scope = query.scope ? { scope: query.scope } : {};
   const before = query.before === undefined ? null : businessTaskKey(query.before);
   const parts = before?.split(":"),
     beforeId = parts ? Number(parts[1]) : null,
@@ -229,7 +230,7 @@ export function listBusinessTasks(view: View, input: unknown = {}): BusinessTask
     view,
     `WITH candidates AS (
     SELECT ${f("t", "id")} AS id,0 AS kind,t.data AS taskData FROM projections t WHERE t.collection='tasks'
-    UNION ALL SELECT ${f("r", "id")} AS id,1 AS kind,NULL AS taskData FROM projections r WHERE r.collection='runs' AND ${f("r", "task_id")} IS NULL
+    ${query.scope === "business" ? "" : `UNION ALL SELECT ${f("r", "id")} AS id,1 AS kind,NULL AS taskData FROM projections r WHERE r.collection='runs' AND ${f("r", "task_id")} IS NULL`}
   ), joined AS (
     SELECT candidates.*,r.data AS runData,e.data AS eventData FROM candidates
     LEFT JOIN projections r ON r.collection='runs' AND r.key=CASE WHEN kind=1 THEN CAST(id AS TEXT) ELSE
@@ -253,11 +254,11 @@ export function listBusinessTasks(view: View, input: unknown = {}): BusinessTask
   // Rule choices come from the full stored history, never the current filtered page.
   const names = all(
     view,
-    `SELECT DISTINCT ${f("p", "rule")} AS name FROM projections p WHERE p.collection IN ('tasks','runs') ORDER BY name LIMIT 1001`,
+    `SELECT DISTINCT ${f("p", "rule")} AS name FROM projections p WHERE ${query.scope === "business" ? "p.collection='tasks'" : "p.collection IN ('tasks','runs')"} ORDER BY name LIMIT 1001`,
     [],
   ).map((row) => String(row.name));
   const rules =
-    names.length &&
+    (names.length || query.scope === "business") &&
     names.length <= 1000 &&
     names.every((name) => [...name].length <= 200) &&
     jsonBytes(names) <= 32 * 1024
@@ -267,8 +268,13 @@ export function listBusinessTasks(view: View, input: unknown = {}): BusinessTask
   for (const row of rows.slice(0, limit)) {
     const item = taskItem(view, businessTaskKey(`${row.kind === 0 ? "task" : "legacy"}:${row.id}`));
     if (
-      jsonBytes({ items: [...items, item], hasMore: true, nextBefore: item.key, ...(rules ? { rules } : {}) }) >
-      BUSINESS_LIST_MAX_BYTES
+      jsonBytes({
+        items: [...items, item],
+        hasMore: true,
+        nextBefore: item.key,
+        ...(rules ? { rules } : {}),
+        ...scope,
+      }) > BUSINESS_LIST_MAX_BYTES
     )
       break;
     items.push(item);
@@ -280,6 +286,7 @@ export function listBusinessTasks(view: View, input: unknown = {}): BusinessTask
     hasMore,
     nextBefore: hasMore ? items.at(-1)!.key : null,
     ...(rules ? { rules } : {}),
+    ...scope,
   });
 }
 export function pageBusinessTaskTimeline(view: View, given: unknown, input: unknown = {}): BusinessTimeline {
