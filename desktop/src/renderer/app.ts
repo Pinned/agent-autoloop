@@ -347,6 +347,10 @@ const tasksPage = mountBusinessTasksView(businessTasks, {
     main.setAttribute("aria-labelledby", open ? "task-detail-title" : "page-title");
   },
 });
+window.addEventListener("beforeunload", () => {
+  tasksPage.dispose();
+  businessTasks.dispose();
+});
 // The running runtime's role is what this machine is now; a configured-but-stopped machine still
 // knows what it was set up as, and only then may the launch record stand in for it.
 document.addEventListener("visibilitychange", () => {

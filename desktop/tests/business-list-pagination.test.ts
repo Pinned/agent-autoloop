@@ -31,6 +31,7 @@ test("rule and state remain server query fields across every page", async () => 
         return {
           ok: true,
           data: {
+            scope: "business",
             items: Array.from({ length: 20 }, (_, i) => item(40 - i)),
             hasMore: true,
             nextBefore: "task:21",
@@ -48,11 +49,11 @@ test("rule and state remain server query fields across every page", async () => 
   await flush();
   controller.refresh();
   await flush();
-  assert.deepEqual(queries.at(-1), { rule: "r", state: "active", limit: 20, before: "task:21" });
+  assert.deepEqual(queries.at(-1), { rule: "r", state: "active", scope: "business", limit: 20, before: "task:21" });
   controller.setFilter({ rule: "另一规则", state: "completed" });
   await flush();
   assert.equal(controller.pageNumber, 1);
-  assert.deepEqual(queries.at(-1), { rule: "另一规则", state: "completed", limit: 20 });
+  assert.deepEqual(queries.at(-1), { rule: "另一规则", state: "completed", scope: "business", limit: 20 });
   controller.dispose();
 });
 test("visible list polls every five seconds and pauses off page or in details", async (t) => {
@@ -167,4 +168,86 @@ test("page navigation replaces rows and refresh retains the current anchor", asy
   assert.equal(controller.items[0]?.id, 22);
   assert.equal(controller.pageNumber, 1);
   controller.dispose();
+});
+
+// Filter changes must wait for the actual transport, not just reset a presentation flag.
+test("filter changes serialize underlying reads and discard stale rows", async () => {
+  const queries: any[] = [];
+  const pending: ((v: unknown) => void)[] = [];
+  const c = createRendererBusinessTasks(
+    {
+      businessTasksRead: (r) => {
+        queries.push(r.input);
+        return new Promise((resolve) => pending.push(resolve)) as never;
+      },
+    },
+    () => {},
+  );
+  c.refresh();
+  c.setFilter({ rule: "new" });
+  assert.equal(queries.length, 1);
+  pending.shift()!({
+    ok: true,
+    data: { scope: "business", rules: [], items: [item(9)], hasMore: false, nextBefore: null },
+  });
+  await flush();
+  assert.equal(queries.length, 2);
+  assert.equal(queries[1].scope, "business");
+  assert.equal(c.items.length, 0);
+  pending.shift()!({ ok: true, data: { scope: "business", rules: [], items: [], hasMore: false, nextBefore: null } });
+  await flush();
+  c.dispose();
+});
+
+// A queued filter must not start after the list hides or the controller is disposed.
+test("hiding or disposing cancels queued list work", async () => {
+  for (const dispose of [false, true]) {
+    let reads = 0,
+      finish!: (v: unknown) => void;
+    const c = createRendererBusinessTasks(
+      {
+        businessTasksRead: () => {
+          reads++;
+          return new Promise((resolve) => {
+            finish = resolve;
+          }) as never;
+        },
+      },
+      () => {},
+    );
+    c.setActive(true);
+    c.setFilter({ state: "active" });
+    if (dispose) c.dispose();
+    else c.setActive(false);
+    finish({ ok: true, data: { scope: "business", rules: [], items: [], hasMore: false, nextBefore: null } });
+    await flush();
+    assert.equal(reads, 1);
+    c.dispose();
+  }
+});
+
+// Visibility restoration must queue its immediate refresh behind an existing transport.
+test("restoring visibility queues one fresh query without overlapping the old read", async () => {
+  let reads = 0;
+  const pending: ((v: unknown) => void)[] = [];
+  const c = createRendererBusinessTasks(
+    {
+      businessTasksRead: () => {
+        reads++;
+        return new Promise((resolve) => pending.push(resolve)) as never;
+      },
+    },
+    () => {},
+  );
+  c.setActive(true);
+  c.setActive(false);
+  c.setActive(true);
+  assert.equal(reads, 1);
+  pending.shift()!({ ok: true, data: { scope: "business", rules: [], items: [], hasMore: false, nextBefore: null } });
+  await flush();
+  assert.equal(reads, 2);
+  pending.shift()!({ ok: true, data: { scope: "business", rules: [], items: [], hasMore: false, nextBefore: null } });
+  await flush();
+  assert.equal(reads, 2);
+  c.dispose();
 });

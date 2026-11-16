@@ -1,6 +1,5 @@
 // Business pages never infer identity, completion or acceptance from a run summary.
 import type { DesktopBridge } from "../policy.ts";
-import { readLegacyTask, enrichLegacyReading } from "./legacy-task-reading.ts";
 import { parseBusinessRequest, parseBusinessResponse, type BusinessRequest } from "../business-task-ipc.ts";
 import {
   businessTaskKey,
@@ -48,25 +47,23 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
   const notify = () => changed();
   let compatibility = false;
   let ruleNames: string[] = [];
+  let listInFlight = false,
+    pendingList = false;
+  let businessScope = false;
+  let ruleCapability: boolean | undefined;
   async function readBusiness(request: BusinessRequest, current: () => boolean) {
-    if (compatibility) return readLegacyTask(request, bridge, current);
     const raw = await bridge.businessTasksRead(request);
     const checked = parseBusinessResponse(raw, request);
-    if (!checked.ok && checked.error === "unsupported" && bridge.taskList && bridge.taskDetail && current()) {
-      compatibility = true;
-      kind = "legacy";
-      return readLegacyTask(request, bridge, current);
+    if (
+      request.operation === "list" &&
+      current() &&
+      ((!checked.ok && checked.error === "invalid") ||
+        (checked.ok && (checked.data as BusinessTaskList).scope !== "business" && request.input.rule !== undefined))
+    ) {
+      const { scope: _scope, rule: _rule, ...input } = request.input;
+      return bridge.businessTasksRead({ operation: "list", input });
     }
-    const candidates =
-      checked.ok && request.operation === "list"
-        ? (checked.data as BusinessTaskList).items
-        : checked.ok && request.operation === "detail"
-          ? [(checked.data as BusinessTaskDetail).task]
-          : [];
-    return current() &&
-      candidates.some((item) => item.kind === "legacy" && item.origin.availability === "missing-history")
-      ? enrichLegacyReading(checked, request, bridge, current)
-      : raw;
+    return raw;
   }
   let anchors: (BusinessTaskList["nextBefore"] | undefined)[] = [undefined];
   let pageIndex = 0;
@@ -81,75 +78,62 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
       }, 5000);
   }
   function readList(more = false, silent = false) {
-    if (!allowed || busy || (more && !page?.hasMore)) return;
+    if (!allowed || (more && !page?.hasMore)) return;
+    if (listInFlight) {
+      if (!silent) pendingList = true;
+      return;
+    }
     if (more) {
       anchors = anchors.slice(0, pageIndex + 1);
       anchors.push(page!.nextBefore);
       pageIndex++;
     }
     const generation = ++listGeneration;
-    const target = filter.limit ?? 20;
-    let gathered: BusinessTaskItem[] = [];
-    let scanned = 0;
-    const cursors = new Set<string>();
-    busy = true;
+    const { rule: requestedRule, ...otherFilters } = filter;
+    const request = parseBusinessRequest({
+      operation: "list",
+      input: {
+        ...otherFilters,
+        ...(ruleCapability !== false && requestedRule ? { rule: requestedRule } : {}),
+        ...(page && !businessScope ? {} : { scope: "business" as const }),
+        limit: filter.limit ?? 20,
+        ...(anchors[pageIndex] ? { before: anchors[pageIndex] } : {}),
+      },
+    });
+    listInFlight = busy = true;
     error = "";
     if (!silent) notify();
-    const fetchPage = (before?: BusinessTaskList["nextBefore"]) => {
-      const request = parseBusinessRequest({
-        operation: "list",
-        input: {
-          ...filter,
-          limit: Math.min(target - gathered.length, 1000 - scanned),
-          ...(before ? { before } : {}),
-        },
-      });
-      const finish = (raw: unknown) => {
-        if (generation !== listGeneration || !allowed) return;
+    const finish = (raw: unknown) => {
+      listInFlight = false;
+      busy = false;
+      if (generation === listGeneration && allowed) {
         try {
           const response = parseBusinessResponse(raw, request);
-          if (!response.ok) {
-            error = response.error;
-            busy = false;
-          } else {
+          if (!response.ok) error = response.error;
+          else {
             const next = response.data as BusinessTaskList;
-            scanned += next.items.length;
-            gathered = [
-              ...gathered,
-              ...next.items.filter((x) => x.kind === kind && !gathered.some((y) => y.key === x.key)),
-            ];
-            if (gathered.length > 1000 || jsonBytes(gathered) > 1024 * 1024) {
-              error = "已达到本页保留上限，请调整筛选条件。";
-              busy = false;
-            } else {
-              // Keep the server's mixed-identity cursor. Never filter a page and invent an anchor.
-              if (next.hasMore && gathered.length < target && scanned < 1000) {
-                if (cursors.has(next.nextBefore!)) throw new Error("repeated-cursor");
-                cursors.add(next.nextBefore!);
-                fetchPage(next.nextBefore);
-                return;
-              }
-              items = gathered;
-              page = next;
-              busy = false;
-            }
+            businessScope = next.scope === "business";
+            ruleCapability = businessScope && next.rules !== undefined;
+            compatibility = false;
+            items = next.items.filter((x) => x.kind === "task");
+            page = next;
+            ruleNames = businessScope ? (next.rules ?? []) : [];
           }
         } catch {
           error = "业务任务字段缺失或内容不完整，不能当作任务展示。";
-          busy = false;
         }
         notify();
-      };
-      try {
-        void readBusiness(request, () => generation === listGeneration && allowed && selectedKey === null).then(
-          finish,
-          () => finish(undefined),
-        );
-      } catch {
-        finish(undefined);
+      }
+      if (pendingList) {
+        pendingList = false;
+        if (allowed && !selectedKey) readList(false, true);
       }
     };
-    fetchPage(anchors[pageIndex]);
+    try {
+      void readBusiness(request, () => generation === listGeneration && allowed).then(finish, () => finish(undefined));
+    } catch {
+      finish(undefined);
+    }
   }
   function readDetail(more = false, preserveUncertain = false) {
     if (!selectedKey || !allowed || detailBusy || (more && !detail?.timeline.hasMore)) return;
@@ -338,20 +322,20 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
       return kind;
     },
     setKind(next: BusinessTaskItem["kind"], input: BusinessTaskListInput = filter) {
-      if ((next !== "task" && next !== "legacy") || (compatibility && next === "task")) return;
-      kind = next;
-      const { before: _before, state, ...rest } = input;
-      filter = { ...rest, ...(next === "task" && state ? { state } : {}) };
-      ++listGeneration;
-      busy = false;
-      page = null;
-      anchors = [undefined];
-      pageIndex = 0;
-      items = [];
-      readList();
+      if (next === "task") this.setFilter(input);
     },
     get rules() {
-      return page?.rules ?? [];
+      return ruleNames;
+    },
+    get rulesSupported() {
+      return businessScope && page?.rules !== undefined;
+    },
+    get upgradeMessage() {
+      return page && !businessScope
+        ? "请升级中台：当前仅展示混合页中的业务任务，分页可能有空页，暂不能使用全局规则筛选。"
+        : page && page.rules === undefined
+          ? "请升级中台后使用规则筛选。"
+          : "";
     },
     get items() {
       return items;
@@ -408,7 +392,11 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
     setActive(next: boolean) {
       if (active === next) return;
       active = next;
-      if (active && !selectedKey) readList(false, true);
+      if (!active) pendingList = false;
+      if (active && !selectedKey) {
+        if (listInFlight) pendingList = true;
+        else readList(false, true);
+      }
       schedule();
     },
     refresh: () => readList(),
@@ -427,6 +415,12 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
       readList();
     },
     open(key: string) {
+      if (businessTaskKey(key).startsWith("legacy:")) {
+        this.back();
+        error = "旧执行不在业务任务列表中。";
+        notify();
+        return;
+      }
       selectedKey = businessTaskKey(key);
       clearTimeout(poll);
       ++listGeneration;
@@ -457,6 +451,8 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
     },
     dispose() {
       active = false;
+      allowed = false;
+      pendingList = false;
       clearTimeout(poll);
       ++listGeneration;
       ++detailGeneration;

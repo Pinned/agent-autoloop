@@ -1056,9 +1056,58 @@ main:has(#task-subpage:not([hidden])) {
 }
 .business-list-toolbar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+  max-width: 100%;
+}
+.business-list-toolbar > select {
+  flex: 0 0 auto;
+  max-width: 46%;
+}
+.business-rule-strip {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1 1 0;
+}
+.business-rule-strip > button {
+  flex: 0 0 auto;
+}
+.business-rule-tabs {
+  display: flex;
+  flex: 1 1 0;
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.business-rule-tabs button {
+  flex: 0 0 auto;
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+}
+.business-rule-tabs button[aria-selected="true"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.business-rule-tabs button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+@media (forced-colors: active) {
+  .business-rule-tabs button[aria-selected="true"],
+  .business-rule-tabs button:focus-visible {
+    outline: 2px solid Highlight;
+  }
 }
 .business-list-toolbar .tasks-filters {
   display: flex;

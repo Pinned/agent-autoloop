@@ -1,6 +1,6 @@
 // Prevent lifecycle cards from hiding the actual decision/options or silent truncation, and prevent
 // leaving an in-flight write before its receipt can be checked. Also prevent the removed list-level
-// execution diagnostics entrance from returning while keeping task detail and legacy history reachable.
+// execution diagnostics entrance from returning while retaining associated business execution history and rejecting legacy navigation.
 // Fake DOM/bridge, no Electron or network.
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -17,8 +17,20 @@ class Element {
   dataset: Record<string, string> = {};
   children: Element[] = [];
   private text = "";
-  listeners = new Map<string, () => void>();
+  listeners = new Map<string, (event?: any) => void>();
   focused = false;
+  title = "";
+  tabIndex = 0;
+  scrollLeft = 0;
+  scrollWidth = 0;
+  clientWidth = 0;
+  attributes = new Map<string, string>();
+  scrollIntoView() {
+    this.focused = true;
+  }
+  scrollBy(options: { left: number }) {
+    this.scrollLeft += options.left;
+  }
   readonly tag: string;
   constructor(tag: string) {
     this.tag = tag;
@@ -37,8 +49,10 @@ class Element {
     this.text = "";
     this.children = items;
   }
-  setAttribute() {}
-  addEventListener(kind: string, f: () => void) {
+  setAttribute(key: string, value: string) {
+    this.attributes.set(key, value);
+  }
+  addEventListener(kind: string, f: (event?: any) => void) {
     this.listeners.set(kind, f);
   }
   querySelectorAll(tag: string): Element[] {
@@ -109,6 +123,8 @@ async function withView(
             data:
               request.operation === "list"
                 ? {
+                    scope: "business",
+                    rules: ["r", "长规则".repeat(20)],
                     items: options.paged
                       ? Array.from({ length: 20 }, (_, i) => ({
                           ...(shown as typeof item),
@@ -145,10 +161,12 @@ test("business list exposes rule and state in one compact toolbar without search
       all(page).some((x) => x.tag === "input" && x.type === "search"),
       false,
     );
-    assert.equal(all(page).filter((x) => x.tag === "select").length, 2);
+    assert.equal(all(page).filter((x) => x.tag === "select").length, 1);
     assert.doesNotMatch(page.textContent, /已加载|旧记录按轮次/);
     const toolbar = all(page).find((x) => x.className === "business-list-toolbar")!;
-    assert.equal(all(toolbar).filter((x) => x.tag === "select").length, 2);
+    assert.equal(all(toolbar).filter((x) => x.tag === "select").length, 1);
+    assert.ok(!toolbar.textContent.includes("历史执行"));
+    assert.ok(toolbar.textContent.includes("全部规则"));
   });
 });
 test("owner completion displays acceptance separately from the original executor report", async () => {
@@ -241,27 +259,12 @@ test("cancelled business state is explicit and offers no reactivation controls",
   );
 });
 
-test("task list removes execution diagnostics but keeps detail and legacy entrances", async () => {
+test("legacy navigation returns to business list without showing old detail", async () => {
   await withView(async (controller, root) => {
-    const listPage = all(root).find((x) => x.className === "tasks-list-page")!;
-    assert.equal(listPage.textContent.includes("查看执行诊断记录"), false);
-    assert.equal(listPage.children.filter((x) => x.tag === "section").length, 0);
-    all(listPage)
-      .find((x) => x.tag === "button" && x.textContent === "历史执行")!
-      .fire();
+    controller.open("legacy:1");
     await flush();
-    assert.equal(controller.kind, "legacy");
-    all(listPage)
-      .find((x) => x.tag === "button" && x.textContent === "业务任务")!
-      .fire();
-    await flush();
-    all(listPage)
-      .find((x) => x.tag === "button" && x.textContent === "查看详情")!
-      .fire();
-    await flush();
-    assert.equal(controller.selectedKey, "task:1");
-    assert.equal(all(root).find((x) => x.className === "tasks-detail-page")!.hidden, false);
-    assert.ok(root.textContent.includes("执行与诊断资料"));
+    assert.equal(controller.selectedKey, null);
+    assert.match(root.textContent, /旧执行不在业务任务列表/);
   });
 });
 test("task detail defaults to process and keeps original and delivery separate", async () => {
@@ -291,47 +294,7 @@ test("task detail defaults to process and keeps original and delivery separate",
     assert.equal(history.hidden, false);
   });
 });
-test("legacy detail uses identical tabs and displays recorded trigger title and round result", async () => {
-  const legacy = {
-    ...item,
-    key: "legacy:1",
-    kind: "legacy",
-    state: "active",
-    legacyNotice: "旧执行没有业务任务身份",
-    origin: { ...item.origin, title: "触发记录标题", detail: "", availability: "empty" },
-    latestProgress: "旧轮实际结果",
-    execution: { state: "done", stopping: false },
-    decisions: { items: [], hasMore: false },
-  };
-  await withView(async (controller, root) => {
-    controller.setKind("legacy");
-    await flush();
-    controller.open("legacy:1");
-    await flush();
-    const tabs = all(root).find((x) => x.className === "task-detail-tabs")!;
-    assert.ok(
-      tabs.textContent.includes("执行过程") &&
-        tabs.textContent.includes("原始需求") &&
-        tabs.textContent.includes("交付结果"),
-    );
-    all(tabs)
-      .find((x) => x.textContent === "原始需求")!
-      .fire();
-    const original = all(root).find((x) => x.className === "business-original")!;
-    assert.ok(original.textContent.includes("触发记录标题"));
-    assert.ok(original.textContent.includes("触发资料"));
-    assert.equal(original.textContent.includes("资料历史缺失"), false);
-    all(tabs)
-      .find((x) => x.textContent === "交付结果")!
-      .fire();
-    const result = all(root).find(
-      (x) => x.tag === "section" && x.children.some((y) => y.tag === "h3" && y.textContent === "交付结果"),
-    )!;
-    assert.ok(result.textContent.includes("旧轮实际结果"));
-    assert.ok(result.textContent.includes("不代表业务完成"));
-    assert.ok(root.textContent.includes("本轮结束"));
-  }, legacy);
-});
+
 test("list decisions keep question, every option and honest truncation/more notices", async () => {
   await withView(async (_controller, root) => {
     const task = all(root).find((x) => x.dataset.taskKey === "task:1")!;
@@ -352,27 +315,6 @@ test("in-flight answers disable detail back navigation", async () => {
 });
 
 // Missing historical identity must not become a giant missing-title button or business completion.
-test("legacy cards have a stable execution heading and round-only status", async () => {
-  const legacy = {
-    ...item,
-    key: "legacy:1",
-    kind: "legacy",
-    state: "active",
-    legacyNotice: "旧记录不可关联",
-    decisions: { items: [], hasMore: false },
-    execution: { state: "done", stopping: false },
-  };
-  await withView(async (controller, root) => {
-    controller.setKind("legacy");
-    await flush();
-    const card = all(root).find((x) => x.dataset.taskKey === "legacy:1")!;
-    assert.ok(card.textContent.includes("执行 #1 · r"));
-    assert.ok(card.textContent.includes("本轮结束"));
-    assert.ok(!card.textContent.includes("任务仍在推进"));
-    assert.ok(!card.textContent.includes("原始需求"));
-    assert.equal(all(card).find((x) => x.tag === "button")?.textContent, "查看详情");
-  }, legacy);
-});
 
 test("task list has one outer page heading and no compatibility essay", async () => {
   await withView(async (_controller, root) => {
@@ -447,7 +389,7 @@ test("prototype DOM puts current actions before tabs, hides correction and confi
     truncated: false,
   };
   const page = { items: [], hasMore: false, nextCursor: null };
-  for (const kind of ["task", "legacy"]) {
+  for (const kind of ["task"]) {
     const shown = {
       ...item,
       key: `${kind}:1`,
@@ -549,33 +491,6 @@ test("claimed stopping keeps truthful waiting feedback and blocks repeated stop"
 });
 
 // A changed rule must start a fresh server query, never reuse the old page cursor.
-test("rule changes reset the server query before pagination", async () => {
-  await withView(
-    async (controller, root) => {
-      const queries: unknown[] = [];
-      let moreCalls = 0;
-      const setFilter = controller.setFilter;
-      controller.setFilter = (input) => {
-        queries.push(input);
-        setFilter(input);
-      };
-      controller.more = () => {
-        moreCalls++;
-      };
-      const search = all(root).find((x) => x.tag === "input")!;
-      search.value = "新的规则";
-      search.listeners.get("change")!();
-      const more = all(root).find((x) => x.tag === "button" && x.textContent === "下一页")!;
-      assert.equal(more.hidden, false);
-      await flush();
-      assert.deepEqual(queries, [{ rule: "新的规则" }]);
-      assert.equal(moreCalls, 0);
-    },
-    item,
-    undefined,
-    { paged: true },
-  );
-});
 
 // Restore position after the asynchronous authoritative re-query, not against an empty list.
 test("return restores the list scroll after refreshed rows arrive", async () => {
@@ -641,19 +556,58 @@ test("detail surfaces, compact heading and selected tabs follow shared theme and
   assert.match(contrast, /outline:\s*2px solid Highlight;/);
 });
 
-// Available trigger details must not be replaced by their summary or called an original requirement.
-test("legacy preview labels and preserves available trigger details", async () => {
-  const legacy = {
-    ...item,
-    key: "legacy:1",
-    kind: "legacy",
-    legacyNotice: "旧记录",
-    decisions: { items: [], hasMore: false },
-  };
+// Refresh must preserve the tab nodes/focus and both independent scroll positions.
+test("rule tabs retain nodes, scroll and vanished selection; keyboard and overflow are bounded", async () => {
   await withView(async (controller, root) => {
-    controller.setKind("legacy");
+    const strip = all(root).find((x) => x.className === "business-rule-tabs")!;
+    const tabs = strip.children;
+    assert.equal(tabs[0].textContent, "全部规则");
+    assert.equal(tabs[0].attributes.get("aria-selected"), "true");
+    const long = tabs[2];
+    assert.equal(long.title, "长规则".repeat(20));
+    assert.equal(long.attributes.get("aria-label"), long.title);
+    strip.scrollLeft = 83;
+    controller.refresh();
     await flush();
-    const card = all(root).find((x) => x.dataset.taskKey === "legacy:1")!;
-    assert.equal(all(card).find((x) => x.className === "tasks-run-detail")?.textContent, "触发资料：原始详情");
-  }, legacy);
+    assert.equal(strip.children[2], long);
+    assert.equal(strip.scrollLeft, 83);
+    const right = all(root).find((x) => x.attributes.get("aria-label") === "向右滚动规则")!;
+    const left = all(root).find((x) => x.attributes.get("aria-label") === "向左滚动规则")!;
+    assert.equal(right.hidden, true);
+    strip.scrollWidth = 500;
+    strip.clientWidth = 200;
+    strip.scrollLeft = 0;
+    strip.listeners.get("scroll")!();
+    assert.equal(left.disabled, true);
+    assert.equal(right.disabled, false);
+    strip.scrollLeft = 300;
+    strip.listeners.get("scroll")!();
+    assert.equal(right.disabled, true);
+    let prevented = false;
+    tabs[0].listeners.get("keydown")!({
+      key: "End",
+      preventDefault() {
+        prevented = true;
+      },
+    });
+    await flush();
+    assert.equal(prevented, true);
+    assert.equal(long.attributes.get("aria-selected"), "true");
+    assert.equal(long.tabIndex, 0);
+    assert.equal(long.focused, true);
+    Object.defineProperty(controller, "rules", { get: () => [] });
+    controller.refresh();
+    await flush();
+    assert.ok(strip.children.some((x) => x.title === long.title && x.attributes.get("aria-selected") === "true"));
+  });
+});
+
+// The scrolling viewport must consume leftover width without moving the fixed state selector.
+test("rule viewport owns remaining width and hidden overflow buttons cannot reappear", () => {
+  const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
+  const rule = (selector: string) => css.slice(css.indexOf(selector)).split("}")[0];
+  assert.match(rule(".business-rule-tabs {"), /flex:\s*1 1 0;/);
+  assert.match(rule(".business-list-toolbar {"), /flex-wrap:\s*nowrap;/);
+  assert.match(rule(".business-list-toolbar > select {"), /flex:\s*0 0 auto;/);
+  assert.match(rule("[hidden] {"), /display:\s*none !important;/);
 });

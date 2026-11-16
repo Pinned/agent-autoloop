@@ -55,7 +55,7 @@ const timelineLabels: Record<string, string> = {
   abandon: "本轮执行中断",
 };
 const messages: Record<string, string> = {
-  unsupported: "此中台仅支持执行记录。",
+  unsupported: "当前中台不支持业务任务列表，请升级中台后查看。",
   unavailable: "中台未运行，暂时不能读取业务任务。",
   "no-hub": "这台电脑只接单，不管理业务任务。",
   unauthorized: "没有读取任务的权限。",
@@ -87,16 +87,27 @@ export function mountBusinessTasksView(
   const root = el("section", "", "tasks-panel business-tasks-panel");
   const listPage = el("div", "", "tasks-list-page"),
     detailPage = el("section", "", "tasks-detail-page");
-  const entrances = el("div", "", "business-entrances");
-  const tasksTab = button("业务任务", () => switchKind("task"));
-  const legacyTab = button("历史执行", () => switchKind("legacy"));
-  entrances.append(tasksTab, legacyTab);
-  const rule = el("select");
+  const ruleStrip = el("div", "", "business-rule-strip");
+  const rule = el("div", "", "business-rule-tabs");
+  rule.setAttribute("role", "tablist");
   rule.setAttribute("aria-label", "筛选规则");
-  const ruleName = el("input");
-  ruleName.maxLength = 200;
-  ruleName.placeholder = "输入完整规则名";
-  ruleName.setAttribute("aria-label", "筛选规则（完整名称）");
+  let chosenRule = "",
+    rulesSignature = "";
+  const ruleButtons = new Map<string, HTMLButtonElement>();
+  const left = button("‹", () => rule.scrollBy?.({ left: -240, behavior: "smooth" }));
+  const right = button("›", () => rule.scrollBy?.({ left: 240, behavior: "smooth" }));
+  left.setAttribute("aria-label", "向左滚动规则");
+  right.setAttribute("aria-label", "向右滚动规则");
+  function overflow() {
+    const max = rule.scrollWidth - rule.clientWidth;
+    left.hidden = right.hidden = !(max > 1);
+    left.disabled = !(rule.scrollLeft > 1);
+    right.disabled = !(rule.scrollLeft < max - 1);
+  }
+  rule.addEventListener("scroll", overflow);
+  const resize = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(overflow);
+  resize?.observe(rule);
+  ruleStrip.append(left, rule, right);
   const state = el("select");
   state.setAttribute("aria-label", "筛选业务状态");
   const all = el("option", "全部状态");
@@ -107,23 +118,21 @@ export function mountBusinessTasksView(
     option.value = value;
     state.append(option);
   }
-  const selectedRule = () => (rule.hidden ? ruleName.value : rule.value);
   const filter = () =>
     controller.setFilter({
-      ...(selectedRule() ? { rule: selectedRule() } : {}),
-      ...(controller.kind === "task" && state.value ? { state: state.value as (typeof BUSINESS_STATES)[number] } : {}),
+      ...(chosenRule ? { rule: chosenRule } : {}),
+      ...(state.value ? { state: state.value as (typeof BUSINESS_STATES)[number] } : {}),
     });
-  function switchKind(kind: BusinessTaskItem["kind"]) {
-    state.value = "";
-    controller.setKind(kind, { ...(selectedRule() ? { rule: selectedRule() } : {}) });
+  function choose(name: string, focus = false) {
+    chosenRule = name;
+    filter();
+    const target = ruleButtons.get(name);
+    if (focus) target?.focus();
+    target?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
   }
-  rule.addEventListener("change", filter);
-  ruleName.addEventListener("change", filter);
   state.addEventListener("change", filter);
-  const filters = el("div", "", "tasks-filters");
-  filters.append(rule, ruleName, state);
   const toolbar = el("div", "", "business-list-toolbar");
-  toolbar.append(entrances, filters);
+  toolbar.append(ruleStrip, state);
   const status = el("p", "", "rules-status");
   status.setAttribute("role", "status");
   const previous = button("上一页", () => controller.previous()),
@@ -393,24 +402,50 @@ export function mountBusinessTasksView(
     return area;
   }
   function update() {
-    tasksTab.disabled = controller.kind === "task" || controller.compatibility;
-    legacyTab.disabled = controller.kind === "legacy";
-    const chosen = selectedRule();
-    const names = controller.rules;
-    rule.hidden = names.length === 0;
-    ruleName.hidden = !rule.hidden;
-    ruleName.value = chosen;
-    rule.replaceChildren();
-    const anyRule = el("option", "全部规则");
-    anyRule.value = "";
-    rule.append(anyRule);
-    for (const name of [...new Set([...names, ...(chosen ? [chosen] : [])])]) {
-      const option = el("option", name);
-      option.value = name;
-      rule.append(option);
+    const names = [...new Set([...controller.rules, ...(chosenRule ? [chosenRule] : [])])].sort();
+    const signature = JSON.stringify(names);
+    if (signature !== rulesSignature || !ruleButtons.size) {
+      rulesSignature = signature;
+      const offset = rule.scrollLeft;
+      const focusedName = [...ruleButtons].find(([, node]) => node === document.activeElement)?.[0];
+      const previousButtons = new Map(ruleButtons);
+      ruleButtons.clear();
+      rule.replaceChildren();
+      for (const name of ["", ...names]) {
+        const existing = previousButtons.get(name);
+        if (existing) {
+          ruleButtons.set(name, existing);
+          rule.append(existing);
+          continue;
+        }
+        const tab = button(name || "全部规则", () => choose(name));
+        tab.title = name || "全部规则";
+        tab.setAttribute("role", "tab");
+        tab.setAttribute("aria-label", name || "全部规则");
+        tab.addEventListener("keydown", (event) => {
+          const values = [...ruleButtons.keys()];
+          const index = values.indexOf(name);
+          let next = index;
+          if (event.key === "ArrowRight") next = (index + 1) % values.length;
+          else if (event.key === "ArrowLeft") next = (index - 1 + values.length) % values.length;
+          else if (event.key === "Home") next = 0;
+          else if (event.key === "End") next = values.length - 1;
+          else return;
+          event.preventDefault();
+          if (controller.rulesSupported) choose(values[next], true);
+        });
+        ruleButtons.set(name, tab);
+        rule.append(tab);
+      }
+      if (focusedName !== undefined) (ruleButtons.get(focusedName) ?? ruleButtons.get(""))?.focus();
+      rule.scrollLeft = offset;
     }
-    rule.value = chosen;
-    state.hidden = controller.kind === "legacy";
+    for (const [name, tab] of ruleButtons) {
+      tab.setAttribute("aria-selected", String(name === chosenRule));
+      tab.tabIndex = name === chosenRule ? 0 : -1;
+      tab.disabled = !!name && !controller.rulesSupported;
+    }
+    overflow();
     const open = controller.selectedKey !== null;
     if (!open && detailWasOpen) pendingScroll = true;
     if (open !== detailWasOpen) {
@@ -432,10 +467,12 @@ export function mountBusinessTasksView(
           : controller.hasMore
             ? "本页暂无匹配项，可以翻到下一页。"
             : "没有符合条件的任务。";
+    if (!controller.error && controller.upgradeMessage) status.textContent = controller.upgradeMessage;
     status.hidden = !status.textContent;
     previous.disabled = controller.busy || controller.pageNumber === 1;
     pageLabel.textContent = `第 ${controller.pageNumber} 页`;
     more.disabled = controller.busy || !controller.hasMore;
+    const listScroll = options.scrollHost?.scrollTop;
     list.replaceChildren();
     for (const task of controller.items) {
       const card = el("li", "", "tasks-run-card");
@@ -493,6 +530,7 @@ export function mountBusinessTasksView(
       card.append(openDetail);
       list.append(card);
     }
+    if (!open && listScroll !== undefined && options.scrollHost) options.scrollHost.scrollTop = listScroll;
     if (!open && pendingScroll && !controller.busy) {
       if (options.scrollHost) options.scrollHost.scrollTop = scroll;
       pendingScroll = false;
@@ -830,5 +868,10 @@ export function mountBusinessTasksView(
       update();
     },
     update,
+    dispose() {
+      resize?.disconnect();
+      clearTimeout(polling);
+      history.select(null);
+    },
   };
 }

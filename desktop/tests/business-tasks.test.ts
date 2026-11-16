@@ -179,77 +179,31 @@ const legacyRun = {
   truncated: false,
 };
 // The old-hub adapter must pass rule filtering to its server instead of filtering a returned page.
-test("legacy compatibility forwards rule to the bounded execution query", async () => {
-  const controller = createRendererBusinessTasks(
+test("unsupported hub never calls legacy list or detail", async () => {
+  let legacyReads = 0;
+  const c = createRendererBusinessTasks(
     {
       businessTasksRead: async () => ({ ok: false, error: "unsupported" }),
-      taskList: async (request) => {
-        assert.deepEqual(request.input, { rule: "规则 & 全名", limit: 20 });
-        return { version: 1, ok: true, data: { items: [], hasMore: false, nextBefore: null } } as never;
+      taskList: async () => {
+        legacyReads++;
+        return undefined as never;
       },
-      taskDetail: async () => undefined as never,
+      taskDetail: async () => {
+        legacyReads++;
+        return undefined as never;
+      },
     },
     () => {},
   );
-  controller.setFilter({ rule: "规则 & 全名" });
-  for (let i = 0; i < 12; i++) await Promise.resolve();
-  assert.equal(controller.compatibility, true);
-  assert.equal(controller.error, "");
-  controller.dispose();
-});
-test("old hub native run queries enter the unified legacy detail without inventing completion or missing data", async () => {
-  const controller = createRendererBusinessTasks(
-    {
-      businessTasksRead: async () => ({ ok: false, error: "unsupported" }),
-      taskList: async (request) => {
-        assert.equal(request.operation, "list");
-        return { version: 1, ok: true, data: { items: [legacyRun], hasMore: false, nextBefore: null } } as never;
-      },
-      taskDetail: async () =>
-        ({
-          version: 1,
-          ok: true,
-          data: {
-            run: legacyRun,
-            association: { kind: "unavailable" },
-            events: {
-              items: [
-                {
-                  id: 3,
-                  source: "local",
-                  type: "task.new",
-                  subject: "",
-                  summary: "已记录触发标题",
-                  detail: "已记录的本轮触发详情",
-                  receivedAt: null,
-                  truncated: false,
-                },
-              ],
-              hasMore: false,
-              nextCursor: null,
-            },
-            cards: { items: [], hasMore: false, nextCursor: null },
-            relatedRuns: { items: [], hasMore: false, nextCursor: null },
-          },
-        }) as never,
-    },
-    () => {},
-  );
-  controller.refresh();
-  for (let i = 0; i < 12; i++) await Promise.resolve();
-  assert.equal(controller.kind, "legacy");
-  assert.equal(controller.items[0]?.key, "legacy:7");
-  assert.equal(controller.items[0]?.origin.title, "已记录触发标题");
-  assert.equal(controller.items[0]?.origin.detail, "已记录的本轮触发详情");
-  controller.open("legacy:7");
-  for (let i = 0; i < 12; i++) await Promise.resolve();
-  assert.equal(controller.detail?.task.origin.detail, "已记录的本轮触发详情");
-  assert.equal(controller.detail?.task.origin.availability, "recorded");
-  assert.equal(controller.detail?.task.latestProgress, "本轮实际执行结果");
-  assert.equal(controller.detail?.task.finalResult, null);
-  assert.notEqual(controller.detail?.task.state, "completed");
-  assert.equal(controller.detail?.task.execution?.state, "done");
-  controller.dispose();
+  c.refresh();
+  await flush();
+  assert.equal(c.error, "unsupported");
+  assert.equal(legacyReads, 0);
+  c.open("legacy:7");
+  await flush();
+  assert.equal(c.selectedKey, null);
+  assert.equal(legacyReads, 0);
+  c.dispose();
 });
 const flush = async () => {
   await Promise.resolve();
@@ -274,9 +228,15 @@ test("business transport binds paths, global filters and timeline page, and old 
     },
   });
   assert.equal(
-    (await source.read({ operation: "list", input: { q: "原始需求", state: "queued", rule: "规则 & 全名" } })).ok,
+    (
+      await source.read({
+        operation: "list",
+        input: { q: "原始需求", state: "queued", rule: "规则 & 全名", scope: "business" },
+      })
+    ).ok,
     true,
   );
+  assert.equal(new URL(urls[0]).searchParams.get("scope"), "business");
   assert.equal(new URL(urls[0]).searchParams.get("rule"), "规则 & 全名");
   assert.equal(new URL(urls[0]).searchParams.get("q"), "原始需求");
   assert.equal(new URL(urls[0]).searchParams.get("state"), "queued");
@@ -508,11 +468,15 @@ test("global filters fence a late prior query", async () => {
   );
   controller.refresh();
   controller.setFilter({ q: "原始需求", state: "running" });
-  assert.deepEqual(calls[1], { operation: "list", input: { q: "原始需求", state: "running", limit: 20 } });
-  resolvers[1](list("running"));
-  await flush();
+  assert.equal(calls.length, 1);
   resolvers[0](list("queued"));
-  await flush();
+  for (let i = 0; i < 6; i++) await flush();
+  assert.deepEqual(calls[1], {
+    operation: "list",
+    input: { q: "原始需求", state: "running", scope: "business", limit: 20 },
+  });
+  resolvers[1](list("running"));
+  for (let i = 0; i < 6; i++) await flush();
   assert.equal(controller.items[0].state, "running");
 });
 
@@ -572,39 +536,33 @@ test("leaving a detail fences its late response and unsupported never becomes ta
 });
 
 // Prevent identity switches from hiding later pages or reusing a prior filter cursor.
-test("task and legacy entrances page independently without guessing identity", async () => {
-  const legacy = { ...task("active"), key: "legacy:8", kind: "legacy", id: 8, legacyNotice: "旧执行" };
-  const calls: any[] = [];
-  const controller = createRendererBusinessTasks(
+test("unconfirmed mixed pages never scan or pretend to have global rules", async () => {
+  let reads = 0;
+  const c = createRendererBusinessTasks(
     {
-      businessTasksRead: async (request) => {
-        calls.push(request);
+      businessTasksRead: async () => {
+        reads++;
         return {
           ok: true,
-          data: request.input.before
-            ? { items: [task()], hasMore: false, nextBefore: null }
-            : { items: [legacy], hasMore: true, nextBefore: "legacy:8" },
+          data: {
+            items: [{ ...task(), key: "legacy:8", kind: "legacy", id: 8, legacyNotice: "旧执行" }],
+            rules: ["old"],
+            hasMore: true,
+            nextBefore: "legacy:8",
+          },
         } as never;
       },
     },
     () => {},
   );
-  controller.refresh();
-  for (let i = 0; i < 5; i++) await flush();
-  assert.deepEqual(
-    controller.items.map((x) => x.key),
-    ["task:1"],
-  );
-  assert.equal(calls[1].input.before, "legacy:8");
-  const switchedAt = calls.length;
-  controller.setKind("legacy");
-  for (let i = 0; i < 5; i++) await flush();
-  assert.deepEqual(
-    controller.items.map((x) => x.key),
-    ["legacy:8"],
-  );
-  assert.equal(calls[switchedAt].input.before, undefined);
-  assert.equal(controller.pageNumber, 1);
+  c.refresh();
+  for (let i = 0; i < 6; i++) await flush();
+  assert.equal(reads, 1);
+  assert.equal(c.items.length, 0);
+  assert.deepEqual(c.rules, []);
+  assert.equal(c.rulesSupported, false);
+  assert.match(c.upgradeMessage, /升级/);
+  c.dispose();
 });
 
 // A changed detail cannot leave a stale row in an authoritative state-filtered list.
@@ -635,6 +593,66 @@ test("returning from detail re-queries the original filter instead of patching s
   await flush();
   controller.back();
   await flush();
-  assert.deepEqual(calls.at(-1), { operation: "list", input: { q: "需求", state: "running", limit: 20 } });
+  assert.deepEqual(calls.at(-1), {
+    operation: "list",
+    input: { q: "需求", state: "running", limit: 20 },
+  });
   assert.equal(controller.items.length, 0);
+});
+
+// Missing scope cannot license a global rule directory; rejecting scope must never reach legacy IO.
+test("old business request rejection retries only the original business endpoint", async () => {
+  const queries: any[] = [];
+  const c = createRendererBusinessTasks(
+    {
+      businessTasksRead: async (r) => {
+        queries.push(r.input);
+        return "scope" in r.input ? { ok: false, error: "invalid" } : (list() as never);
+      },
+      taskList: async () => {
+        throw new Error("legacy forbidden");
+      },
+    },
+    () => {},
+  );
+  c.setFilter({ state: "active", rule: "old" });
+  for (let i = 0; i < 8; i++) await flush();
+  assert.deepEqual(queries, [
+    { state: "active", rule: "old", scope: "business", limit: 20 },
+    { state: "active", limit: 20 },
+  ]);
+  assert.equal(c.items.length, 1);
+  assert.equal(c.rulesSupported, false);
+  assert.match(c.upgradeMessage, /混合页/);
+  c.dispose();
+});
+
+// Old mixed cursors remain opaque; business-only validation must not reject their next page.
+test("old mixed legacy cursor pages without scope or unconfirmed rule", async () => {
+  const queries: any[] = [];
+  const c = createRendererBusinessTasks(
+    {
+      businessTasksRead: async (r) => {
+        queries.push(r.input);
+        return {
+          ok: true,
+          data: {
+            items: [{ ...task(), key: "legacy:8", kind: "legacy", id: 8, legacyNotice: "旧执行" }],
+            hasMore: true,
+            nextBefore: "legacy:8",
+          },
+        } as never;
+      },
+    },
+    () => {},
+  );
+  c.refresh();
+  for (let i = 0; i < 6; i++) await flush();
+  c.more();
+  for (let i = 0; i < 6; i++) await flush();
+  assert.deepEqual(queries[1], { limit: 20, before: "legacy:8" });
+  c.setFilter({ rule: "cannot-confirm", state: "active" });
+  for (let i = 0; i < 6; i++) await flush();
+  assert.equal(queries.at(-1).rule, undefined);
+  c.dispose();
 });

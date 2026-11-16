@@ -157,6 +157,9 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <text x="324" y="414.5" class="n" text-anchor="middle">5</text>
 <text x="232" y="415" class="l" text-anchor="end">全答或正式关闭，有答才续办</text>
 
+<!-- 客户端只读业务查询，不改调度或历史事实 -->
+<text x="480" y="566" class="s" text-anchor="middle">桌面客户端：仅业务任务 · 全量规则横向导航 + 状态 · 本人只读查询后分页 · 详情保留关联执行</text>
+
 <!-- 底部：交付流水线 -->
 <rect class="plug" x="22" y="584" width="916" height="72" rx="14"/>
 <text x="40" y="614" class="h2">代码交付流水线</text>
