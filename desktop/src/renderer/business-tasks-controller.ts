@@ -222,7 +222,9 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
         ["cancelling", "cancelled"].includes(detail.task.state)
       )
         return;
-      if (request.action === "completeTask" && detail.task.state === "completed") return;
+      if (!detail.actions) return;
+      if (request.action === "cancelTask" && !detail.actions.cancelTask) return;
+      if (request.action === "completeTask" && !detail.actions.completeTask) return;
     } else if ("cardId" in request) {
       if (["cancelling", "cancelled"].includes(detail.task.state)) return;
       if (!detail.task.decisions.items.some((c) => c.id === request.cardId && c.state === "open" && c.kind === "ask"))

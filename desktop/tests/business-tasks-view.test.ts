@@ -106,7 +106,11 @@ async function withView(
   action: (controller: ReturnType<typeof createRendererBusinessTasks>, root: Element) => Promise<void>,
   shown: unknown = item,
   runDetail?: unknown,
-  options: { paged?: boolean; scrollHost?: HTMLElement } = {},
+  options: {
+    paged?: boolean;
+    scrollHost?: HTMLElement;
+    actionAuthority?: "missing" | "execution" | "cards" | "timers" | "hold";
+  } = {},
 ) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
   Object.defineProperty(globalThis, "document", {
@@ -135,7 +139,23 @@ async function withView(
                     hasMore: !!options.paged,
                     nextBefore: options.paged ? "task:20" : null,
                   }
-                : { task: shown, timeline: { items: [], hasMore: false, nextBefore: null } },
+                : {
+                    task: shown,
+                    timeline: { items: [], hasMore: false, nextBefore: null },
+                    ...(options.actionAuthority === "missing"
+                      ? {}
+                      : {
+                          actions: {
+                            cancelTask: !["completed", "cancelling", "cancelled"].includes(
+                              (shown as typeof item).state,
+                            ),
+                            completeTask:
+                              !options.actionAuthority &&
+                              !["completed", "cancelling", "cancelled"].includes((shown as typeof item).state),
+                            completionBlocker: options.actionAuthority ?? null,
+                          },
+                        }),
+                  },
           }) as never,
         taskDetail: async () => ({ version: 1, ok: true, data: runDetail }) as never,
         taskAction: () => new Promise(() => {}),
@@ -153,6 +173,38 @@ async function withView(
     else Reflect.deleteProperty(globalThis, "document");
   }
 }
+// Prevent duplicated task actions, answered questions in the header, and substituted execution titles.
+test("detail header separates return, original title and bounded open-decision overview from action forms", async () => {
+  await withView(async (controller, root) => {
+    controller.open("task:1");
+    await flush();
+    const head = all(root).find((x) => x.className === "tasks-detail-head")!;
+    assert.equal(head.children[0].className, "task-back-button");
+    assert.equal(head.children[1].className, "business-detail-heading");
+    assert.equal(head.children[1].children[0].textContent, "原始任务");
+    const overview = all(head).find((x) => x.className === "business-decision-overview")!;
+    assert.match(overview.textContent, /选择记录范围/);
+    assert.match(overview.textContent, /其他问题/);
+    assert.doesNotMatch(overview.textContent, /共|必须保留|完整记录/);
+    const bar = all(root).find((x) => x.className === "business-detail-actions")!;
+    assert.equal(all(bar).filter((x) => x.tag === "textarea").length, 0);
+    for (const label of ["本人确认完成", "取消任务"])
+      assert.equal(all(bar).filter((x) => x.tag === "button" && x.textContent === label).length, 1);
+    assert.doesNotMatch(head.textContent, /时间未记录|需确认/);
+  });
+});
+test("answered cards never become a header decision and empty titles retain business identity", async () => {
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      await flush();
+      const head = all(root).find((x) => x.className === "tasks-detail-head")!;
+      assert.match(head.textContent, /未命名任务 #1/);
+      assert.equal(all(head).find((x) => x.className === "business-decision-overview")!.hidden, true);
+    },
+    { ...item, origin: { ...item.origin, title: "" }, decisions: { items: [], hasMore: false } },
+  );
+});
 // Prevent duplicate detail controls and stale or inaccessible card navigation after refresh.
 test("task title is the keyboard entrance and card whitespace opens the exact task after refresh", async () => {
   await withView(async (controller, root) => {
@@ -248,13 +300,57 @@ test("owner completion opens a reason form without sending and blocks duplicate 
       assert.equal(controller.actionBusy, false);
       confirm.fire();
       assert.equal(controller.actionBusy, false);
-      form.children.find((x) => x.tag === "textarea")!.value = "本人已验收";
+      const reason = form.children.find((x) => x.tag === "textarea")!;
+      reason.value = "本人已验收";
+      reason.listeners.get("input")?.();
       confirm.fire();
       assert.equal(controller.actionBusy, true);
       controller.open("task:2");
       assert.equal(controller.selectedKey, "task:1", "navigation cannot leave an in-flight write");
       assert.equal(confirm.disabled, true);
       assert.equal(start.disabled, true);
+    },
+    { ...item, state: "active", decisions: { items: [], hasMore: false } },
+  );
+});
+// Prevent absent capabilities or bounded previews from enabling an owner completion write.
+test("verified completion blockers have nearby explanations and missing authority grants no task actions", async () => {
+  for (const blocker of ["missing", "execution", "cards", "timers", "hold"] as const) {
+    await withView(
+      async (controller, root) => {
+        controller.open("task:1");
+        await flush();
+        const explanation = all(root).find((x) => x.className === "business-operation-explanation")!;
+        assert.equal(explanation.hidden, false);
+        const start = all(root).find((x) => x.tag === "button" && x.textContent === "本人确认完成")!;
+        assert.equal(start.disabled, true);
+        if (blocker === "missing") assert.ok(all(root).some((x) => x.hidden && x.children.includes(start)));
+        controller.submitAction({ version: 1, action: "completeTask", taskId: 1, input: { reason: "不能绕过" } });
+        assert.equal(controller.actionBusy, false);
+      },
+      { ...item, state: "active", decisions: { items: [], hasMore: false } },
+      undefined,
+      { actionAuthority: blocker },
+    );
+  }
+});
+// Prevent terminal task cancellation and blank reasons from exposing a writable action.
+test("completed hides cancellation and empty completion/cancellation reasons cannot submit", async () => {
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      await flush();
+      const start = all(root).find((x) => x.tag === "button" && x.textContent === "取消任务")!;
+      assert.ok(all(root).some((x) => x.hidden && x.children.includes(start)));
+    },
+    { ...item, state: "completed", decisions: { items: [], hasMore: false } },
+  );
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      await flush();
+      for (const label of ["确认取消整件任务", "确认完成任务"])
+        assert.equal(all(root).find((x) => x.tag === "button" && x.textContent === label)!.disabled, true);
     },
     { ...item, state: "active", decisions: { items: [], hasMore: false } },
   );
@@ -284,6 +380,7 @@ test("whole-task cancel asks explicitly, works without run diagnosis and blocks 
     assert.equal(controller.actionBusy, false, "opening confirmation must not send a request");
     assert.ok(root.textContent.includes("不算成功完成"));
     reason.value = "本人不再需要";
+    reason.listeners.get("input")?.();
     confirm.fire();
     assert.equal(controller.actionBusy, true, "cancelling a task must not depend on a latest run diagnostic");
     assert.equal(confirm.disabled, true);
@@ -447,10 +544,10 @@ test("prototype DOM puts current actions before tabs, hides correction and confi
         for (let i = 0; i < 4; i++) await flush();
         const detail = all(root).find((x) => x.className === "tasks-detail-page")!;
         assert.deepEqual(
-          detail.children.slice(0, 3).map((x) => x.className),
-          ["tasks-detail-head", "business-current", "task-detail-tabs"],
+          detail.children.slice(0, 4).map((x) => x.className),
+          ["tasks-detail-head", "business-detail-actions", "business-current", "task-detail-tabs"],
         );
-        const current = detail.children[1];
+        const current = detail.children[2];
         const decisions = all(current).find((x) => x.className === "business-decisions")!;
         assert.equal(decisions.hidden, true);
         const memo = all(current).find((x) => x.className === "business-correction")!;

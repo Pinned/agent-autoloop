@@ -280,7 +280,11 @@ test("confirmed owner completion rereads detail and the active-filter list; term
           data:
             request.operation === "list"
               ? { items: completed ? [] : [item], hasMore: false, nextBefore: null }
-              : { task: item, timeline: { items: [], hasMore: false, nextBefore: null } },
+              : {
+                  task: item,
+                  timeline: { items: [], hasMore: false, nextBefore: null },
+                  actions: { cancelTask: !completed, completeTask: !completed, completionBlocker: null },
+                },
         } as never;
       },
       taskAction: async () => {
