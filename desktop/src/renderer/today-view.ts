@@ -184,7 +184,8 @@ export function mountTodayView(
     refresh.disabled = control.busy;
     refresh.textContent = control.busy ? "刷新中…" : "刷新";
     goWorkers.hidden = state.kind !== "unavailable";
-    error.hidden = true;
+    error.hidden = !control.error;
+    error.textContent = control.error;
     content.hidden = state.kind !== "ready";
     content.replaceChildren();
     stats.hidden = state.kind !== "ready";

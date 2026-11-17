@@ -1,3 +1,4 @@
+// Prevent hidden-page polling, stale foreground data, overlapping reads and loss of cached data on failure.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
@@ -65,6 +66,59 @@ function fixture() {
     fail: (reason: unknown) => gates[gates.length - 1].reject(reason),
   };
 }
+test("foreground polling pauses in background and resumes only when stale", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 10000 });
+  const f = fixture();
+  f.controller.setActive(true);
+  assert.equal(f.calls(), 1);
+  t.mock.timers.tick(10000);
+  assert.equal(f.calls(), 1);
+  f.answer(readyResponse(hubPayload()));
+  await flush();
+  f.controller.setActive(false);
+  t.mock.timers.tick(2000);
+  f.controller.setActive(true);
+  assert.equal(f.calls(), 1);
+  t.mock.timers.tick(2999);
+  assert.equal(f.calls(), 1);
+  t.mock.timers.tick(1);
+  assert.equal(f.calls(), 2);
+  f.controller.setActive(false);
+  f.answer(readyResponse(hubPayload()));
+  await flush();
+  t.mock.timers.tick(20000);
+  assert.equal(f.calls(), 2);
+  f.controller.setActive(true);
+  assert.equal(f.calls(), 3);
+  f.controller.dispose();
+  f.answer(readyResponse(hubPayload()));
+  await flush();
+  t.mock.timers.tick(20000);
+  assert.equal(f.calls(), 3);
+});
+
+test("failed automatic reads preserve data, show an error and retry without a tight loop", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 10000 });
+  const f = fixture();
+  f.controller.setActive(true);
+  f.answer(readyResponse(hubPayload()));
+  await flush();
+  const previous = f.controller.state;
+  t.mock.timers.tick(5000);
+  f.fail(new Error("offline"));
+  await flush();
+  assert.equal(f.controller.state, previous);
+  assert.equal(f.controller.error, DESKTOP_TODAY_MESSAGES.error);
+  t.mock.timers.tick(4999);
+  assert.equal(f.calls(), 2);
+  t.mock.timers.tick(1);
+  assert.equal(f.calls(), 3);
+  f.answer(readyResponse(hubPayload()));
+  await flush();
+  assert.equal(f.controller.error, "");
+  f.controller.dispose();
+});
+
 type Fixture = ReturnType<typeof fixture>;
 const messageOf = (state: TodayState): string => {
   assert.ok(state.kind !== "loading" && state.kind !== "ready");

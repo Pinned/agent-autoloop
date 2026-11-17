@@ -95,6 +95,7 @@ function syncShell() {
   });
   const wasReconnect = shell === "reconnect";
   shell = next;
+  today.setActive(next === "workspace" && setupView === undefined && currentPage === "today" && !document.hidden);
   document.documentElement.dataset.shell = next;
   if (next === "reconnect" && reconnectView === undefined) {
     reconnectView = mountReconnectView(main, {
@@ -348,12 +349,14 @@ const tasksPage = mountBusinessTasksView(businessTasks, {
   },
 });
 window.addEventListener("beforeunload", () => {
+  today.dispose();
   tasksPage.dispose();
   businessTasks.dispose();
 });
 // The running runtime's role is what this machine is now; a configured-but-stopped machine still
 // knows what it was set up as, and only then may the launch record stand in for it.
 document.addEventListener("visibilitychange", () => {
+  today.setActive(currentPage === "today" && shell === "workspace" && !document.hidden);
   businessTasks.setActive(currentPage === "tasks" && currentRole() !== "worker" && !document.hidden);
 });
 function currentRole(): Role {
@@ -499,6 +502,7 @@ function render(id: string, focus = true) {
   localSummaryView = undefined;
   renderedFlavor = isDispatchTask ? "dispatch-task" : isAutomationEntry ? "automation" : pageFlavor(role, id);
   currentPage = id;
+  today.setActive(id === "today" && shell === "workspace" && !document.hidden);
   businessTasks.setActive(id === "tasks" && currentRole() !== "worker" && !document.hidden);
   main.setAttribute("aria-labelledby", "page-title");
   const page = isDispatchTask
@@ -554,7 +558,7 @@ function render(id: string, focus = true) {
       () => render("workers"),
       () => render("tasks"),
     );
-    today.refresh();
+    todayView.update();
   } else if (id === "automation" || id === "automation-entry") {
     // The hub's own entries at their current rules version; no mock rules and no background triggers.
     // The entry editor is a subpage of this page: same app-level view, the page head says which

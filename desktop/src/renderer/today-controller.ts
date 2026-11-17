@@ -21,6 +21,20 @@ export type TodayState =
 export function createRendererToday(bridge: TodayBridge, onChange: () => void) {
   let state: TodayState = Object.freeze({ kind: "loading" });
   let flight = false;
+  let active = false;
+  let disposed = false;
+  let lastSuccess: number | undefined;
+  let error = "";
+  let poll: ReturnType<typeof setTimeout> | undefined;
+  const interval = 5000;
+
+  function schedule(delay = interval) {
+    clearTimeout(poll);
+    if (!active || disposed || flight) return;
+    poll = setTimeout(() => {
+      if (active && !disposed && !flight) void begin();
+    }, delay);
+  }
 
   function notify() {
     // Rendering is not part of the bridge transaction, even if a listener throws.
@@ -51,6 +65,7 @@ export function createRendererToday(bridge: TodayBridge, onChange: () => void) {
   }
   function finish(value: unknown, rejected: boolean) {
     flight = false;
+    if (disposed) return;
     let response: DesktopTodayResponse | null = null;
     if (!rejected) {
       try {
@@ -59,12 +74,19 @@ export function createRendererToday(bridge: TodayBridge, onChange: () => void) {
         // Malformed results are display failures, never unvalidated data.
       }
     }
-    state = response
-      ? frozenState(response.state)
-      : Object.freeze({ kind: "error", message: DESKTOP_TODAY_MESSAGES.error });
+    const failed = !response || response.state.kind === "error";
+    error = failed ? DESKTOP_TODAY_MESSAGES.error : "";
+    if (!failed || state.kind !== "ready") {
+      state = response
+        ? frozenState(response.state)
+        : Object.freeze({ kind: "error", message: DESKTOP_TODAY_MESSAGES.error });
+    }
+    if (!failed) lastSuccess = Date.now();
+    schedule();
     notify();
   }
   async function begin() {
+    clearTimeout(poll);
     flight = true;
     let result: Promise<unknown>;
     try {
@@ -88,9 +110,26 @@ export function createRendererToday(bridge: TodayBridge, onChange: () => void) {
     get busy(): boolean {
       return flight;
     },
-    /** Page entries and runtime-start transitions both re-read; concurrent calls collapse into one. */
+    get error(): string {
+      return error;
+    },
+    setActive(next: boolean): void {
+      if (disposed || active === next) return;
+      active = next;
+      clearTimeout(poll);
+      if (!active || flight) return;
+      const remaining = lastSuccess === undefined ? 0 : interval - (Date.now() - lastSuccess);
+      if (remaining <= 0) void begin();
+      else schedule(remaining);
+    },
+    dispose(): void {
+      disposed = true;
+      active = false;
+      clearTimeout(poll);
+    },
+    /** Explicit refreshes bypass freshness, but never overlap another read. */
     refresh(): void {
-      if (flight) return;
+      if (flight || disposed) return;
       void begin();
     },
   };
