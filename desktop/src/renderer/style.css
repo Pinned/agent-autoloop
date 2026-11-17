@@ -1282,6 +1282,22 @@ main:has(#task-subpage:not([hidden])) {
   grid-column: 1 / -1;
   margin: 0;
 }
+.business-tasks-panel .tasks-detail-head > .business-header-description {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+  color: var(--ink);
+}
+.business-header-description[data-expanded="false"] {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+.business-description-toggle {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
 .business-tasks-panel .task-back-button {
   align-self: center;
   white-space: nowrap;

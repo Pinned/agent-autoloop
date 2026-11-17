@@ -24,6 +24,8 @@ class Element {
   scrollLeft = 0;
   scrollWidth = 0;
   clientWidth = 0;
+  clientHeight = 60;
+  scrollHeight = 60;
   attributes = new Map<string, string>();
   scrollIntoView() {
     this.focused = true;
@@ -174,6 +176,33 @@ async function withView(
   }
 }
 // Prevent duplicated task actions, answered questions in the header, and substituted execution titles.
+// Prevent header previews from replacing original requirements with progress, losing text on collapse,
+// or offering expansion for text that already fits within three rendered lines.
+test("header description preserves original text and expands only on rendered overflow", async () => {
+  await withView(async (controller, root) => {
+    controller.open("task:1");
+    await flush();
+    const header = all(root).find((x) => x.className === "tasks-detail-head")!;
+    const preview = all(header).find((x) => x.id === "business-header-description")!;
+    const toggle = all(header).find((x) => x.attributes.get("aria-controls") === preview.id)!;
+    assert.equal(preview.textContent, item.origin.detail);
+    assert.ok(header.children.indexOf(preview) < header.children.findIndex((x) => x.className === "muted"));
+    assert.equal(toggle.hidden, true);
+    preview.scrollHeight = 120;
+    controller.refreshDetail();
+    await flush();
+    assert.equal(toggle.hidden, false);
+    assert.equal(toggle.attributes.get("aria-expanded"), "false");
+    toggle.fire();
+    assert.equal(toggle.attributes.get("aria-expanded"), "true");
+    assert.equal(toggle.textContent, "收起");
+    assert.equal(preview.textContent, item.origin.detail);
+    toggle.fire();
+    assert.equal(toggle.attributes.get("aria-expanded"), "false");
+    assert.equal(preview.textContent, item.origin.detail);
+  });
+});
+
 test("detail header separates return, original title and bounded open-decision overview from action forms", async () => {
   await withView(async (controller, root) => {
     controller.open("task:1");

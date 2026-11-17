@@ -155,7 +155,29 @@ export function mountBusinessTasksView(
   detailHeading.append(title, badge);
   const decisionOverview = el("p", "", "business-decision-overview");
   decisionOverview.setAttribute("role", "status");
-  detailHead.append(back, detailHeading, metadata, decisionOverview);
+  const headerDescription = el("p", "", "business-header-description");
+  headerDescription.id = "business-header-description";
+  let descriptionKey = "",
+    descriptionExpanded = false;
+  const descriptionToggle = button("展开全文", () => {
+    descriptionExpanded = !descriptionExpanded;
+    measureDescription();
+  });
+  descriptionToggle.className = "business-description-toggle";
+  descriptionToggle.setAttribute("aria-controls", headerDescription.id);
+  function measureDescription() {
+    // Measure the collapsed layout even when expanded; line wrapping depends on the actual width.
+    headerDescription.dataset.expanded = "false";
+    const overflows = headerDescription.scrollHeight > headerDescription.clientHeight;
+    if (!overflows) descriptionExpanded = false;
+    headerDescription.dataset.expanded = String(descriptionExpanded);
+    descriptionToggle.hidden = headerDescription.hidden || !overflows;
+    descriptionToggle.textContent = descriptionExpanded ? "收起" : "展开全文";
+    descriptionToggle.setAttribute("aria-expanded", String(descriptionExpanded));
+  }
+  const descriptionResize = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measureDescription);
+  descriptionResize?.observe(headerDescription);
+  detailHead.append(back, detailHeading, headerDescription, descriptionToggle, metadata, decisionOverview);
   const actionBar = el("section", "", "business-detail-actions"),
     roundOperations = el("div", "", "business-round-operations"),
     taskOperations = el("div", "", "business-task-operations");
@@ -675,6 +697,12 @@ export function mountBusinessTasksView(
     progress.hidden = decisions.hidden = timeline.hidden = diagnosis.hidden = false;
     original.hidden = tab !== "original";
     title.textContent = taskTitle(task);
+    const nextDescriptionKey = `${task.key}:${task.origin.detail}`;
+    if (descriptionKey !== nextDescriptionKey) descriptionExpanded = false;
+    descriptionKey = nextDescriptionKey;
+    headerDescription.hidden = task.origin.availability !== "recorded" || !task.origin.detail;
+    headerDescription.textContent = headerDescription.hidden ? "" : task.origin.detail;
+    measureDescription();
     badge.textContent = taskState(task);
     badge.dataset.state = task.kind === "legacy" ? (task.execution?.state ?? "unknown") : task.state;
     metadata.textContent = `任务 #${task.id} · ${task.rule}${task.updatedAt ? ` · 更新于 ${task.updatedAt}` : ""}${task.completion ? " · 本人确认完成" : ""}`;
@@ -989,6 +1017,7 @@ export function mountBusinessTasksView(
     update,
     dispose() {
       resize?.disconnect();
+      descriptionResize?.disconnect();
       clearTimeout(polling);
       history.select(null);
     },
