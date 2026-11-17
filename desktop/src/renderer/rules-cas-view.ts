@@ -1,5 +1,6 @@
 import { type DesktopRuleEntry } from "../../../host/desktop-rules-contract.ts";
 import type { createRendererRulesCas } from "./rules-cas-controller.ts";
+import { decodeSchedule, encodeSchedule, minuteIntervals, scheduleSummary, type Schedule } from "./cron-schedule.ts";
 
 /**
  * The editor already validated every entry, so two entries can be compared as plain data.
@@ -219,7 +220,104 @@ export function mountRulesCasView(
   const { wrap: cronWrap, input: cronInput } = field("时间表（cron）", "cron", false);
   cronWrap.className += " rule-span2";
   cronInput.setAttribute("placeholder", "cron，比如 0 9 * * *");
-  triggerGrid.append(typesWrap, cronWrap);
+  const visualWrap = document.createElement("div");
+  visualWrap.className = "rule-grid rule-span2";
+  const frequencyWrap = document.createElement("label");
+  frequencyWrap.className = "rule-field rule-span2";
+  const frequencyLabel = document.createElement("span");
+  frequencyLabel.textContent = "执行频率";
+  const frequency = document.createElement("select");
+  frequency.id = "rules-frequency";
+  for (const [value, title] of [
+    ["daily", "每天"],
+    ["weekly", "每周"],
+    ["monthly", "每月"],
+    ["interval", "每隔若干分钟"],
+    ["custom", "自定义时间表"],
+  ]) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = title;
+    frequency.append(option);
+  }
+  frequencyWrap.append(frequencyLabel, frequency);
+  const { wrap: timeWrap, input: timeInput } = field("执行时间", "time", false);
+  timeInput.setAttribute("type", "time");
+  const { wrap: dayWrap, input: dayInput } = field("每月日期", "month-day", false);
+  dayInput.setAttribute("type", "number");
+  dayInput.setAttribute("min", "1");
+  dayInput.setAttribute("max", "31");
+  const intervalWrap = document.createElement("label");
+  intervalWrap.className = "rule-field";
+  const intervalLabel = document.createElement("span");
+  intervalLabel.textContent = "分钟间隔";
+  const intervalInput = document.createElement("select");
+  intervalInput.id = "rules-interval";
+  for (const minutes of minuteIntervals) {
+    const option = document.createElement("option");
+    option.value = String(minutes);
+    option.textContent = `${minutes} 分钟`;
+    intervalInput.append(option);
+  }
+  intervalWrap.append(intervalLabel, intervalInput);
+  const weekWrap = document.createElement("div");
+  weekWrap.className = "rule-trigger-field rule-span2";
+  weekWrap.setAttribute("role", "group");
+  weekWrap.setAttribute("aria-label", "执行星期");
+  const weekLabel = document.createElement("span");
+  weekLabel.textContent = "执行星期";
+  weekWrap.append(weekLabel);
+  const weekdays = new Set<number>();
+  const weekdayButtons: HTMLButtonElement[] = [];
+  for (const day of [1, 2, 3, 4, 5, 6, 0]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.id = `rules-weekday-${day}`;
+    button.value = String(day);
+    button.textContent = `周${["日", "一", "二", "三", "四", "五", "六"][day]}`;
+    button.addEventListener("click", () => {
+      if (weekdays.has(day)) weekdays.delete(day);
+      else weekdays.add(day);
+      syncSchedule();
+    });
+    weekdayButtons.push(button);
+    weekWrap.append(button);
+  }
+  const scheduleNote = document.createElement("p");
+  scheduleNote.className = "muted rule-span2";
+  scheduleNote.setAttribute("role", "status");
+  scheduleNote.setAttribute("aria-live", "polite");
+  function readSchedule(): Schedule {
+    if (frequency.value === "interval") return { kind: "interval", minutes: Number(intervalInput.value) };
+    if (frequency.value === "weekly") return { kind: "weekly", time: timeInput.value, days: [...weekdays] };
+    if (frequency.value === "monthly") return { kind: "monthly", time: timeInput.value, day: Number(dayInput.value) };
+    return { kind: "daily", time: timeInput.value };
+  }
+  function syncSchedule() {
+    const custom = frequency.value === "custom";
+    timeWrap.hidden = custom || frequency.value === "interval";
+    dayWrap.hidden = frequency.value !== "monthly";
+    intervalWrap.hidden = frequency.value !== "interval";
+    weekWrap.hidden = frequency.value !== "weekly";
+    cronWrap.hidden = triggerInput.value !== "cron" || !custom;
+    for (const button of weekdayButtons)
+      button.setAttribute("aria-pressed", String(weekdays.has(Number(button.value))));
+    try {
+      if (custom) scheduleNote.textContent = "保留自定义时间表，按中台设置的时区执行。";
+      else {
+        encodeSchedule(readSchedule());
+        scheduleNote.textContent = scheduleSummary(readSchedule());
+      }
+    } catch (failure) {
+      scheduleNote.textContent = failure instanceof Error ? failure.message : "请核对执行时间";
+    }
+  }
+  for (const input of [frequency, timeInput, dayInput, intervalInput]) {
+    input.addEventListener("change", syncSchedule);
+    input.addEventListener("input", syncSchedule);
+  }
+  visualWrap.append(frequencyWrap, timeWrap, dayWrap, intervalWrap, weekWrap, cronWrap, scheduleNote);
+  triggerGrid.append(typesWrap, visualWrap);
   triggerGroup.append(triggerGroupTitle, triggerField, triggerGrid);
 
   // Group: execution facts. The executor is a select of the agents the read offered, the same
@@ -455,7 +553,8 @@ export function mountRulesCasView(
     for (const button of triggerButtons)
       button.setAttribute("aria-pressed", String(button.value === triggerInput.value));
     typesWrap.hidden = timed;
-    cronWrap.hidden = !timed;
+    visualWrap.hidden = !timed;
+    syncSchedule();
     triggerGroupTitle.textContent = "触发条件";
   };
   triggerInput.addEventListener("change", syncTrigger);
@@ -530,6 +629,15 @@ export function mountRulesCasView(
     syncTrigger();
     const types = bindValue(typesInput, source?.types ?? [], source?.types?.join(" ") ?? "", splitTypes);
     const cron = text(cronInput, source?.cron);
+    const initialSchedule =
+      source?.cron === undefined ? { kind: "daily" as const, time: "09:00" } : decodeSchedule(source.cron);
+    frequency.value = initialSchedule?.kind ?? "custom";
+    timeInput.value = initialSchedule && "time" in initialSchedule ? initialSchedule.time : "09:00";
+    dayInput.value = initialSchedule?.kind === "monthly" ? String(initialSchedule.day) : "1";
+    intervalInput.value = initialSchedule?.kind === "interval" ? String(initialSchedule.minutes) : "5";
+    weekdays.clear();
+    if (initialSchedule?.kind === "weekly") for (const day of initialSchedule.days) weekdays.add(day);
+    syncSchedule();
     // The executor select holds the agents the read offered; update() adds a one-off option when
     // the chosen value is not on the roster, so setting the value here is enough. An existing
     // entry keeps its executor; a fresh entry starts at the first offered agent so an untouched
@@ -575,7 +683,7 @@ export function mountRulesCasView(
         // The read sends exactly the trigger the form shows: cron for a timed entry, types for
         // an event one. Carrying both (or the hidden one's leftovers) is what the door refuses.
         const asTimed = triggerInput.value === "cron";
-        const asCron = cron();
+        const asCron = asTimed && frequency.value !== "custom" ? encodeSchedule(readSchedule()) : cron();
         const asTypes = types();
         return {
           name: name(),
@@ -853,6 +961,11 @@ export function mountRulesCasView(
       triggerInput,
       typesInput,
       cronInput,
+      frequency,
+      timeInput,
+      dayInput,
+      intervalInput,
+      ...weekdayButtons,
       toInput,
       cwdInput,
       promptInput,

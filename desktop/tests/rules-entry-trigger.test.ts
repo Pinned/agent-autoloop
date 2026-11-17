@@ -140,6 +140,8 @@ test("editing a timed entry shows the cron, saves it, and never sends types", ()
     const editButtons = all(f.body).filter((node) => node.tag === "button" && node.textContent === "编辑");
     editButtons[0].click();
     assert.equal(f.id("cron").value, "0 9 * * *");
+    f.id("frequency").value = "custom";
+    f.id("frequency").emit("change");
     f.id("cron").value = "30 8 * * *";
     f.form().emit("submit");
     f.button("保存到本机中台").click();
@@ -147,6 +149,70 @@ test("editing a timed entry shows the cron, saves it, and never sends types", ()
     const saved = (f.inputs[0] as { entries: unknown[] }).entries[0] as Record<string, unknown>;
     assert.equal(saved.cron, "30 8 * * *");
     assert.equal(saved.types, undefined);
+  }));
+
+test("visual schedule generates a weekly cron and preserves mounted controls", () =>
+  dom(async (f) => {
+    f.view.init();
+    await flush();
+    f.button("＋ 添加规则").click();
+    f.button("定时触发").click();
+    const frequency = f.id("frequency");
+    frequency.value = "weekly";
+    frequency.emit("change");
+    f.id("time").value = "08:30";
+    f.id("time").emit("input");
+    f.id("weekday-1").click();
+    f.id("weekday-3").click();
+    f.view.update();
+    f.button("事件触发").click();
+    f.button("定时触发").click();
+    assert.equal(f.id("frequency"), frequency);
+    assert.equal(f.id("time").value, "08:30");
+    f.id("name").value = "周报";
+    f.id("prompt").value = "写周报";
+    f.id("to").value = "a";
+    f.id("cwd").value = "/work/y";
+    f.form().emit("submit");
+    f.button("保存到本机中台").click();
+    assert.equal(f.inputs.length, 1, f.text());
+    assert.equal((f.inputs[0] as { entries: { cron?: string }[] }).entries.at(-1)?.cron, "30 8 * * 1,3");
+  }));
+
+test("an empty weekly selection is rejected without sending a write", () =>
+  dom(async (f) => {
+    f.view.init();
+    await flush();
+    f.button("＋ 添加规则").click();
+    f.button("定时触发").click();
+    f.id("frequency").value = "weekly";
+    f.id("frequency").emit("change");
+    f.id("name").value = "周报";
+    f.id("prompt").value = "写周报";
+    f.id("to").value = "a";
+    f.id("cwd").value = "/work/y";
+    f.form().emit("submit");
+    assert.equal(f.inputs.length, 0);
+    assert.match(f.text(), /请至少选择一个星期/);
+  }));
+
+test("a complex existing schedule stays custom and unchanged", () =>
+  dom(async (f) => {
+    f.view.init();
+    await flush();
+    f.button("编辑").click();
+    f.id("frequency").value = "custom";
+    f.id("frequency").emit("change");
+    f.id("cron").value = "0 9 1 * 1";
+    f.form().emit("submit");
+    f.button("保存到本机中台").click();
+    await flush();
+    f.button("编辑").click();
+    assert.equal(f.id("frequency").value, "custom");
+    assert.equal(f.id("cron").value, "0 9 1 * 1");
+    f.form().emit("submit");
+    f.button("保存到本机中台").click();
+    assert.equal(f.inputs.length, 1);
   }));
 
 test("a new entry can be timed: the switch asks for a cron instead of types", () =>
@@ -161,6 +227,8 @@ test("a new entry can be timed: the switch asks for a cron instead of types", ()
     f.id("name").value = "巡检";
     f.id("to").value = "a";
     f.id("cwd").value = "/work/y";
+    f.id("frequency").value = "custom";
+    f.id("frequency").emit("change");
     f.id("cron").value = "*/5 * * * *";
     f.id("prompt").value = "检查运行状态";
     f.form().emit("submit");
@@ -181,6 +249,8 @@ test("an unchanged timed entry saves nothing; a cron-only change is a real chang
     f.button("保存到本机中台").click();
     assert.equal(f.inputs.length, 0);
     editButtons[0].click();
+    f.id("frequency").value = "custom";
+    f.id("frequency").emit("change");
     f.id("cron").value = "15 9 * * *";
     f.form().emit("submit");
     f.button("保存到本机中台").click();
@@ -193,6 +263,8 @@ test("trigger buttons switch fields without losing their values", () =>
     f.view.init();
     await flush();
     f.button("编辑").click();
+    f.id("frequency").value = "custom";
+    f.id("frequency").emit("change");
     f.id("cron").value = "15 8 * * *";
     f.button("事件触发").click();
     assert.equal(f.id("trigger").value, "event");
