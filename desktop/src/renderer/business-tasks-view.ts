@@ -24,6 +24,18 @@ const roundLabels: Record<string, string> = {
   failed: "本轮失败",
   cancelled: "本轮已停止",
 };
+function historyTime(at: string | null) {
+  return at
+    ? new Date(at).toLocaleString("zh-CN", {
+        month: "long",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      })
+    : "时间未记录";
+}
 function taskTitle(task: BusinessTaskItem) {
   return task.kind === "legacy"
     ? task.origin.title && (task.origin.eventId !== null || task.origin.availability !== "missing-history")
@@ -145,7 +157,7 @@ export function mountBusinessTasksView(
     scroll = 0,
     pendingScroll = false;
   listPage.append(toolbar, status, list, pagination);
-  const back = button("← 返回任务", () => controller.back()),
+  const back = button("←", () => controller.back()),
     title = el("h2");
   title.id = "task-detail-title";
   const badge = el("span", "", "tasks-run-state"),
@@ -181,10 +193,10 @@ export function mountBusinessTasksView(
   detailHead.append(
     back,
     detailHeading,
+    metadata,
     headerDescription,
     descriptionToggle,
     originNotice,
-    metadata,
     decisionOverview,
   );
   const actionBar = el("section", "", "business-detail-actions"),
@@ -381,6 +393,30 @@ export function mountBusinessTasksView(
     }
   }
   back.className = "task-back-button";
+  back.setAttribute("aria-label", "返回任务列表");
+  const operationDialog = el("dialog", "", "business-operation-dialog");
+  operationDialog.setAttribute("aria-label", "任务操作");
+  let dialogTrigger: HTMLElement | undefined;
+  function closeDialog() {
+    if (controller.actionBusy || controller.mustReread) return;
+    operationDialog.close();
+  }
+  operationDialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeDialog();
+  });
+  operationDialog.addEventListener("close", () => {
+    correctionOpen = false;
+    dialogTrigger?.focus();
+  });
+  function openDialog(content: HTMLElement, trigger: HTMLElement) {
+    if (controller.actionBusy || controller.mustReread) return;
+    dialogTrigger = trigger;
+    content.hidden = false;
+    operationDialog.replaceChildren(content, button("取消", closeDialog));
+    if (!operationDialog.open) operationDialog.showModal();
+    content.querySelectorAll("textarea")[0]?.focus();
+  }
   const current = el("section", "", "business-current");
   const processContent = el("section", "", "business-process-content");
   const operationExplanation = el("p", "", "business-operation-explanation");
@@ -389,7 +425,6 @@ export function mountBusinessTasksView(
   current.append(
     operationExplanation,
     decisions,
-    runActions,
     memoControls,
     taskCancelForm,
     taskCompleteForm,
@@ -399,14 +434,21 @@ export function mountBusinessTasksView(
   );
   diagnosis.append(executionHistory);
   processContent.append(timeline, timelineMore, diagnosis);
+  const headerActions = el("div", "", "business-header-actions");
+  const roundNote = el("span", "", "business-round-note");
+  const refreshSnapshot = button("刷新", () => controller.refreshDetail());
+  refreshSnapshot.className = "business-refresh-snapshot";
+  headerActions.append(roundNote, runActions, refreshSnapshot);
+  detailHead.append(headerActions);
   detailPage.append(detailHead, actionBar, current, processContent);
   let correctionOpen = false;
   const correctionToggle = button("提交更正", () => {
-    correctionOpen = !correctionOpen;
+    correctionOpen = true;
     update();
+    openDialog(memoControls, correctionToggle);
   });
   correctionToggle.className = "business-correct-toggle";
-  root.append(listPage, detailPage);
+  root.append(listPage, detailPage, operationDialog);
   let formsKey = "",
     runFormsKey = "",
     feedbackFormsKey = "";
@@ -666,6 +708,8 @@ export function mountBusinessTasksView(
       return;
     }
     const task = data.task;
+    roundNote.textContent = `${task.execution ? roundLabels[task.execution.state] : "轮次状态未记录"}${task.decisions.items.length || task.decisions.hasMore ? " · 有待回答问题" : " · 无待回答问题"}`;
+    refreshSnapshot.disabled = controller.actionBusy || controller.mustReread || controller.detailBusy;
     decisions.hidden = timeline.hidden = diagnosis.hidden = false;
     title.textContent = taskTitle(task);
     const nextDescriptionKey = `${task.key}:${task.origin.detail}`;
@@ -900,6 +944,8 @@ export function mountBusinessTasksView(
       !run ||
       run.stopping ||
       !["queued", "claimed", "unknown"].includes(run.state);
+    actionBar.hidden =
+      stoppingText.hidden && stopControls.hidden && taskCompleteControls.hidden && taskCancelControls.hidden;
     correctionToggle.hidden = taskCancelled || !run || run.state === "queued";
     correctionToggle.textContent = correctionOpen ? "收起更正" : "提交更正";
     correctionToggle.setAttribute("aria-expanded", String(correctionOpen));
@@ -942,7 +988,8 @@ export function mountBusinessTasksView(
         const record = el("article", "", "business-record-card");
         const heading = el("div", "", "business-record-heading");
         const display = event.display;
-        const completed = event.kind === "task.completed";
+        const completed = event.kind === "task.completed" || event.kind === "completeTask";
+        if (["claim", "claimNext", "started"].includes(event.kind)) row.className = "business-compact-record";
         const names: Record<string, string> = {
           ingest: "收到任务",
           event: "收到任务",
@@ -968,7 +1015,7 @@ export function mountBusinessTasksView(
             : (names[event.kind] ?? timelineLabels[event.kind] ?? "已记录操作");
         heading.append(el("strong", recordTitle));
         if (event.runId !== null) heading.append(el("span", `执行 #${event.runId}`, "business-record-run"));
-        heading.append(el("time", event.at ? new Date(event.at).toLocaleString("zh-CN") : "时间未记录", "muted"));
+        heading.append(el("time", historyTime(event.at), "muted"));
         record.append(heading);
         if (completed) record.className += " business-completed-card";
         if (["ingest", "event"].includes(event.kind)) {
@@ -994,11 +1041,13 @@ export function mountBusinessTasksView(
           session.className = "business-session-entry";
           session.disabled = !controller.detailFresh || controller.actionBusy || controller.mustReread;
           record.append(session);
-        } else if (!["claim", "claimNext"].includes(event.kind)) {
+        } else if (!["claim", "claimNext", "answer"].includes(event.kind)) {
           if (display?.completion?.by === "owner") record.append(el("p", display.completion.reason));
           else if (display?.runs.length)
             for (const result of display.runs) {
-              record.append(
+              const explanation = el("section", "", "business-record-explanation");
+              explanation.append(el("span", "执行者说明", "business-card-label"));
+              explanation.append(
                 el(
                   "p",
                   result.summary ||
@@ -1007,6 +1056,7 @@ export function mountBusinessTasksView(
                       : (roundLabels[result.state ?? ""] ?? "轮次状态未记录")),
                 ),
               );
+              record.append(explanation);
               if (result.error) record.append(el("p", result.error, "business-record-error"));
               if (result.truncated) record.append(el("p", "此结果仅显示部分。", "muted"));
             }
@@ -1015,11 +1065,20 @@ export function mountBusinessTasksView(
         for (const original of proposalCards) {
           const card = original;
           const question = el("section", "", "business-record-question");
-          question.append(el("h4", original.title), el("p", original.text));
-          if (original.options.length) {
+          question.append(
+            el("span", `${event.kind === "answer" ? "问题" : "待确认方案 · 问题"} #${card.id}`, "business-card-label"),
+            el("h4", original.title),
+            el("p", original.text),
+          );
+          record.append(question);
+          if (original.options.length && event.kind !== "answer") {
             const choices = el("div", "", "business-proposal-actions");
             original.options.forEach((option, index) => {
-              const selected = card.choice === index;
+              const selected =
+                card.choice === index ||
+                (card.choice === null &&
+                  card.answer === option &&
+                  card.options.filter((value) => value === card.answer).length === 1);
               const choice = button(option, () =>
                 controller.submitAction({
                   version: 1,
@@ -1048,23 +1107,40 @@ export function mountBusinessTasksView(
                 !!controller.detailError;
               choices.append(choice);
             });
-            question.append(choices);
+            record.append(choices);
           }
-          if (card.answer && (card.choice === null || card.answer !== card.options[card.choice]))
-            question.append(el("p", card.answer));
+          if (event.kind === "answer") {
+            const answer = el("section", "", "business-record-answer");
+            answer.append(
+              el("span", "已记录的回答", "business-card-label"),
+              el(
+                "p",
+                card.answer ?? (card.choice !== null ? card.options[card.choice] : undefined) ?? "回答内容未记录",
+              ),
+            );
+            record.append(answer);
+          } else if (!card.options.length && card.kind === "ask" && card.state === "open") {
+            const text = draftArea(`${task.key}/answer/${card.id}`, `${card.title}：文字回答`);
+            const send = button("提交回答", () =>
+              controller.submitAction({ version: 1, action: "answer", cardId: card.id, input: { text: text.value } }),
+            );
+            send.disabled = cancelDisabled || taskCancelled;
+            record.append(text, send);
+          }
           if (original.truncated) question.append(el("p", "此问题仅显示部分。", "muted"));
-          record.append(question);
         }
         for (const result of display?.runs ?? [])
           if (result.state === "done" && ["finish", "result", "task.completed"].includes(event.kind)) {
             const footer = el("footer", "", "business-completion-footer");
             const feedback = button("反馈", () => {
-              feedbackControls.hidden =
-                feedbackControls.dataset.runId === String(result.id) ? !feedbackControls.hidden : false;
               feedbackControls.dataset.runId = String(result.id);
               update();
-              feedbackControls.querySelectorAll("textarea")[0]?.focus();
+              const trigger = [...timeline.querySelectorAll("button")].find(
+                (node) => node.dataset.feedbackFact === `${event.seq}/${result.id}`,
+              );
+              if (trigger) openDialog(feedbackControls, trigger);
             });
+            feedback.dataset.feedbackFact = `${event.seq}/${result.id}`;
             feedback.className = "business-feedback-entry";
             const icon = el("span", "", "business-feedback-icon");
             icon.setAttribute("aria-hidden", "true");
@@ -1077,7 +1153,8 @@ export function mountBusinessTasksView(
               !!controller.detailError;
             footer.append(feedback);
             record.append(footer);
-            if (String(result.id) === feedbackControls.dataset.runId) record.append(feedbackControls);
+            if (!operationDialog.open && String(result.id) === feedbackControls.dataset.runId)
+              feedbackControls.hidden = true;
           }
         if (event.truncated) record.append(el("p", "此条记录仅显示部分。", "muted"));
         row.append(record);

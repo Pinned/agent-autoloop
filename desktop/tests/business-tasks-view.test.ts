@@ -3,12 +3,29 @@
 // execution diagnostics entrance from returning while retaining associated business execution history and rejecting legacy navigation.
 // Prevent duplicate original-requirement tabs without losing the header text or truncation warning.
 // Prevent duplicate detail tabs, repeated result summaries and raw fact entrances in unified records.
-// Fake DOM/bridge, no Electron or network.
+// Prevent proposal controls inside prose, suppressed recorded answers, non-compact lifecycle cards,
+// and inline editors replacing modal operations. Fake DOM/bridge, no Electron or network.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
 import { createRendererBusinessTasks } from "../src/renderer/business-tasks-controller.ts";
 import { mountBusinessTasksView } from "../src/renderer/business-tasks-view.ts";
+// Prevent shared blue tokens and wide navigation from overriding the confirmed detail palette.
+test("detail parity uses exact prototype colors and narrow sidebar", () => {
+  const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
+  assert.match(css, /background:\s*#fcfcfd;/);
+  assert.match(css, /background:\s*#fcfefc;/);
+  assert.match(css, /border-color:\s*#dbe9df;/);
+  assert.match(css, /background:\s*#edf6f0;/);
+  assert.match(css, /background:\s*#e8f5ec;/);
+  assert.match(css, /border:\s*2px solid #419765;/);
+  assert.match(css, /margin-top:\s*22px;/);
+  assert.match(css, /\.sidebar\s*\{\s*width:\s*64px;/);
+  assert.match(css, /\.titlebar\s*\{\s*display:\s*none;/);
+  assert.match(css, /\.tasks-detail-head > \.business-header-description\s*\{[^}]*margin-top:\s*22px;/);
+  assert.match(css, /\.business-session-entry\s*\{[^}]*margin-top:\s*10px;/);
+  assert.match(css, /li:first-child::after\s*\{[^}]*border-color:\s*#49996d;/);
+});
 class Element {
   className = "";
   type = "";
@@ -64,6 +81,14 @@ class Element {
   }
   fire() {
     if (!this.disabled) this.listeners.get("click")?.();
+  }
+  open = false;
+  showModal() {
+    this.open = true;
+  }
+  close() {
+    this.open = false;
+    this.listeners.get("close")?.();
   }
   focus() {
     this.focused = true;
@@ -270,6 +295,14 @@ test("historical done feedback is admitted without latest-run diagnosis and reje
       feedback.fire();
       const form = all(root).find((node) => node.className === "business-feedback")!;
       assert.equal(form.hidden, false);
+      const dialog = all(root).find((node) => node.tag === "dialog")!;
+      assert.equal(dialog.open, true);
+      assert.ok(all(dialog).includes(form));
+      dialog.listeners.get("cancel")?.({ preventDefault() {} });
+      assert.equal(dialog.open, false);
+      const liveFeedback = all(root).find((node) => node.className === "business-feedback-entry")!;
+      assert.equal(liveFeedback.focused, true, "focus returns to the mounted same-round feedback entry");
+      liveFeedback.fire();
       const text = all(form).find((node) => node.tag === "textarea")!;
       text.value = "历史轮次评价";
       text.listeners.get("input")?.();
@@ -304,6 +337,53 @@ test("historical done feedback is admitted without latest-run diagnosis and reje
     },
   );
 });
+test("proposal controls are outside prose and answer retains matching option text in its own subcard", async () => {
+  const question = {
+    id: 4,
+    runId: 2,
+    kind: "ask",
+    state: "done",
+    title: "真实问题",
+    text: "方案正文",
+    options: ["实施", "调整"],
+    choice: null,
+    answer: "实施",
+    by: "owner",
+    result: null,
+    truncated: false,
+  };
+  const fact = (seq: number, kind: string) => ({
+    seq,
+    kind,
+    at: null,
+    runId: 2,
+    eventId: null,
+    cardId: 4,
+    feedbackId: null,
+    text: "",
+    truncated: false,
+    display: { events: [], runs: [], cards: [question], completion: null, feedback: [] },
+  });
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      await flush();
+      const timeline = all(root).find((node) => node.className === "business-timeline")!;
+      const proposal = all(timeline.children[1]).find((node) => node.className === "business-record-question")!;
+      assert.equal(all(proposal).filter((node) => node.tag === "button").length, 0);
+      const selected = all(timeline.children[1]).find((node) => node.className === "is-selected")!;
+      assert.ok(selected.textContent.includes("实施"));
+      const answer = all(timeline.children[0]).find((node) => node.className === "business-record-answer")!;
+      assert.ok(answer.textContent.includes("已记录的回答"));
+      assert.ok(answer.textContent.includes("实施"));
+      assert.equal(all(timeline.children[0]).filter((node) => node.tag === "button").length, 0);
+    },
+    { ...item, decisions: { items: [], hasMore: false } },
+    undefined,
+    { timeline: [fact(2, "answer"), fact(1, "finish")] },
+  );
+});
+
 test("claimNext is a compact receipt without aggregate text", async () => {
   await withView(
     async (controller, root) => {
@@ -343,7 +423,19 @@ test("finish receipt displays real proposal and done feedback with Chinese dates
       assert.ok(timeline.textContent.includes("本轮结束，提出方案"));
       assert.ok(all(timeline).some((node) => node.className === "business-feedback-entry"));
       assert.ok(
-        all(timeline).some((node) => node.tag === "time" && node.textContent === new Date(at).toLocaleString("zh-CN")),
+        all(timeline).some(
+          (node) =>
+            node.tag === "time" &&
+            node.textContent ===
+              new Date(at).toLocaleString("zh-CN", {
+                month: "long",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                hour12: false,
+              }),
+        ),
       );
       const header = all(root).find((node) => node.className === "tasks-detail-head")!;
       assert.ok(header.textContent.includes(`更新于 ${new Date(at).toLocaleString("zh-CN")}`));
@@ -454,7 +546,7 @@ test("header description preserves original text and expands only on rendered ov
     const preview = all(header).find((x) => x.id === "business-header-description")!;
     const toggle = all(header).find((x) => x.attributes.get("aria-controls") === preview.id)!;
     assert.equal(preview.textContent, item.origin.detail);
-    assert.ok(header.children.indexOf(preview) < header.children.findIndex((x) => x.className === "muted"));
+    assert.ok(header.children.indexOf(preview) > header.children.findIndex((x) => x.className === "muted"));
     assert.equal(toggle.hidden, true);
     preview.scrollHeight = 120;
     controller.refreshDetail();
@@ -608,6 +700,20 @@ test("owner completion opens a reason form without sending and blocks duplicate 
     { ...item, state: "active", decisions: { items: [], hasMore: false } },
   );
 });
+// Prevent empty terminal action bars from adding a phantom 12px before the timeline.
+test("completed empty action bar is hidden but permitted active task operations remain", async () => {
+  for (const state of ["completed", "active"]) {
+    await withView(
+      async (controller, root) => {
+        controller.open("task:1");
+        await flush();
+        const bar = all(root).find((node) => node.className === "business-detail-actions")!;
+        assert.equal(bar.hidden, state === "completed");
+      },
+      { ...item, state, decisions: { items: [], hasMore: false } },
+    );
+  }
+});
 // Prevent absent capabilities or bounded previews from enabling an owner completion write.
 test("verified completion blockers have nearby explanations and missing authority grants no task actions", async () => {
   for (const blocker of ["missing", "execution", "cards", "timers", "hold"] as const) {
@@ -760,7 +866,7 @@ test("in-flight answers disable detail back navigation", async () => {
     controller.open("task:1");
     await flush();
     controller.submitAction({ version: 1, action: "answer", cardId: 4, input: { choice: 1 } });
-    const back = all(root).find((x) => x.tag === "button" && x.textContent === "← 返回任务")!;
+    const back = all(root).find((x) => x.attributes.get("aria-label") === "返回任务列表")!;
     assert.equal(back.disabled, true);
     back.fire();
     assert.equal(controller.selectedKey, "task:1");
@@ -869,9 +975,10 @@ test("unified DOM retains protected current actions and correction drafts", asyn
           false,
         );
         assert.ok(!all(current).some((x) => x.textContent === "记录反馈"));
-        const toggle = all(current).find((x) => x.className === "business-correct-toggle")!;
+        const toggle = all(detail).find((x) => x.className === "business-correct-toggle")!;
         toggle.fire();
         assert.equal(memo.hidden, false);
+        assert.ok(all(root).find((x) => x.tag === "dialog")!.open);
         const input = all(memo).find((x) => x.tag === "textarea")!;
         input.value = "更正草稿";
         input.listeners.get("input")?.();
@@ -1012,8 +1119,11 @@ test("return and task heading share a bounded row while metadata stays below", (
   const rule = (selector: string) => css.slice(css.indexOf(selector)).split("}")[0];
   const header = rule(".business-tasks-panel .tasks-detail-head {");
   assert.match(header, /display:\s*grid;/);
-  assert.match(header, /grid-template-columns:\s*auto minmax\(0, 1fr\);/);
-  assert.match(rule(".business-tasks-panel .tasks-detail-head > p {"), /grid-column:\s*1 \/ -1;/);
+  assert.match(header, /grid-template-columns:\s*36px minmax\(0, 1fr\);/);
+  assert.match(
+    css.slice(css.lastIndexOf(".business-tasks-panel .tasks-detail-head > p {")).split("}")[0],
+    /grid-column:\s*2;/,
+  );
   assert.match(rule(".business-tasks-panel .task-back-button {"), /white-space:\s*nowrap;/);
   assert.match(rule(".business-detail-heading h2 {"), /overflow-wrap:\s*anywhere;/);
 });
@@ -1026,7 +1136,7 @@ test("detail surfaces, compact heading and selected tabs follow shared theme and
   assert.match(surface, /background:\s*transparent;/);
   assert.match(surface, /border:\s*0;/);
   assert.match(surface, /padding:\s*0;/);
-  assert.match(rule("main:has(.tasks-detail-page:not([hidden])) {"), /padding:\s*14px 20px 16px;/);
+  assert.match(rule("main:has(.business-tasks-panel .tasks-detail-page:not([hidden])) {"), /padding:\s*24px 0 0;/);
   assert.match(rule(".business-tasks-panel .tasks-detail-head {"), /display:\s*grid;/);
   assert.match(rule(".tasks-detail-head h2 {"), /font-size:\s*18px;/);
   assert.match(rule(".task-detail-tabs {"), /flex-wrap:\s*wrap;/);
