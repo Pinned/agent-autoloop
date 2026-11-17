@@ -679,6 +679,18 @@ test("list owns no outer panel surface and previews have distinct two/three-line
   assert.match(rule(".business-tasks-panel .tasks-run-detail {"), /-webkit-line-clamp:\s*3;/);
 });
 
+// Prevent the return button from occupying a separate row or long titles widening the page.
+test("return and task heading share a bounded row while metadata stays below", () => {
+  const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
+  const rule = (selector: string) => css.slice(css.indexOf(selector)).split("}")[0];
+  const header = rule(".business-tasks-panel .tasks-detail-head {");
+  assert.match(header, /display:\s*grid;/);
+  assert.match(header, /grid-template-columns:\s*auto minmax\(0, 1fr\);/);
+  assert.match(rule(".business-tasks-panel .tasks-detail-head > p {"), /grid-column:\s*1 \/ -1;/);
+  assert.match(rule(".business-tasks-panel .task-back-button {"), /white-space:\s*nowrap;/);
+  assert.match(rule(".business-detail-heading h2 {"), /overflow-wrap:\s*anywhere;/);
+});
+
 // Detail layout must remain readable at the guide's viewport and use both theme palettes.
 test("detail surfaces, compact heading and selected tabs follow shared theme and contrast rules", () => {
   const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
@@ -688,7 +700,7 @@ test("detail surfaces, compact heading and selected tabs follow shared theme and
   assert.match(surface, /border:\s*0;/);
   assert.match(surface, /padding:\s*0;/);
   assert.match(rule("main:has(.tasks-detail-page:not([hidden])) {"), /padding:\s*14px 20px 16px;/);
-  assert.match(rule(".business-tasks-panel .tasks-detail-head {"), /display:\s*flex;/);
+  assert.match(rule(".business-tasks-panel .tasks-detail-head {"), /display:\s*grid;/);
   assert.match(rule(".tasks-detail-head h2 {"), /font-size:\s*18px;/);
   assert.match(rule(".task-detail-tabs {"), /flex-wrap:\s*wrap;/);
   assert.match(rule(".business-operation textarea,\n.business-operation select {"), /max-width:\s*100%;/);

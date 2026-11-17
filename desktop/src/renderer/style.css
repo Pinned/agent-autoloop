@@ -1260,9 +1260,9 @@ main:has(#task-subpage:not([hidden])) {
   background: transparent;
 }
 .business-tasks-panel .tasks-detail-head {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
   gap: 8px 12px;
   margin: 0 0 10px;
   padding: 0;
@@ -1274,14 +1274,13 @@ main:has(#task-subpage:not([hidden])) {
   flex: 1;
 }
 .business-tasks-panel .tasks-detail-head > p {
-  flex-basis: 100%;
-}
-.business-tasks-panel .tasks-detail-head > p {
+  grid-column: 1 / -1;
   margin: 10px 0 0;
   font-size: 12px;
 }
 .business-tasks-panel .task-back-button {
-  align-self: flex-start;
+  align-self: start;
+  white-space: nowrap;
 }
 .business-detail-heading h2 {
   flex: 1;
