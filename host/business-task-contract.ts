@@ -64,7 +64,12 @@ export type BusinessTaskList = {
   rules?: string[];
   scope?: "business";
 };
-export type BusinessTaskDetail = { task: BusinessTaskItem; timeline: BusinessTimeline };
+export type BusinessTaskActions = {
+  cancelTask: boolean;
+  completeTask: boolean;
+  completionBlocker: "execution" | "cards" | "timers" | "hold" | null;
+};
+export type BusinessTaskDetail = { task: BusinessTaskItem; timeline: BusinessTimeline; actions?: BusinessTaskActions };
 function invalid(): never {
   throw new Error("invalid-business-task-query");
 }
@@ -292,8 +297,29 @@ export function parseBusinessTimeline(v: unknown): BusinessTimeline {
   return result;
 }
 export function parseBusinessTaskDetail(v: unknown): BusinessTaskDetail {
-  const r = record(v, ["task", "timeline"]);
-  const result = { task: parseBusinessTaskItem(r.task), timeline: parseBusinessTimeline(r.timeline) };
+  const r = record(v, ["task", "timeline"], false, ["actions"]);
+  const result: BusinessTaskDetail = {
+    task: parseBusinessTaskItem(r.task),
+    timeline: parseBusinessTimeline(r.timeline),
+  };
+  if ("actions" in r) {
+    const a = record(r.actions, ["cancelTask", "completeTask", "completionBlocker"]);
+    result.actions = {
+      cancelTask: bool(a.cancelTask),
+      completeTask: bool(a.completeTask),
+      completionBlocker:
+        a.completionBlocker === null
+          ? null
+          : one(a.completionBlocker, ["execution", "cards", "timers", "hold"] as const),
+    };
+    if (result.actions.completeTask && result.actions.completionBlocker !== null) invalid();
+    if (result.task.kind !== "task" && (result.actions.cancelTask || result.actions.completeTask)) invalid();
+    if (
+      ["completed", "cancelling", "cancelled"].includes(result.task.state) &&
+      (result.actions.cancelTask || result.actions.completeTask)
+    )
+      invalid();
+  }
   if (jsonBytes(result) > BUSINESS_DETAIL_MAX_BYTES) invalid();
   return result;
 }

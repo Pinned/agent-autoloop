@@ -159,11 +159,7 @@ function taskItem(view: View, key: BusinessTaskKey): BusinessTaskItem {
     origin: {
       eventId:
         typeof task.eventId === "number" ? task.eventId : typeof origin?.eventId === "number" ? origin.eventId : null,
-      title: origin
-        ? cut(origin.title, 500) || "未记录任务标题"
-        : kind === "legacy"
-          ? "本轮触发资料未关联"
-          : "原始需求资料缺失",
+      title: origin ? cut(origin.title, 500) : kind === "legacy" ? "本轮触发资料未关联" : "原始需求资料缺失",
       detail: cut(origin?.detail, 2000),
       availability:
         !origin || origin.detailType == null ? "missing-history" : origin.detail === "" ? "empty" : "recorded",
@@ -362,10 +358,33 @@ export function readBusinessTaskDetail(view: View, given: unknown): BusinessTask
   const key = businessTaskKey(given),
     task = taskItem(view, key),
     timeline = pageBusinessTaskTimeline(view, key);
-  while (jsonBytes({ task, timeline }) > BUSINESS_DETAIL_MAX_BYTES && timeline.items.length > 1) {
+  const terminal = ["completed", "cancelling", "cancelled"].includes(task.state);
+  const has = (collection: string, clause = "") =>
+    !!get(view, `SELECT 1 FROM projections p WHERE p.collection=? AND ${f("p", "task_id")}=?${clause} LIMIT 1`, [
+      collection,
+      task.id,
+    ]);
+  const completionBlocker =
+    task.kind !== "task" || terminal
+      ? null
+      : has("runs", ` AND ${f("p", "state")} IN ('queued','claimed','unknown')`)
+        ? "execution"
+        : has("cards", ` AND ${f("p", "state")} IN ('open','decided')`)
+          ? "cards"
+          : has("timers", ` AND ${f("p", "event_id")} IS NULL`)
+            ? "timers"
+            : has("holds")
+              ? "hold"
+              : null;
+  const actions = {
+    cancelTask: task.kind === "task" && !terminal,
+    completeTask: task.kind === "task" && !terminal && completionBlocker === null,
+    completionBlocker,
+  };
+  while (jsonBytes({ task, timeline, actions }) > BUSINESS_DETAIL_MAX_BYTES && timeline.items.length > 1) {
     timeline.items.pop();
     timeline.hasMore = true;
     timeline.nextBefore = timeline.items.at(-1)!.seq;
   }
-  return parseBusinessTaskDetail({ task, timeline });
+  return parseBusinessTaskDetail({ task, timeline, actions });
 }
