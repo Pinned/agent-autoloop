@@ -4,7 +4,8 @@
 // event entry carries types and no cron. The list row shows the cron in plain view instead of an
 // empty type-chip strip, and the identity comparison counts cron so a cron edit is a real change.
 // Failure modes: a form that sends both triggers or neither; a timed row rendered with no trigger
-// at all; a cron edit that compares as "unchanged" and silently saves nothing.
+// at all; a cron edit that compares as "unchanged" and silently saves nothing; an editable custom
+// schedule despite the visual-only contract; a complex existing expression silently overwritten.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createRendererRulesCas } from "../src/renderer/rules-cas-controller.ts";
@@ -82,7 +83,7 @@ const ready = (entries: readonly unknown[]) => ({
   data: { entries, agents: [{ id: "a", name: "甲", use: "edit" }], seq: 5, rulesSeq: 10 },
 });
 
-async function dom(run: (f: ReturnType<typeof fixture>) => Promise<void>) {
+async function dom(run: (f: ReturnType<typeof fixture>) => Promise<void>, entries?: readonly unknown[]) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
   const body = new Element("body");
   Object.defineProperty(globalThis, "document", {
@@ -90,16 +91,16 @@ async function dom(run: (f: ReturnType<typeof fixture>) => Promise<void>) {
     value: { body, createElement: (tag: string) => new Element(tag) },
   });
   try {
-    await run(fixture(body));
+    await run(fixture(body, entries));
   } finally {
     if (previous) Object.defineProperty(globalThis, "document", previous);
     else Reflect.deleteProperty(globalThis, "document");
   }
 }
-function fixture(body: Element) {
+function fixture(body: Element, entries: readonly unknown[] = [timedEntry, eventEntry]) {
   const inputs: unknown[] = [];
   const controller = createRendererRulesCas({
-    rulesGet: () => Promise.resolve(ready([timedEntry, eventEntry])),
+    rulesGet: () => Promise.resolve(ready(entries)),
     rulesPut(input) {
       inputs.push(input);
       return Promise.resolve(ready(input.entries));
@@ -139,10 +140,8 @@ test("editing a timed entry shows the cron, saves it, and never sends types", ()
     // The editor of a timed entry starts in the timed mode with the cron bound.
     const editButtons = all(f.body).filter((node) => node.tag === "button" && node.textContent === "编辑");
     editButtons[0].click();
-    assert.equal(f.id("cron").value, "0 9 * * *");
-    f.id("frequency").value = "custom";
-    f.id("frequency").emit("change");
-    f.id("cron").value = "30 8 * * *";
+    assert.equal(f.id("frequency").value, "daily");
+    f.id("time").value = "08:30";
     f.form().emit("submit");
     f.button("保存到本机中台").click();
     assert.equal(f.inputs.length, 1);
@@ -196,24 +195,40 @@ test("an empty weekly selection is rejected without sending a write", () =>
     assert.match(f.text(), /请至少选择一个星期/);
   }));
 
-test("a complex existing schedule stays custom and unchanged", () =>
+test("new timed rules have no custom option or cron input", () =>
   dom(async (f) => {
     f.view.init();
     await flush();
-    f.button("编辑").click();
-    f.id("frequency").value = "custom";
-    f.id("frequency").emit("change");
-    f.id("cron").value = "0 9 1 * 1";
-    f.form().emit("submit");
-    f.button("保存到本机中台").click();
-    await flush();
-    f.button("编辑").click();
-    assert.equal(f.id("frequency").value, "custom");
-    assert.equal(f.id("cron").value, "0 9 1 * 1");
-    f.form().emit("submit");
-    f.button("保存到本机中台").click();
-    assert.equal(f.inputs.length, 1);
+    f.button("＋ 添加规则").click();
+    f.button("定时触发").click();
+    assert.equal(f.id("frequency").value, "daily");
+    assert.equal(f.id("time").value, "09:00");
+    assert.ok(!all(f.body).some((node) => node.tag === "option" && node.value === "custom"));
+    assert.ok(!all(f.body).some((node) => node.id === "rules-cron"));
   }));
+
+test("a complex existing schedule is read-only while other fields remain editable", () =>
+  dom(
+    async (f) => {
+      f.view.init();
+      await flush();
+      f.button("编辑").click();
+      assert.equal(f.id("frequency").parentElement?.hidden, true);
+      assert.match(f.text(), /只读保留/);
+      assert.match(f.text(), /0 9 1 \* 1/);
+      f.view.update();
+      f.button("事件触发").click();
+      f.button("定时触发").click();
+      assert.equal(f.id("frequency").parentElement?.hidden, true);
+      f.id("name").value = "新名称";
+      f.form().emit("submit");
+      f.button("保存到本机中台").click();
+      assert.equal(f.inputs.length, 1);
+      assert.equal((f.inputs[0] as { entries: { cron: string; name: string }[] }).entries[0].cron, "0 9 1 * 1");
+      assert.equal((f.inputs[0] as { entries: { name: string }[] }).entries[0].name, "新名称");
+    },
+    [{ ...timedEntry, cron: "0 9 1 * 1" }],
+  ));
 
 test("a new entry can be timed: the switch asks for a cron instead of types", () =>
   dom(async (f) => {
@@ -227,9 +242,9 @@ test("a new entry can be timed: the switch asks for a cron instead of types", ()
     f.id("name").value = "巡检";
     f.id("to").value = "a";
     f.id("cwd").value = "/work/y";
-    f.id("frequency").value = "custom";
+    f.id("frequency").value = "interval";
     f.id("frequency").emit("change");
-    f.id("cron").value = "*/5 * * * *";
+    f.id("interval").value = "5";
     f.id("prompt").value = "检查运行状态";
     f.form().emit("submit");
     f.button("保存到本机中台").click();
@@ -249,9 +264,7 @@ test("an unchanged timed entry saves nothing; a cron-only change is a real chang
     f.button("保存到本机中台").click();
     assert.equal(f.inputs.length, 0);
     editButtons[0].click();
-    f.id("frequency").value = "custom";
-    f.id("frequency").emit("change");
-    f.id("cron").value = "15 9 * * *";
+    f.id("time").value = "09:15";
     f.form().emit("submit");
     f.button("保存到本机中台").click();
     assert.equal(f.inputs.length, 1);
@@ -263,14 +276,12 @@ test("trigger buttons switch fields without losing their values", () =>
     f.view.init();
     await flush();
     f.button("编辑").click();
-    f.id("frequency").value = "custom";
-    f.id("frequency").emit("change");
-    f.id("cron").value = "15 8 * * *";
+    f.id("time").value = "08:15";
     f.button("事件触发").click();
     assert.equal(f.id("trigger").value, "event");
     f.id("types").value = "task.changed";
     f.button("定时触发").click();
-    assert.equal(f.id("cron").value, "15 8 * * *");
+    assert.equal(f.id("time").value, "08:15");
     f.button("事件触发").click();
     assert.equal(f.id("types").value, "task.changed");
   }));

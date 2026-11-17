@@ -217,9 +217,8 @@ export function mountRulesCasView(
   const { wrap: typesWrap, input: typesInput } = field("事件类型", "types");
   typesWrap.className += " rule-span2";
   typesInput.setAttribute("placeholder", "空格或逗号分隔，可用 x.* 通配");
-  const { wrap: cronWrap, input: cronInput } = field("时间表（cron）", "cron", false);
-  cronWrap.className += " rule-span2";
-  cronInput.setAttribute("placeholder", "cron，比如 0 9 * * *");
+  // Unsupported schedules remain immutable, rather than approximated by visual controls.
+  let preservedCron: string | null = null;
   const visualWrap = document.createElement("div");
   visualWrap.className = "rule-grid rule-span2";
   const frequencyWrap = document.createElement("label");
@@ -233,7 +232,6 @@ export function mountRulesCasView(
     ["weekly", "每周"],
     ["monthly", "每月"],
     ["interval", "每隔若干分钟"],
-    ["custom", "自定义时间表"],
   ]) {
     const option = document.createElement("option");
     option.value = value;
@@ -294,16 +292,17 @@ export function mountRulesCasView(
     return { kind: "daily", time: timeInput.value };
   }
   function syncSchedule() {
-    const custom = frequency.value === "custom";
-    timeWrap.hidden = custom || frequency.value === "interval";
-    dayWrap.hidden = frequency.value !== "monthly";
-    intervalWrap.hidden = frequency.value !== "interval";
-    weekWrap.hidden = frequency.value !== "weekly";
-    cronWrap.hidden = triggerInput.value !== "cron" || !custom;
+    const preserved = preservedCron !== null;
+    frequencyWrap.hidden = preserved;
+    timeWrap.hidden = preserved || frequency.value === "interval";
+    dayWrap.hidden = preserved || frequency.value !== "monthly";
+    intervalWrap.hidden = preserved || frequency.value !== "interval";
+    weekWrap.hidden = preserved || frequency.value !== "weekly";
     for (const button of weekdayButtons)
       button.setAttribute("aria-pressed", String(weekdays.has(Number(button.value))));
     try {
-      if (custom) scheduleNote.textContent = "保留自定义时间表，按中台设置的时区执行。";
+      if (preserved)
+        scheduleNote.textContent = `此时间表无法完整转换为可视化配置，已只读保留：${preservedCron}。可修改其他字段；执行时间不变，按中台设置的时区执行。`;
       else {
         encodeSchedule(readSchedule());
         scheduleNote.textContent = scheduleSummary(readSchedule());
@@ -316,7 +315,7 @@ export function mountRulesCasView(
     input.addEventListener("change", syncSchedule);
     input.addEventListener("input", syncSchedule);
   }
-  visualWrap.append(frequencyWrap, timeWrap, dayWrap, intervalWrap, weekWrap, cronWrap, scheduleNote);
+  visualWrap.append(frequencyWrap, timeWrap, dayWrap, intervalWrap, weekWrap, scheduleNote);
   triggerGrid.append(typesWrap, visualWrap);
   triggerGroup.append(triggerGroupTitle, triggerField, triggerGrid);
 
@@ -628,10 +627,10 @@ export function mountRulesCasView(
     triggerInput.value = timed ? "cron" : "event";
     syncTrigger();
     const types = bindValue(typesInput, source?.types ?? [], source?.types?.join(" ") ?? "", splitTypes);
-    const cron = text(cronInput, source?.cron);
     const initialSchedule =
       source?.cron === undefined ? { kind: "daily" as const, time: "09:00" } : decodeSchedule(source.cron);
-    frequency.value = initialSchedule?.kind ?? "custom";
+    preservedCron = source?.cron !== undefined && initialSchedule === null ? source.cron : null;
+    frequency.value = initialSchedule?.kind ?? "daily";
     timeInput.value = initialSchedule && "time" in initialSchedule ? initialSchedule.time : "09:00";
     dayInput.value = initialSchedule?.kind === "monthly" ? String(initialSchedule.day) : "1";
     intervalInput.value = initialSchedule?.kind === "interval" ? String(initialSchedule.minutes) : "5";
@@ -683,7 +682,7 @@ export function mountRulesCasView(
         // The read sends exactly the trigger the form shows: cron for a timed entry, types for
         // an event one. Carrying both (or the hidden one's leftovers) is what the door refuses.
         const asTimed = triggerInput.value === "cron";
-        const asCron = asTimed && frequency.value !== "custom" ? encodeSchedule(readSchedule()) : cron();
+        const asCron = asTimed ? (preservedCron ?? encodeSchedule(readSchedule())) : undefined;
         const asTypes = types();
         return {
           name: name(),
@@ -960,7 +959,6 @@ export function mountRulesCasView(
       nameInput,
       triggerInput,
       typesInput,
-      cronInput,
       frequency,
       timeInput,
       dayInput,
