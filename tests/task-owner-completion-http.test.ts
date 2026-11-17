@@ -57,3 +57,15 @@ test("owner acceptance is strict, does not dispatch, and exposes owner rather th
     server.close();
   }
 });
+
+test("real finish execute exposes agent completion and plain run result truthfully", async () => {
+  const { readBusinessTaskDetail } = await import("../host/business-task-query.ts");
+  hub.execute("ingest", ["app", { id: "finish-real", type: "feedback.new", subject: "#finish" }]);
+  const job = hub.execute("claimNext", ["w1", "finish-real"]);
+  hub.execute("finish", [job.run, job.token, { outcome: "done", summary: "真实交付", taskStatus: "completed" }]);
+  const detail = readBusinessTaskDetail(hub.getView(), `task:${job.task.id}`);
+  assert.equal(detail.task.state, "completed");
+  assert.equal(detail.timeline.items[0].kind, "task.completed");
+  assert.equal(detail.timeline.items[0].display?.completion?.by, "agent");
+  assert.equal(detail.timeline.items[0].display?.runs[0].summary, "真实交付");
+});

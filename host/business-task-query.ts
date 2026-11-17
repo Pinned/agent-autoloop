@@ -19,6 +19,7 @@ import {
   type BusinessTaskDetail,
   type BusinessTimeline,
   type BusinessTimelineItem,
+  type BusinessTimelineDisplay,
 } from "./business-task-contract.ts";
 type Row = Record<string, SQLOutputValue>;
 const f = (alias: string, name: string) => `json_extract(${alias}.data,'$.${name}')`;
@@ -69,7 +70,7 @@ function displayRun(view: View, id: number): RunItem {
     truncated: [...String(row.summary ?? "")].length > 500 || [...String(row.error ?? "")].length > 500,
   });
 }
-function taskItem(view: View, key: BusinessTaskKey): BusinessTaskItem {
+function taskItem(view: View, key: BusinessTaskKey, fullOrigin = false): BusinessTaskItem {
   const [kind, idText] = key.split(":"),
     id = Number(idText);
   const task =
@@ -116,13 +117,13 @@ function taskItem(view: View, key: BusinessTaskKey): BusinessTaskItem {
     kind === "task" && typeof task.eventId === "number"
       ? get(
           view,
-          `SELECT substr(${f("e", "summary")},1,501) AS title, substr(${f("e", "detail")},1,2001) AS detail, json_type(e.data,'$.detail') AS detailType FROM projections e WHERE e.collection='events' AND e.key=?`,
+          `SELECT substr(${f("e", "summary")},1,501) AS title, substr(${f("e", "detail")},1,${fullOrigin ? 4001 : 2001}) AS detail, json_type(e.data,'$.detail') AS detailType FROM projections e WHERE e.collection='events' AND e.key=?`,
           [String(task.eventId)],
         )
       : kind === "legacy"
         ? get(
             view,
-            `SELECT ${f("e", "id")} AS eventId, substr(${f("e", "source")},1,201) AS source, substr(${f("e", "summary")},1,501) AS title, substr(${f("e", "detail")},1,2001) AS detail, json_type(e.data,'$.detail') AS detailType FROM projections re JOIN projections e ON e.collection='events' AND e.key=CAST(${f("re", "event_id")} AS TEXT) WHERE re.collection='run_events' AND ${f("re", "run_id")}=? ORDER BY CASE WHEN ${f("e", "type")} IN ('card.answered','owner.memo','timer.due') THEN 1 ELSE 0 END, ${f("re", "event_id")} ASC LIMIT 1`,
+            `SELECT ${f("e", "id")} AS eventId, substr(${f("e", "source")},1,201) AS source, substr(${f("e", "summary")},1,501) AS title, substr(${f("e", "detail")},1,${fullOrigin ? 4001 : 2001}) AS detail, json_type(e.data,'$.detail') AS detailType FROM projections re JOIN projections e ON e.collection='events' AND e.key=CAST(${f("re", "event_id")} AS TEXT) WHERE re.collection='run_events' AND ${f("re", "run_id")}=? ORDER BY CASE WHEN ${f("e", "type")} IN ('card.answered','owner.memo','timer.due') THEN 1 ELSE 0 END, ${f("re", "event_id")} ASC LIMIT 1`,
             [id],
           )
         : undefined;
@@ -160,11 +161,13 @@ function taskItem(view: View, key: BusinessTaskKey): BusinessTaskItem {
       eventId:
         typeof task.eventId === "number" ? task.eventId : typeof origin?.eventId === "number" ? origin.eventId : null,
       title: origin ? cut(origin.title, 500) : kind === "legacy" ? "本轮触发资料未关联" : "原始需求资料缺失",
-      detail: cut(origin?.detail, 2000),
+      detail: cut(origin?.detail, fullOrigin ? 4000 : 2000),
       availability:
         !origin || origin.detailType == null ? "missing-history" : origin.detail === "" ? "empty" : "recorded",
       truncated:
-        !!origin && ([...String(origin.title ?? "")].length > 500 || [...String(origin.detail ?? "")].length > 2000),
+        !!origin &&
+        ([...String(origin.title ?? "")].length > 500 ||
+          [...String(origin.detail ?? "")].length > (fullOrigin ? 4000 : 2000)),
     },
     state,
     ...(run ? { execution: { state: run.state, stopping: run.stopping } } : {}),
@@ -299,7 +302,7 @@ export function pageBusinessTaskTimeline(view: View, given: unknown, input: unkn
   // SQL clips before crossing into JS, including maliciously large fact changes. References are indexed.
   const rows = all(
     view,
-    `SELECT r.seq, CASE WHEN json_extract(f.fact,'$.type')='result' AND EXISTS(SELECT 1 FROM json_each(f.fact,'$.changes') completed WHERE json_extract(completed.value,'$.table')='tasks' AND json_extract(completed.value,'$.row.id')=CAST(? AS INTEGER) AND json_extract(completed.value,'$.row.status')='completed' AND json_extract(completed.value,'$.row.completed_at')=strftime('%Y-%m-%dT%H:%M:%fZ',json_extract(f.fact,'$.at')/1000.0,'unixepoch')) THEN 'task.completed' ELSE substr(json_extract(f.fact,'$.type'),1,101) END AS kind, json_extract(f.fact,'$.at') AS at, json_array_length(f.fact,'$.changes') AS changeCount,
+    `SELECT r.seq, CASE WHEN json_extract(f.fact,'$.type') IN ('finish','result') AND EXISTS(SELECT 1 FROM json_each(f.fact,'$.changes') completed WHERE json_extract(completed.value,'$.table')='tasks' AND json_extract(completed.value,'$.row.id')=CAST(? AS INTEGER) AND json_extract(completed.value,'$.row.status')='completed' AND NOT EXISTS(SELECT 1 FROM json_each(f.fact,'$.changes') newer WHERE CAST(newer.key AS INTEGER)>CAST(completed.key AS INTEGER) AND json_extract(newer.value,'$.table')='tasks' AND json_extract(newer.value,'$.key')=json_extract(completed.value,'$.key')) AND json_extract(completed.value,'$.row.completed_at')=strftime('%Y-%m-%dT%H:%M:%fZ',json_extract(f.fact,'$.at')/1000.0,'unixepoch')) THEN 'task.completed' ELSE substr(json_extract(f.fact,'$.type'),1,101) END AS kind, json_extract(f.fact,'$.at') AS at, json_array_length(f.fact,'$.changes') AS changeCount,
     COALESCE((SELECT json_extract(ch.value,'$.row.id') FROM json_each(f.fact,'$.changes') ch WHERE json_extract(ch.value,'$.table')='runs' AND (json_extract(ch.value,'$.row.task_id')=CAST(? AS INTEGER) OR json_extract(ch.value,'$.row.id')=CAST(? AS INTEGER)) LIMIT 1), (SELECT json_extract(ch.value,'$.row.run_id') FROM json_each(f.fact,'$.changes') ch WHERE json_extract(ch.value,'$.table') IN ('cards','feedback') AND ${childBelongs} LIMIT 1)) AS runId,
     (SELECT json_extract(ch.value,'$.row.id') FROM json_each(f.fact,'$.changes') ch WHERE json_extract(ch.value,'$.table')='events' AND ${eventBelongs} LIMIT 1) AS eventId,
     (SELECT json_extract(ch.value,'$.row.id') FROM json_each(f.fact,'$.changes') ch WHERE json_extract(ch.value,'$.table')='cards' AND ${childBelongs} LIMIT 1) AS cardId,
@@ -311,7 +314,7 @@ export function pageBusinessTaskTimeline(view: View, given: unknown, input: unkn
         WHEN 'cards' THEN '卡片 #'||json_extract(ch.value,'$.row.id')||'：'||substr(COALESCE(json_extract(ch.value,'$.row.title'),''),1,501)||char(10)||CASE WHEN json_extract(f.fact,'$.type')='answer' THEN '回答：'||substr(COALESCE(json_extract(ch.value,'$.row.answer'),CASE WHEN json_type(ch.value,'$.row.choice')='integer' AND json_extract(ch.value,'$.row.choice')>=0 THEN json_extract(json_extract(ch.value,'$.row.options'),'$['||json_extract(ch.value,'$.row.choice')||']') END,'未记录所选选项'),1,2001) ELSE substr(COALESCE(json_extract(ch.value,'$.row.text'),''),1,2001) END
         WHEN 'feedback' THEN '评价：'||substr(COALESCE(json_extract(ch.value,'$.row.kind'),''),1,201)||char(10)||substr(COALESCE(json_extract(ch.value,'$.row.text'),''),1,4001)
         WHEN 'runs' THEN '轮次 #'||json_extract(ch.value,'$.row.id')||'（'||COALESCE(json_extract(ch.value,'$.row.state'),'')||'）：'||substr(COALESCE(json_extract(ch.value,'$.row.summary'),json_extract(ch.value,'$.row.error'),''),1,501)
-      END AS line FROM json_each(f.fact,'$.changes') ch WHERE json_extract(ch.value,'$.table') IN ('feedback','events','runs','cards','tasks')
+      END AS line FROM json_each(f.fact,'$.changes') ch WHERE NOT EXISTS(SELECT 1 FROM json_each(f.fact,'$.changes') newer WHERE CAST(newer.key AS INTEGER)>CAST(ch.key AS INTEGER) AND json_extract(newer.value,'$.table')=json_extract(ch.value,'$.table') AND json_extract(newer.value,'$.key')=json_extract(ch.value,'$.key')) AND json_extract(ch.value,'$.table') IN ('feedback','events','runs','cards','tasks')
         AND ((json_extract(ch.value,'$.table')='tasks' AND json_extract(ch.value,'$.row.id')=${kind === "task" ? id : 0}) OR (json_extract(ch.value,'$.table')='events' AND ${eventBelongs}) OR json_extract(ch.value,'$.row.task_id')=CAST(? AS INTEGER) OR
           (json_extract(ch.value,'$.table')='runs' AND json_extract(ch.value,'$.row.id')=CAST(? AS INTEGER)) OR
           (json_extract(ch.value,'$.table') IN ('cards','feedback') AND (json_extract(ch.value,'$.row.run_id')=CAST(? AS INTEGER) OR EXISTS(SELECT 1 FROM projections parent WHERE parent.collection='runs' AND parent.key=CAST(json_extract(ch.value,'$.row.run_id') AS TEXT) AND ${f("parent", "task_id")}=CAST(? AS INTEGER))))) LIMIT 20)) AS text
@@ -343,6 +346,125 @@ export function pageBusinessTaskTimeline(view: View, given: unknown, input: unkn
       text: cut(row.text, 4000),
       truncated: [...String(row.text ?? "")].length > 4000 || Number(row.changeCount) > 20,
     };
+    const display: BusinessTimelineDisplay = { events: [], runs: [], cards: [], completion: null, feedback: [] };
+    // Only allowlisted bounded fields cross into JS. The final change for a row wins within a fact.
+    const details = all(
+      view,
+      `SELECT json_extract(ch.value,'$.table') AS tbl,
+      json_extract(ch.value,'$.row.id') AS id, json_extract(ch.value,'$.row.run_id') AS runId,
+      json_extract(ch.value,'$.row.state') AS state, json_extract(ch.value,'$.row.kind') AS kind,
+      ${["summary", "error", "detail", "title", "text", "answer", "by", "result", "completion_reason", "completion_by", "status"].map((name) => `substr(json_extract(ch.value,'$.row.${name}'),1,${name === "detail" || name === "text" ? 4001 : name === "summary" || name === "error" || name === "title" ? 501 : 2001}) AS ${name}`).join(",")},
+      substr(json_extract(ch.value,'$.row.options'),1,5001) AS options, json_extract(ch.value,'$.row.choice') AS choice,
+      json_extract(ch.value,'$.row.completed_run_id') AS completedRunId,
+      json_type(ch.value,'$.row.detail') AS detailType
+      FROM facts f,json_each(f.fact,'$.changes') ch WHERE f.seq=? AND
+      ((json_extract(ch.value,'$.table')='events' AND ${eventBelongs}) OR
+       (json_extract(ch.value,'$.table')='runs' AND json_extract(ch.value,'$.row.${kind === "task" ? "task_id" : "id"}')=${id}) OR
+       (json_extract(ch.value,'$.table') IN ('cards','feedback') AND ${childBelongs}) OR
+       (json_extract(ch.value,'$.table')='tasks' AND json_extract(ch.value,'$.row.id')=${kind === "task" ? id : 0}))
+      AND NOT EXISTS(SELECT 1 FROM json_each(f.fact,'$.changes') newer WHERE CAST(newer.key AS INTEGER)>CAST(ch.key AS INTEGER) AND json_extract(newer.value,'$.table')=json_extract(ch.value,'$.table') AND json_extract(newer.value,'$.key')=json_extract(ch.value,'$.key')) LIMIT 21`,
+      [Number(row.seq)],
+    );
+    for (const d of details.slice(0, 20)) {
+      const n = Number(d.id),
+        rid = typeof d.runId === "number" ? d.runId : null;
+      const clipped = (name: string, max: number) => [...String(d[name] ?? "")].length > max;
+      if (d.tbl === "events")
+        display.events.push({
+          id: n,
+          title: cut(d.summary, 500),
+          detail: cut(d.detail, 4000),
+          availability: d.detailType == null ? "missing-history" : d.detail === "" ? "empty" : "recorded",
+          truncated: clipped("summary", 500) || clipped("detail", 4000),
+        });
+      if (d.tbl === "runs")
+        display.runs.push({
+          id: n,
+          state: ["queued", "claimed", "unknown", "done", "nothing", "failed", "cancelled"].includes(String(d.state))
+            ? (d.state as BusinessTimelineDisplay["runs"][number]["state"])
+            : null,
+          summary: cut(d.summary, 500),
+          error: cut(d.error, 500),
+          truncated: clipped("summary", 500) || clipped("error", 500),
+        });
+      if (d.tbl === "cards") {
+        const current = get(
+          view,
+          `SELECT ${["state", "options", "choice", "answer", "by", "result"].map((name) => `substr(${f("p", name)},1,${name === "options" ? 5001 : 2001}) AS ${name}`).join(",")} FROM projections p WHERE p.collection='cards' AND p.key=? AND (${f("p", kind === "task" ? "task_id" : "run_id")}=${id})`,
+          [String(n)],
+        );
+        if (current) {
+          for (const name of ["state", "options", "answer", "by", "result"]) d[name] = current[name];
+          d.choice = current.choice == null ? null : Number(current.choice);
+        }
+        let options: string[] = [];
+        let optionsTruncated = false;
+        try {
+          const parsed = JSON.parse(String(d.options ?? "[]"));
+          if (
+            Array.isArray(parsed) &&
+            parsed.length <= 10 &&
+            parsed.every((v) => typeof v === "string" && [...v].length <= 200)
+          )
+            options = parsed;
+          else optionsTruncated = true;
+        } catch {
+          optionsTruncated = true;
+        }
+        const choice =
+          typeof d.choice === "number" && Number.isSafeInteger(d.choice) && d.choice >= 0 && d.choice < options.length
+            ? d.choice
+            : null;
+        display.cards.push({
+          id: n,
+          runId: rid,
+          kind: cut(d.kind, 100),
+          state: cut(d.state, 100),
+          title: cut(d.title, 500),
+          text: cut(d.text, 4000),
+          options,
+          choice,
+          answer: d.answer == null ? null : cut(d.answer, 2000),
+          by: d.by == null ? null : cut(d.by, 200),
+          result: d.result == null ? null : cut(d.result, 2000),
+          truncated:
+            clipped("title", 500) ||
+            clipped("text", 4000) ||
+            clipped("answer", 2000) ||
+            clipped("result", 2000) ||
+            optionsTruncated,
+        });
+      }
+      if (d.tbl === "feedback")
+        display.feedback.push({
+          id: n,
+          runId: rid,
+          kind: cut(d.kind, 200),
+          text: cut(d.text, 4000),
+          by: d.by == null ? null : cut(d.by, 200),
+        });
+      if (d.tbl === "tasks" && (item.kind === "completeTask" || item.kind === "task.completed"))
+        display.completion = {
+          by: d.completion_by === "owner" ? "owner" : "agent",
+          reason: cut(d.completion_reason, 1000),
+          runId: typeof d.completedRunId === "number" ? d.completedRunId : item.runId,
+        };
+    }
+    item.display = display;
+    item.truncated ||=
+      details.length > 20 ||
+      display.events.some((x) => x.truncated) ||
+      display.runs.some((x) => x.truncated) ||
+      display.cards.some((x) => x.truncated) ||
+      details.some(
+        (d) =>
+          (d.tbl === "feedback" && [...String(d.text ?? "")].length > 4000) ||
+          (d.tbl === "tasks" && [...String(d.completion_reason ?? "")].length > 1000),
+      );
+    if (jsonBytes({ items: [item], hasMore: true, nextBefore: item.seq }) > BUSINESS_DETAIL_MAX_BYTES - 32 * 1024) {
+      delete item.display;
+      item.truncated = true;
+    }
     if (
       jsonBytes({ items: [...items, item], hasMore: true, nextBefore: item.seq }) >
       BUSINESS_DETAIL_MAX_BYTES - 32 * 1024
@@ -356,7 +478,7 @@ export function pageBusinessTaskTimeline(view: View, given: unknown, input: unkn
 }
 export function readBusinessTaskDetail(view: View, given: unknown): BusinessTaskDetail {
   const key = businessTaskKey(given),
-    task = taskItem(view, key),
+    task = taskItem(view, key, true),
     timeline = pageBusinessTaskTimeline(view, key);
   const terminal = ["completed", "cancelling", "cancelled"].includes(task.state);
   const has = (collection: string, clause = "") =>

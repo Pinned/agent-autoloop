@@ -287,6 +287,131 @@ test("display and total budgets bound huge projections without reading capabilit
     view.close();
   }
 });
+test("structured timeline keeps full event details and only final same-row snapshot", () => {
+  const view = fixture();
+  try {
+    const detail = "原始资料\n".repeat(600);
+    view.db
+      .prepare("INSERT INTO projections VALUES('run_events','3:1',?)")
+      .run(JSON.stringify({ run_id: 3, event_id: 1 }));
+    view.db.prepare("INSERT INTO facts VALUES(50,?)").run(
+      JSON.stringify({
+        at: 0,
+        type: "result",
+        changes: [
+          { table: "events", key: "1", row: { id: 1, summary: "真实标题", detail } },
+          { table: "runs", key: "3", row: { id: 3, task_id: 1, state: "claimed", summary: "中间快照" } },
+          { table: "runs", key: "3", row: { id: 3, task_id: 1, state: "done", summary: "真实结果", error: "" } },
+        ],
+      }),
+    );
+    view.db.prepare("INSERT INTO projection_refs VALUES('tasks','1',50)").run();
+    const item = pageBusinessTaskTimeline(view, "task:1").items[0];
+    assert.equal(item.display?.events[0].detail, detail);
+    assert.deepEqual(
+      item.display?.runs.map((r) => [r.state, r.summary]),
+      [["done", "真实结果"]],
+    );
+    assert.ok(item.text);
+  } finally {
+    view.close();
+  }
+});
+
+test("historical questions use current same-task answers without unrelated history", () => {
+  const view = fixture();
+  try {
+    const card = {
+      id: 8,
+      task_id: 1,
+      run_id: 3,
+      kind: "ask",
+      state: "open",
+      title: "方案",
+      text: "真实问题",
+      options: JSON.stringify(["甲", "乙"]),
+      choice: null,
+      answer: null,
+    };
+    view.db
+      .prepare("INSERT INTO projections VALUES('cards','8',?)")
+      .run(JSON.stringify({ ...card, state: "done", choice: 1, by: "本人", answer: "补充", result: "已核实" }));
+    view.db
+      .prepare("INSERT INTO facts VALUES(51,?)")
+      .run(JSON.stringify({ at: 0, type: "result", changes: [{ table: "cards", key: "8", row: card }] }));
+    view.db.prepare("INSERT INTO projection_refs VALUES('tasks','1',51)").run();
+    const shown = pageBusinessTaskTimeline(view, "task:1").items[0].display!.cards[0];
+    assert.deepEqual(
+      [shown.options, shown.choice, shown.answer, shown.by, shown.state],
+      [["甲", "乙"], 1, "补充", "本人", "done"],
+    );
+  } finally {
+    view.close();
+  }
+});
+test("oversized structured events report truncation and still advance pages", () => {
+  const view = fixture();
+  try {
+    view.db
+      .prepare("INSERT INTO projections VALUES('run_events','3:1',?)")
+      .run(JSON.stringify({ run_id: 3, event_id: 1 }));
+    for (const seq of [60, 61]) {
+      view.db.prepare("INSERT INTO facts VALUES(?,?)").run(
+        seq,
+        JSON.stringify({
+          at: 0,
+          type: "event",
+          changes: [{ table: "events", key: "1", row: { id: 1, summary: "真实标题", detail: "😀".repeat(5000) } }],
+        }),
+      );
+      view.db.prepare("INSERT INTO projection_refs VALUES('tasks','1',?)").run(seq);
+    }
+    const first = pageBusinessTaskTimeline(view, "task:1", { limit: 1 });
+    assert.equal([...first.items[0].display!.events[0].detail].length, 4000);
+    assert.equal(first.items[0].truncated, true);
+    assert.equal(first.nextBefore, 61);
+    assert.equal(pageBusinessTaskTimeline(view, "task:1", { before: first.nextBefore! }).items[0].seq, 60);
+  } finally {
+    view.close();
+  }
+});
+
+test("legal full question and result survive display; intermediate completion is not final", () => {
+  const view = fixture();
+  try {
+    const question = "😀".repeat(4000),
+      summary = "交".repeat(500),
+      error = "错".repeat(500);
+    view.db.prepare("INSERT INTO facts VALUES(70,?)").run(
+      JSON.stringify({
+        at: 0,
+        type: "result",
+        changes: [
+          { table: "tasks", key: "1", row: { id: 1, status: "completed", completed_at: "1970-01-01T00:00:00.000Z" } },
+          { table: "tasks", key: "1", row: { id: 1, status: "active", completed_at: null } },
+          { table: "runs", key: "3", row: { id: 3, task_id: 1, state: "done", summary, error } },
+          {
+            table: "cards",
+            key: "8",
+            row: { id: 8, task_id: 1, run_id: 3, kind: "ask", state: "open", text: question, options: '["甲","乙"]' },
+          },
+        ],
+      }),
+    );
+    view.db.prepare("INSERT INTO projection_refs VALUES('tasks','1',70)").run();
+    const item = pageBusinessTaskTimeline(view, "task:1").items[0];
+    assert.equal(item.kind, "result");
+    assert.equal(item.display!.completion, null);
+    assert.equal(item.display!.cards[0].text, question);
+    assert.equal(item.display!.cards[0].truncated, false);
+    assert.equal(item.display!.runs[0].summary, summary);
+    assert.equal(item.display!.runs[0].error, error);
+    assert.equal(item.display!.runs[0].truncated, false);
+  } finally {
+    view.close();
+  }
+});
+
 test("list cursor ties kinds without losing equal numbered identities", () => {
   const view = fixture();
   try {

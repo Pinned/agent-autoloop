@@ -45,6 +45,32 @@ export type BusinessTaskItem = {
   legacyNotice: string | null;
   execution?: { state: RunState; stopping: boolean };
 };
+export type BusinessTimelineDisplay = {
+  events: {
+    id: number;
+    title: string;
+    detail: string;
+    availability: "recorded" | "empty" | "missing-history";
+    truncated: boolean;
+  }[];
+  runs: { id: number; state: RunState | null; summary: string; error: string; truncated: boolean }[];
+  cards: {
+    id: number;
+    runId: number | null;
+    kind: string;
+    state: string;
+    title: string;
+    text: string;
+    options: string[];
+    choice: number | null;
+    answer: string | null;
+    by: string | null;
+    result: string | null;
+    truncated: boolean;
+  }[];
+  completion: { by: "owner" | "agent"; reason: string; runId: number | null } | null;
+  feedback: { id: number; runId: number | null; kind: string; text: string; by: string | null }[];
+};
 export type BusinessTimelineItem = {
   seq: number;
   kind: string;
@@ -55,6 +81,7 @@ export type BusinessTimelineItem = {
   feedbackId: number | null;
   text: string;
   truncated: boolean;
+  display?: BusinessTimelineDisplay;
 };
 export type BusinessTimeline = { items: BusinessTimelineItem[]; hasMore: boolean; nextBefore: number | null };
 export type BusinessTaskList = {
@@ -217,7 +244,7 @@ export function parseBusinessTaskItem(v: unknown): BusinessTaskItem {
     origin: {
       eventId: nullableId(o.eventId),
       title: text(o.title, 500),
-      detail: text(o.detail, 2000),
+      detail: text(o.detail, 4000),
       availability: one(o.availability, ["recorded", "empty", "missing-history"]),
       truncated: bool(o.truncated),
     },
@@ -268,10 +295,91 @@ export function parseBusinessTaskList(v: unknown): BusinessTaskList {
   if (jsonBytes(result) > BUSINESS_LIST_MAX_BYTES) invalid();
   return result;
 }
+function parseTimelineDisplay(v: unknown): BusinessTimelineDisplay {
+  const d = record(v, ["events", "runs", "cards", "completion", "feedback"]);
+  const nullableText = (v: unknown, max: number) => (v === null ? null : text(v, max));
+  return {
+    events: array(d.events, 20).map((v) => {
+      const x = record(v, ["id", "title", "detail", "availability", "truncated"]);
+      return {
+        id: runId(x.id),
+        title: text(x.title, 500),
+        detail: text(x.detail, 4000),
+        availability: one(x.availability, ["recorded", "empty", "missing-history"]),
+        truncated: bool(x.truncated),
+      };
+    }),
+    runs: array(d.runs, 20).map((v) => {
+      const x = record(v, ["id", "state", "summary", "error", "truncated"]);
+      return {
+        id: runId(x.id),
+        state: x.state === null ? null : one(x.state, RUN_STATES),
+        summary: text(x.summary, 500),
+        error: text(x.error, 500),
+        truncated: bool(x.truncated),
+      };
+    }),
+    cards: array(d.cards, 20).map((v) => {
+      const x = record(v, [
+        "id",
+        "runId",
+        "kind",
+        "state",
+        "title",
+        "text",
+        "options",
+        "choice",
+        "answer",
+        "by",
+        "result",
+        "truncated",
+      ]);
+      const options = array(x.options, 10).map((v) => text(v, 200));
+      if (
+        x.choice !== null &&
+        (!Number.isSafeInteger(x.choice) || Number(x.choice) < 0 || Number(x.choice) >= options.length)
+      )
+        invalid();
+      return {
+        id: runId(x.id),
+        runId: nullableId(x.runId),
+        kind: text(x.kind, 100),
+        state: text(x.state, 100),
+        title: text(x.title, 500),
+        text: text(x.text, 4000),
+        options,
+        choice: x.choice as number | null,
+        answer: nullableText(x.answer, 2000),
+        by: nullableText(x.by, 200),
+        result: nullableText(x.result, 2000),
+        truncated: bool(x.truncated),
+      };
+    }),
+    completion:
+      d.completion === null
+        ? null
+        : (() => {
+            const x = record(d.completion, ["by", "reason", "runId"]);
+            return { by: one(x.by, ["owner", "agent"]), reason: text(x.reason, 1000), runId: nullableId(x.runId) };
+          })(),
+    feedback: array(d.feedback, 20).map((v) => {
+      const x = record(v, ["id", "runId", "kind", "text", "by"]);
+      return {
+        id: runId(x.id),
+        runId: nullableId(x.runId),
+        kind: text(x.kind, 200),
+        text: text(x.text, 4000),
+        by: nullableText(x.by, 200),
+      };
+    }),
+  };
+}
 export function parseBusinessTimeline(v: unknown): BusinessTimeline {
   const r = record(v, ["items", "hasMore", "nextBefore"]);
   const items = array(r.items, 40).map((v) => {
-    const x = record(v, ["seq", "kind", "at", "runId", "eventId", "cardId", "feedbackId", "text", "truncated"]);
+    const x = record(v, ["seq", "kind", "at", "runId", "eventId", "cardId", "feedbackId", "text", "truncated"], false, [
+      "display",
+    ]);
     return {
       seq: runId(x.seq),
       kind: text(x.kind, 100),
@@ -282,6 +390,7 @@ export function parseBusinessTimeline(v: unknown): BusinessTimeline {
       feedbackId: nullableId(x.feedbackId),
       text: text(x.text, 4000),
       truncated: bool(x.truncated),
+      ...("display" in x ? { display: parseTimelineDisplay(x.display) } : {}),
     };
   });
   const hasMore = bool(r.hasMore),
