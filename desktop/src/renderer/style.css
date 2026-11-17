@@ -1428,10 +1428,14 @@ main:has(#task-subpage:not([hidden])) {
   padding: 0 0 16px 26px;
   overflow-wrap: anywhere;
 }
+.business-timeline > li::before,
+.business-timeline > li::after {
+  left: 6px;
+  transform: translateX(-50%);
+}
 .business-timeline > li::before {
   content: "";
   position: absolute;
-  left: 4px;
   top: 30px;
   bottom: -30px;
   border-left: 1px solid var(--soft);
@@ -1440,7 +1444,6 @@ main:has(#task-subpage:not([hidden])) {
 .business-timeline > li::after {
   content: "";
   position: absolute;
-  left: 0;
   top: 21px;
   width: 9px;
   height: 9px;
