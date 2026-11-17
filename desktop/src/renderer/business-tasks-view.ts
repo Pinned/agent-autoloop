@@ -192,9 +192,7 @@ export function mountBusinessTasksView(
     taskOperations = el("div", "", "business-task-operations");
   actionBar.setAttribute("aria-label", "任务操作");
   actionBar.append(roundOperations, taskOperations);
-  const progress = el("section"),
-    final = el("section"),
-    decisions = el("section", "", "business-decisions"),
+  const decisions = el("section", "", "business-decisions"),
     timeline = el("ol", "", "business-timeline"),
     timelineStatus = el("p", "", "muted");
   const readDetail = button("重新读取此任务", () => controller.refreshDetail()),
@@ -285,21 +283,9 @@ export function mountBusinessTasksView(
   diagnosis.append(el("summary", "执行与诊断资料"), diagnosisText);
   const executionHistory = el("section", "", "agent-execution-history");
   const history = createAgentHistoryController(options.history ?? {}, () => renderHistory());
-  let tab: "process" | "result" = "process";
   let tabTask = "";
   const expanded = new Set<number>();
   let polling: ReturnType<typeof setTimeout> | undefined;
-  const tabs = el("nav", "", "task-detail-tabs");
-  tabs.setAttribute("aria-label", "任务详情内容");
-  const processTab = button("执行过程", () => {
-    tab = "process";
-    update();
-  });
-  const resultTab = button("交付结果", () => {
-    tab = "result";
-    update();
-  });
-  tabs.append(processTab, resultTab);
   function renderHistory() {
     const limitation = el("details", "", "agent-history-scope");
     limitation.append(
@@ -335,7 +321,7 @@ export function mountBusinessTasksView(
       if (result) {
         const messages: Record<string, string> = {
           missing: "缺少新启动的可信历史关联，或会话文件尚未落盘；不猜会话，也不据此判断派发资料缺失。",
-          unavailable: "本机历史不可读（权限、路径安全或运行身份不满足）；已记录触发资料和执行结果仍在其他页签。",
+          unavailable: "本机历史不可读（权限、路径安全或运行身份不满足）；已记录触发资料和执行结果仍在任务记录中。",
           unsupported: "此连接暂不支持会话读取；已记录资料与结果仍可查看。",
           changed: "文件或读取上下文已变化，请从头重新读取。",
         };
@@ -367,7 +353,7 @@ export function mountBusinessTasksView(
           const list = el("ol", "", "agent-history-timeline");
           for (const item of result.page.items) {
             const row = el("li");
-            row.append(el("time", item.at ? new Date(item.at).toLocaleString() : "时间未记录", "muted"));
+            row.append(el("time", item.at ? new Date(item.at).toLocaleString("zh-CN") : "时间未记录", "muted"));
             if (item.text.length > 600) {
               const long = el("details");
               long.append(el("summary", item.text.slice(0, 160) + "…（展开）"), el("pre", item.text));
@@ -394,17 +380,14 @@ export function mountBusinessTasksView(
       executionHistory.append(round);
     }
   }
-  const timelineHeading = el("h3", "处理记录（最新在前）");
   back.className = "task-back-button";
   const current = el("section", "", "business-current");
   const processContent = el("section", "", "business-process-content");
-  const resultContent = el("section", "", "business-result-content");
   const operationExplanation = el("p", "", "business-operation-explanation");
   operationExplanation.setAttribute("role", "status");
   taskOperations.append(taskCompleteControls, taskCancelControls);
   current.append(
     operationExplanation,
-    progress,
     decisions,
     runActions,
     memoControls,
@@ -414,9 +397,9 @@ export function mountBusinessTasksView(
     readDetail,
     timelineStatus,
   );
-  processContent.append(executionHistory, timelineHeading, timeline, timelineMore, diagnosis);
-  resultContent.append(final, feedbackControls);
-  detailPage.append(detailHead, actionBar, current, tabs, processContent, resultContent);
+  diagnosis.append(executionHistory);
+  processContent.append(timeline, timelineMore, diagnosis);
+  detailPage.append(detailHead, actionBar, current, processContent);
   let correctionOpen = false;
   const correctionToggle = button("提交更正", () => {
     correctionOpen = !correctionOpen;
@@ -425,7 +408,8 @@ export function mountBusinessTasksView(
   correctionToggle.className = "business-correct-toggle";
   root.append(listPage, detailPage);
   let formsKey = "",
-    runFormsKey = "";
+    runFormsKey = "",
+    feedbackFormsKey = "";
   const controls: HTMLButtonElement[] = [];
   const decisionEmpty = el("p", "没有已记录的开放提问。", "muted");
   const decisionMore = el("p", "还有未展示的开放提问，请在执行诊断或原通道查看；不能把这一页当作全部。", "muted");
@@ -442,6 +426,7 @@ export function mountBusinessTasksView(
     });
     return area;
   }
+  let timelineSignature = "";
   function update() {
     const names = [...new Set([...controller.rules, ...(chosenRule ? [chosenRule] : [])])].sort();
     const signature = JSON.stringify(names);
@@ -590,7 +575,7 @@ export function mountBusinessTasksView(
       const meta = el("div", "", "business-card-meta");
       meta.append(
         el("span", legacy ? `历史执行 · 执行 #${task.id} · ${task.rule}` : `任务 #${task.id} · ${task.rule}`),
-        el("time", task.createdAt ? new Date(task.createdAt).toLocaleString() : "时间未记录"),
+        el("time", task.createdAt ? new Date(task.createdAt).toLocaleString("zh-CN") : "时间未记录"),
       );
       card.append(meta, heading);
       if (!legacy)
@@ -644,18 +629,10 @@ export function mountBusinessTasksView(
     history.select(open && controller.detailFresh ? controller.selectedKey : null);
     if (tabTask !== (controller.selectedKey ?? "")) {
       tabTask = controller.selectedKey ?? "";
-      tab = "process";
       expanded.clear();
     }
-    tabs.hidden = executionHistory.hidden = !data;
-    processTab.disabled = tab === "process";
-    resultTab.disabled = tab === "result";
-    processTab.setAttribute("aria-pressed", String(tab === "process"));
-    resultTab.setAttribute("aria-pressed", String(tab === "result"));
-    timelineHeading.hidden = !data || tab !== "process";
-    executionHistory.hidden = tab !== "process" || !data;
-    processContent.hidden = !data || tab !== "process";
-    resultContent.hidden = !data || tab !== "result";
+    executionHistory.hidden = !data;
+    processContent.hidden = !data;
     current.hidden = !data && !controller.detailBusy && !controller.detailError;
     readDetail.hidden = !controller.mustReread && !controller.detailError;
     actionStatus.hidden = !controller.actionMessage;
@@ -665,11 +642,11 @@ export function mountBusinessTasksView(
       history.read(data.task.latestRunId);
     }
     renderHistory();
-    if (open && data && tab === "process" && ["claimed", "unknown"].includes(data.task.execution?.state ?? "")) {
+    if (open && data && ["claimed", "unknown"].includes(data.task.execution?.state ?? "")) {
       const key = controller.selectedKey,
         id = data.task.latestRunId;
       polling = setTimeout(() => {
-        if (id && root.isConnected && controller.selectedKey === key && tab === "process") {
+        if (id && root.isConnected && controller.selectedKey === key) {
           history.read(id, !!history.rounds.get(id)?.page.cursor);
           update();
         }
@@ -684,12 +661,12 @@ export function mountBusinessTasksView(
     readDetail.disabled = controller.detailBusy || controller.actionBusy;
     if (!data) {
       title.textContent = "任务详情";
-      progress.hidden = final.hidden = decisions.hidden = runActions.hidden = timeline.hidden = diagnosis.hidden = true;
+      decisions.hidden = runActions.hidden = timeline.hidden = diagnosis.hidden = true;
       timelineMore.hidden = true;
       return;
     }
     const task = data.task;
-    progress.hidden = decisions.hidden = timeline.hidden = diagnosis.hidden = false;
+    decisions.hidden = timeline.hidden = diagnosis.hidden = false;
     title.textContent = taskTitle(task);
     const nextDescriptionKey = `${task.key}:${task.origin.detail}`;
     if (descriptionKey !== nextDescriptionKey) descriptionExpanded = false;
@@ -706,31 +683,13 @@ export function mountBusinessTasksView(
     measureDescription();
     badge.textContent = taskState(task);
     badge.dataset.state = task.kind === "legacy" ? (task.execution?.state ?? "unknown") : task.state;
-    metadata.textContent = `任务 #${task.id} · ${task.rule}${task.updatedAt ? ` · 更新于 ${task.updatedAt}` : ""}${task.completion ? " · 本人确认完成" : ""}`;
+    metadata.textContent = `任务 #${task.id} · ${task.rule}${task.updatedAt ? ` · 更新于 ${new Date(task.updatedAt).toLocaleString("zh-CN")}` : ""}${task.completion ? " · 本人确认完成" : ""}`;
     metadata.title = task.updatedAt ?? "";
     const openQuestions = task.decisions.items.filter((card) => card.kind === "ask" && card.state === "open");
     decisionOverview.hidden = openQuestions.length === 0;
     decisionOverview.textContent = openQuestions.length
       ? `需要你处理：${openQuestions[0].title}${openQuestions.length > 1 || task.decisions.hasMore ? " · 还有其他问题" : ""}`
       : "";
-    progress.replaceChildren(
-      el("h3", task.kind === "legacy" ? "本轮已记录结果或进展" : "当前进展"),
-      el("p", task.latestProgress || "尚无已记录的进展。"),
-    );
-    final.hidden = tab !== "result";
-    final.replaceChildren(
-      el("h3", "交付结果"),
-      el(
-        "p",
-        task.kind === "legacy"
-          ? `本轮执行结果：${task.latestProgress || "未记录执行结果"}。轮次结束也不代表业务完成，旧记录没有明确业务收尾声明。`
-          : task.completion
-            ? `本人确认完成：${task.completion.reason}（${task.completion.at}）。原执行报告保留。`
-            : task.finalResult === null
-              ? "尚无明确收尾的交付结果，不把当前进展当作最终结果。"
-              : task.finalResult || "已明确完成，但未填写最终结果。",
-      ),
-    );
     const formKey = `${task.key}/${task.decisions.items.map((c) => `${c.id}:${c.options.join("|")}`).join(",")}`;
     if (formKey !== formsKey) {
       formsKey = formKey;
@@ -752,29 +711,33 @@ export function mountBusinessTasksView(
         decisionForms.set(identity, form);
         form.append(el("h4", card.title), el("p", card.text));
         if (card.truncated) form.append(el("p", "此问题当前仅显示部分，不代表原文已完整展示。", "muted"));
-        const choice = el("select");
-        choice.setAttribute("aria-label", `${card.title}：选择方案`);
-        const key = `${task.key}/choice/${card.id}`;
+        const choices = el("div", "", "business-proposal-actions");
         for (const [index, option] of card.options.entries()) {
-          const node = el("option", `${option}${card.recommend === index ? " · 推荐" : ""}`);
-          node.value = String(index);
-          choice.append(node);
+          const send = button(option, () =>
+            controller.submitAction({
+              version: 1,
+              action: "answer",
+              cardId: card.id,
+              input: { choice: index },
+            }),
+          );
+          controls.push(send);
+          choices.append(send);
         }
-        choice.value = controller.drafts.get(key) ?? String(card.recommend ?? 0);
-        choice.addEventListener("change", () => controller.drafts.set(key, choice.value));
-        const text = draftArea(`${task.key}/answer/${card.id}`, `${card.title}：文字回答`);
-        if (card.options.length) form.append(choice);
-        else form.append(text);
-        const send = button("提交回答", () =>
-          controller.submitAction({
-            version: 1,
-            action: "answer",
-            cardId: card.id,
-            input: card.options.length ? { choice: Number(choice.value) } : { text: text.value },
-          }),
-        );
-        controls.push(send);
-        form.append(send);
+        if (card.options.length) form.append(choices);
+        else {
+          const text = draftArea(`${task.key}/answer/${card.id}`, `${card.title}：文字回答`);
+          const send = button("提交回答", () =>
+            controller.submitAction({
+              version: 1,
+              action: "answer",
+              cardId: card.id,
+              input: { text: text.value },
+            }),
+          );
+          controls.push(send);
+          form.append(text, send);
+        }
         decisions.append(form);
       }
       decisionEmpty.hidden = task.decisions.items.length > 0;
@@ -850,7 +813,6 @@ export function mountBusinessTasksView(
       correctionOpen = false;
       runActions.replaceChildren();
       memoControls.replaceChildren();
-      feedbackControls.replaceChildren();
       roundOperations.replaceChildren();
       if (run) {
         stoppingText = el("p", "正在停止，等待执行进程退出。", "business-stopping");
@@ -892,33 +854,43 @@ export function mountBusinessTasksView(
             ),
           );
         }
-        {
-          const rating = el("select");
-          rating.setAttribute("aria-label", "验收反馈类型");
-          for (const kind of FEEDBACK_KINDS) {
-            const option = el("option", kind);
-            option.value = kind;
-            rating.append(option);
-          }
-          const text = draftArea(`${task.key}/feedback/${run.id}`, "验收反馈说明");
-          rating.value = controller.drafts.get(`${task.key}/rating/${run.id}`) ?? FEEDBACK_KINDS[0];
-          rating.addEventListener("change", () => controller.drafts.set(`${task.key}/rating/${run.id}`, rating.value));
-          feedbackControls.append(
-            el("h3", "验收反馈（记录评价，不自动判定任务完成）"),
-            rating,
-            text,
-            button("记录反馈", () =>
-              controller.submitAction({
-                version: 1,
-                action: "feedback",
-                runId: run.id,
-                input: { kind: rating.value as (typeof FEEDBACK_KINDS)[number], text: text.value },
-              }),
-            ),
-          );
-        }
       }
     }
+    const feedbackId = Number(feedbackControls.dataset.runId);
+    const feedbackKey = `${task.key}/${feedbackId}`;
+    if (feedbackId && feedbackFormsKey !== feedbackKey) {
+      feedbackFormsKey = feedbackKey;
+      const rating = el("select");
+      rating.setAttribute("aria-label", "验收反馈类型");
+      for (const kind of FEEDBACK_KINDS) {
+        const option = el("option", kind);
+        option.value = kind;
+        rating.append(option);
+      }
+      const text = draftArea(`${task.key}/feedback/${feedbackId}`, "验收反馈说明");
+      rating.value = controller.drafts.get(`${task.key}/rating/${feedbackId}`) ?? FEEDBACK_KINDS[0];
+      rating.addEventListener("change", () => controller.drafts.set(`${task.key}/rating/${feedbackId}`, rating.value));
+      feedbackControls.replaceChildren(
+        el("h3", "交付反馈"),
+        rating,
+        text,
+        button("记录反馈", () =>
+          controller.submitAction({
+            version: 1,
+            action: "feedback",
+            runId: feedbackId,
+            input: { kind: rating.value as (typeof FEEDBACK_KINDS)[number], text: text.value },
+          }),
+        ),
+      );
+    }
+    for (const control of feedbackControls.querySelectorAll("button"))
+      control.disabled =
+        !controller.detailFresh ||
+        controller.actionBusy ||
+        controller.mustReread ||
+        controller.detailBusy ||
+        !!controller.detailError;
     stoppingText.hidden = !run?.stopping || !["claimed", "unknown"].includes(run.state);
     const taskCancelled = task.kind === "task" && ["cancelling", "cancelled"].includes(task.state);
     stopControls.hidden =
@@ -932,13 +904,16 @@ export function mountBusinessTasksView(
     correctionToggle.textContent = correctionOpen ? "收起更正" : "提交更正";
     correctionToggle.setAttribute("aria-expanded", String(correctionOpen));
     memoControls.hidden = taskCancelled || !correctionOpen || !run || run.state === "queued";
-    decisions.hidden = !task.decisions.items.length && !task.decisions.hasMore;
-    feedbackControls.hidden = run?.state !== "done";
+    decisions.hidden =
+      (!task.decisions.items.length && !task.decisions.hasMore) ||
+      task.decisions.items.every((card) =>
+        data.timeline.items.some((event) => event.display?.cards.some((entry) => entry.id === card.id)),
+      );
+    if (!feedbackControls.dataset.runId) feedbackControls.hidden = true;
     for (const control of [
       ...roundOperations.querySelectorAll("button"),
       ...runActions.querySelectorAll("button"),
       ...memoControls.querySelectorAll("button"),
-      ...feedbackControls.querySelectorAll("button"),
     ])
       control.disabled =
         !controller.runReady ||
@@ -947,30 +922,163 @@ export function mountBusinessTasksView(
         controller.mustReread ||
         controller.detailBusy ||
         !!controller.detailError;
-    timeline.replaceChildren();
-    for (const event of data.timeline.items) {
-      const row = el("li");
-      row.append(
-        el("strong", timelineLabels[event.kind] ?? "已记录事实"),
-        el("time", event.at ?? "时间未记录", "muted"),
-        el("p", event.text || "此条事实未附文字说明。"),
-      );
-      if (event.truncated) row.append(el("p", "此条记录仅显示部分。", "muted"));
-      const details = el("details");
-      details.append(
-        el("summary", "执行与诊断资料"),
-        el(
-          "p",
-          `事实 #${event.seq} (${event.kind}) · 执行 ${event.runId ?? "未关联"} · 事件 ${event.eventId ?? "未关联"} · 提问 ${event.cardId ?? "无"} · 反馈 ${event.feedbackId ?? "无"}`,
-          "muted",
-        ),
-      );
-      row.append(details);
-      timeline.append(row);
+    const nextTimelineSignature = JSON.stringify([
+      task.key,
+      data.timeline,
+      task.state,
+      controller.detailFresh,
+      controller.actionBusy,
+      controller.mustReread,
+      controller.detailBusy,
+      controller.detailError,
+      feedbackControls.dataset.runId,
+    ]);
+    const rebuildTimeline = timelineSignature !== nextTimelineSignature;
+    if (rebuildTimeline) {
+      timelineSignature = nextTimelineSignature;
+      timeline.replaceChildren();
+      for (const event of data.timeline.items) {
+        const row = el("li");
+        const record = el("article", "", "business-record-card");
+        const heading = el("div", "", "business-record-heading");
+        const display = event.display;
+        const completed = event.kind === "task.completed";
+        const names: Record<string, string> = {
+          ingest: "收到任务",
+          event: "收到任务",
+          claim: "接单程序领取任务",
+          claimNext: "接单程序领取任务",
+          started: "开始执行",
+          result: "本轮结束",
+          finish: "本轮结束",
+          "task.completed": "任务已完成",
+          answer: "方案已获确认",
+        };
+        const recordTitle =
+          ["finish", "result"].includes(event.kind) && display?.cards.some((card) => card.kind === "ask")
+            ? "本轮结束，提出方案"
+            : (names[event.kind] ?? timelineLabels[event.kind] ?? "已记录操作");
+        heading.append(el("strong", recordTitle));
+        if (event.runId !== null) heading.append(el("span", `执行 #${event.runId}`, "business-record-run"));
+        heading.append(el("time", event.at ? new Date(event.at).toLocaleString("zh-CN") : "时间未记录", "muted"));
+        record.append(heading);
+        if (completed) record.className += " business-completed-card";
+        if (["ingest", "event"].includes(event.kind)) {
+          if (display?.events.length)
+            for (const request of display.events) {
+              const intake = el("section", "", "business-intake-subcard");
+              intake.append(el("h4", request.title), el("p", request.detail));
+              if (request.availability === "missing-history") intake.append(el("p", "原始资料历史缺失。", "muted"));
+              if (request.availability === "empty") intake.append(el("p", "提交时未填写详情。", "muted"));
+              if (request.truncated) intake.append(el("p", "此资料仅显示部分，不能视为完整原文。", "muted"));
+              record.append(intake);
+            }
+          else record.append(el("p", "当前记录未提供完整任务资料，请升级中台后重新读取。", "muted"));
+        } else if (event.kind === "started" && event.runId !== null) {
+          const id = event.runId;
+          const session = button("查看执行会话 →", () => {
+            expanded.add(id);
+            diagnosis.open = true;
+            history.read(id);
+            renderHistory();
+            executionHistory.scrollIntoView?.({ block: "nearest" });
+          });
+          session.className = "business-session-entry";
+          session.disabled = !controller.detailFresh || controller.actionBusy || controller.mustReread;
+          record.append(session);
+        } else if (!["claim", "claimNext"].includes(event.kind)) {
+          if (display?.completion?.by === "owner") record.append(el("p", display.completion.reason));
+          else if (display?.runs.length)
+            for (const result of display.runs) {
+              record.append(
+                el(
+                  "p",
+                  result.summary ||
+                    (result.state === "done"
+                      ? "本轮已结束，未填写结果。"
+                      : (roundLabels[result.state ?? ""] ?? "轮次状态未记录")),
+                ),
+              );
+              if (result.error) record.append(el("p", result.error, "business-record-error"));
+              if (result.truncated) record.append(el("p", "此结果仅显示部分。", "muted"));
+            }
+          else if (event.text && !display?.cards.length) record.append(el("p", event.text));
+        }
+        for (const original of display?.cards ?? []) {
+          const card = original;
+          const question = el("section", "", "business-record-question");
+          question.append(el("h4", original.title), el("p", original.text));
+          if (original.options.length) {
+            const choices = el("div", "", "business-proposal-actions");
+            original.options.forEach((option, index) => {
+              const selected = card.choice === index;
+              const choice = button(option, () =>
+                controller.submitAction({
+                  version: 1,
+                  action: "answer",
+                  cardId: card.id,
+                  input: { choice: index },
+                }),
+              );
+              choice.setAttribute("aria-pressed", String(selected));
+              if (selected) {
+                choice.className = "is-selected";
+                choice.replaceChildren(
+                  el("span", "✓", "selection-check"),
+                  el("span", option),
+                  el("span", "已选择", "selection-badge"),
+                );
+              } else if (card.state !== "open") choice.className = "is-unselected";
+              choice.disabled =
+                card.kind !== "ask" ||
+                card.state !== "open" ||
+                ["cancelling", "cancelled"].includes(task.state) ||
+                !controller.detailFresh ||
+                controller.actionBusy ||
+                controller.mustReread ||
+                controller.detailBusy ||
+                !!controller.detailError;
+              choices.append(choice);
+            });
+            question.append(choices);
+          }
+          if (card.answer && (card.choice === null || card.answer !== card.options[card.choice]))
+            question.append(el("p", card.answer));
+          if (original.truncated) question.append(el("p", "此问题仅显示部分。", "muted"));
+          record.append(question);
+        }
+        for (const result of display?.runs ?? [])
+          if (result.state === "done" && ["finish", "result", "task.completed"].includes(event.kind)) {
+            const footer = el("footer", "", "business-completion-footer");
+            const feedback = button("反馈", () => {
+              feedbackControls.hidden =
+                feedbackControls.dataset.runId === String(result.id) ? !feedbackControls.hidden : false;
+              feedbackControls.dataset.runId = String(result.id);
+              update();
+              feedbackControls.querySelectorAll("textarea")[0]?.focus();
+            });
+            feedback.className = "business-feedback-entry";
+            const icon = el("span", "", "business-feedback-icon");
+            icon.setAttribute("aria-hidden", "true");
+            feedback.replaceChildren(icon, el("span", "反馈"));
+            feedback.disabled =
+              !controller.detailFresh ||
+              controller.actionBusy ||
+              controller.mustReread ||
+              controller.detailBusy ||
+              !!controller.detailError;
+            footer.append(feedback);
+            record.append(footer);
+            if (String(result.id) === feedbackControls.dataset.runId) record.append(feedbackControls);
+          }
+        if (event.truncated) record.append(el("p", "此条记录仅显示部分。", "muted"));
+        row.append(record);
+        timeline.append(row);
+      }
+      if (!data.timeline.items.length) timeline.append(el("li", "没有可关联的历史记录，不补造处理或验收结论。"));
     }
-    if (!data.timeline.items.length) timeline.append(el("li", "没有可关联的历史记录，不补造处理或验收结论。"));
-    timeline.hidden = diagnosis.hidden = tab !== "process";
-    timelineMore.hidden = tab !== "process" || !data.timeline.hasMore;
+    timeline.hidden = diagnosis.hidden = false;
+    timelineMore.hidden = !data.timeline.hasMore;
     timelineMore.disabled = controller.detailBusy;
     diagnosisText.textContent = run
       ? `最新执行 #${run.id} · ${run.agent} · ${run.state} · ${run.error || "未记录执行错误"}`

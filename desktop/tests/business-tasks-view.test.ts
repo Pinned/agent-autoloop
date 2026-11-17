@@ -2,6 +2,7 @@
 // leaving an in-flight write before its receipt can be checked. Also prevent the removed list-level
 // execution diagnostics entrance from returning while retaining associated business execution history and rejecting legacy navigation.
 // Prevent duplicate original-requirement tabs without losing the header text or truncation warning.
+// Prevent duplicate detail tabs, repeated result summaries and raw fact entrances in unified records.
 // Fake DOM/bridge, no Electron or network.
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -113,6 +114,7 @@ async function withView(
     paged?: boolean;
     scrollHost?: HTMLElement;
     actionAuthority?: "missing" | "execution" | "cards" | "timers" | "hold";
+    timeline?: unknown[];
   } = {},
 ) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
@@ -144,7 +146,7 @@ async function withView(
                   }
                 : {
                     task: shown,
-                    timeline: { items: [], hasMore: false, nextBefore: null },
+                    timeline: { items: options.timeline ?? [], hasMore: false, nextBefore: null },
                     ...(options.actionAuthority === "missing"
                       ? {}
                       : {
@@ -176,6 +178,218 @@ async function withView(
     else Reflect.deleteProperty(globalThis, "document");
   }
 }
+test("unified records remove dual tabs and repeated progress while retaining diagnosis", async () => {
+  await withView(async (controller, root) => {
+    controller.open("task:1");
+    await flush();
+    assert.equal(
+      all(root).some((node) => node.className === "task-detail-tabs"),
+      false,
+    );
+    assert.equal(
+      all(root).some((node) => node.textContent === "处理记录（最新在前）"),
+      false,
+    );
+    assert.ok(all(root).some((node) => node.className === "business-timeline"));
+    assert.ok(all(root).some((node) => node.textContent === "执行与诊断资料"));
+  });
+});
+test("records use structured full intake, distinct start and one completion body with real historical options", async () => {
+  const display = { events: [], runs: [], cards: [], completion: null, feedback: [] };
+  const fact = (seq: number, kind: string, shown: object) => ({
+    seq,
+    kind,
+    at: null,
+    runId: 2,
+    eventId: null,
+    cardId: null,
+    feedbackId: null,
+    text: "重复聚合正文",
+    truncated: false,
+    display: { ...display, ...shown },
+  });
+  const long = "完整资料\n".repeat(400);
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      await flush();
+      const timeline = all(root).find((node) => node.className === "business-timeline")!;
+      assert.equal(timeline.children.length, 4);
+      assert.ok(timeline.textContent.includes(long));
+      assert.equal(timeline.textContent.includes("重复聚合正文"), false);
+      assert.equal(all(timeline).filter((node) => node.textContent === "真实收尾正文").length, 1);
+      assert.ok(all(timeline).some((node) => node.textContent === "查看执行会话 →"));
+      assert.ok(all(timeline).some((node) => node.className === "business-completion-footer"));
+      const selected = all(timeline).find((node) => node.className === "is-selected")!;
+      assert.ok(selected.textContent.includes("真实选项乙"));
+      assert.ok(selected.textContent.includes("已选择"));
+      assert.equal(selected.disabled, true);
+      assert.equal(timeline.textContent.includes("事实 #"), false);
+    },
+    { ...item, decisions: { items: [], hasMore: false } },
+    undefined,
+    {
+      timeline: [
+        fact(4, "task.completed", {
+          runs: [{ id: 2, state: "done", summary: "真实收尾正文", error: "", truncated: false }],
+        }),
+        fact(3, "result", {
+          cards: [
+            {
+              id: 4,
+              runId: 2,
+              kind: "ask",
+              state: "decided",
+              title: "真实问题",
+              text: "真实方案内容",
+              options: ["真实选项甲", "真实选项乙"],
+              choice: 1,
+              answer: null,
+              by: "owner",
+              result: null,
+              truncated: false,
+            },
+          ],
+        }),
+        fact(2, "started", {}),
+        fact(1, "ingest", {
+          events: [{ id: 1, title: "真实标题", detail: long, availability: "recorded", truncated: false }],
+        }),
+      ],
+    },
+  );
+});
+test("historical done feedback is admitted without latest-run diagnosis and rejects unrelated rounds", async () => {
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      await flush();
+      controller.submitAction({ version: 1, action: "feedback", runId: 99, input: { kind: "交付满意", text: "评价" } });
+      assert.equal(controller.actionBusy, false);
+      const feedback = all(root).find((node) => node.className === "business-feedback-entry")!;
+      feedback.fire();
+      const form = all(root).find((node) => node.className === "business-feedback")!;
+      assert.equal(form.hidden, false);
+      const text = all(form).find((node) => node.tag === "textarea")!;
+      text.value = "历史轮次评价";
+      text.listeners.get("input")?.();
+      all(form)
+        .find((node) => node.textContent === "记录反馈")!
+        .fire();
+      assert.equal(controller.actionBusy, true);
+    },
+    { ...item, decisions: { items: [], hasMore: false } },
+    undefined,
+    {
+      timeline: [
+        {
+          seq: 1,
+          kind: "task.completed",
+          at: null,
+          runId: 1,
+          eventId: null,
+          cardId: null,
+          feedbackId: null,
+          text: "",
+          truncated: false,
+          display: {
+            events: [],
+            cards: [],
+            feedback: [],
+            completion: null,
+            runs: [{ id: 1, state: "done", summary: "历史完成", error: "", truncated: false }],
+          },
+        },
+      ],
+    },
+  );
+});
+test("claimNext is a compact receipt without aggregate text", async () => {
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      await flush();
+      const timeline = all(root).find((node) => node.className === "business-timeline")!;
+      assert.ok(timeline.textContent.includes("接单程序领取任务"));
+      assert.equal(timeline.textContent.includes("旧聚合文本"), false);
+    },
+    item,
+    undefined,
+    {
+      timeline: [
+        {
+          seq: 1,
+          kind: "claimNext",
+          at: null,
+          runId: 2,
+          eventId: null,
+          cardId: null,
+          feedbackId: null,
+          text: "旧聚合文本",
+          truncated: false,
+        },
+      ],
+    },
+  );
+});
+// Prevent real finish receipts from becoming generic operations or losing done feedback; dates use Chinese locale.
+test("finish receipt displays real proposal and done feedback with Chinese dates", async () => {
+  const at = "2026-11-17T07:19:36.945Z";
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      await flush();
+      const timeline = all(root).find((node) => node.className === "business-timeline")!;
+      assert.ok(timeline.textContent.includes("本轮结束，提出方案"));
+      assert.ok(all(timeline).some((node) => node.className === "business-feedback-entry"));
+      assert.ok(
+        all(timeline).some((node) => node.tag === "time" && node.textContent === new Date(at).toLocaleString("zh-CN")),
+      );
+      const header = all(root).find((node) => node.className === "tasks-detail-head")!;
+      assert.ok(header.textContent.includes(`更新于 ${new Date(at).toLocaleString("zh-CN")}`));
+      assert.equal(header.textContent.includes(at), false);
+    },
+    { ...item, updatedAt: at },
+    undefined,
+    {
+      timeline: [
+        {
+          seq: 1,
+          kind: "finish",
+          at,
+          runId: 2,
+          eventId: null,
+          cardId: null,
+          feedbackId: null,
+          text: "",
+          truncated: false,
+          display: {
+            events: [],
+            completion: null,
+            feedback: [],
+            runs: [{ id: 2, state: "done", summary: "真实回执", error: "", truncated: false }],
+            cards: [
+              {
+                id: 4,
+                runId: 2,
+                kind: "ask",
+                state: "open",
+                title: "实际问题",
+                text: "方案内容",
+                options: ["方案甲", "方案乙"],
+                choice: null,
+                answer: null,
+                by: null,
+                result: null,
+                truncated: false,
+              },
+            ],
+          },
+        },
+      ],
+    },
+  );
+});
 // Prevent duplicated task actions, answered questions in the header, and substituted execution titles.
 // Prevent header previews from replacing original requirements with progress, losing text on collapse,
 // or offering expansion for text that already fits within three rendered lines.
@@ -299,8 +513,6 @@ test("owner completion displays acceptance separately from the original executor
       assert.match(root.textContent, /本人确认完成：已验收界面/);
       controller.open("task:1");
       await flush();
-      const resultTab = all(root).find((x) => x.tag === "button" && x.textContent === "交付结果")!;
-      resultTab.fire();
       assert.match(root.textContent, /本人确认完成：已验收界面/);
       assert.doesNotMatch(root.textContent, /不代表自动测试全部通过|不会启动 Agent|这是本人验收/);
       assert.match(root.textContent, /原执行报告/);
@@ -438,7 +650,7 @@ test("legacy navigation returns to business list without showing old detail", as
     assert.match(root.textContent, /旧执行不在业务任务列表/);
   });
 });
-test("task detail keeps the original requirement in the header with only process and delivery tabs", async () => {
+test("task detail keeps the original requirement in the header without duplicated content tabs", async () => {
   await withView(async (controller, root) => {
     controller.open("task:1");
     await flush();
@@ -457,10 +669,10 @@ test("task detail keeps the original requirement in the header with only process
     assert.equal(history.hidden, false);
     assert.equal(history.textContent.includes("需确认"), false);
     assert.ok(history.textContent.includes("可能包含多轮"));
-    all(root)
-      .find((x) => x.tag === "button" && x.textContent === "交付结果")!
-      .fire();
-    assert.ok(root.textContent.includes("尚无明确收尾的交付结果"));
+    assert.equal(
+      all(root).some((x) => x.textContent === "交付结果"),
+      false,
+    );
     controller.back();
     await flush();
     controller.open("task:1");
@@ -559,7 +771,7 @@ test("detail title shares the back row and stopping uses one armed button withou
 });
 
 // The process must reach the first screen before any correction or feedback editor.
-test("prototype DOM puts current actions before tabs, hides correction and confines feedback to result", async () => {
+test("unified DOM retains protected current actions and correction drafts", async () => {
   const run = {
     id: 2,
     rule: "r",
@@ -592,16 +804,17 @@ test("prototype DOM puts current actions before tabs, hides correction and confi
         const detail = all(root).find((x) => x.className === "tasks-detail-page")!;
         assert.deepEqual(
           detail.children.slice(0, 4).map((x) => x.className),
-          ["tasks-detail-head", "business-detail-actions", "business-current", "task-detail-tabs"],
+          ["tasks-detail-head", "business-detail-actions", "business-current", "business-process-content"],
         );
         const current = detail.children[2];
         const decisions = all(current).find((x) => x.className === "business-decisions")!;
         assert.equal(decisions.hidden, true);
         const memo = all(current).find((x) => x.className === "business-correction")!;
         assert.equal(memo.hidden, true);
-        const result = all(detail).find((x) => x.className === "business-result-content")!;
-        assert.equal(result.hidden, true);
-        assert.ok(all(result).some((x) => x.textContent === "记录反馈"));
+        assert.equal(
+          all(detail).some((x) => x.className === "business-result-content"),
+          false,
+        );
         assert.ok(!all(current).some((x) => x.textContent === "记录反馈"));
         const toggle = all(current).find((x) => x.className === "business-correct-toggle")!;
         toggle.fire();
@@ -613,11 +826,7 @@ test("prototype DOM puts current actions before tabs, hides correction and confi
         for (let i = 0; i < 4; i++) await flush();
         assert.ok(all(memo).includes(input));
         assert.equal(input.value, "更正草稿");
-        all(detail)
-          .find((x) => x.tag === "button" && x.textContent === "交付结果")!
-          .fire();
-        assert.equal(result.hidden, false);
-        assert.equal(all(detail).find((x) => x.className === "business-process-content")!.hidden, true);
+        assert.equal(all(detail).find((x) => x.className === "business-process-content")!.hidden, false);
       },
       shown,
       { run, association: { kind: "unavailable" }, events: page, cards: page, relatedRuns: page },

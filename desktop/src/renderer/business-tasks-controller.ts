@@ -231,14 +231,23 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
         return;
     } else {
       if (request.action !== "feedback" && ["cancelling", "cancelled"].includes(detail.task.state)) return;
-      if (!runReady || !run || request.runId !== run.run.id || request.runId !== detail.task.latestRunId) return;
-      if (request.action === "feedback" && run.run.state !== "done") return;
+      if (request.action === "feedback") {
+        const historicalDone = detail.timeline.items.some((item) =>
+          item.display?.runs.some((round) => round.id === request.runId && round.state === "done"),
+        );
+        const latestDone =
+          runReady &&
+          run?.run.id === request.runId &&
+          run.run.state === "done" &&
+          request.runId === detail.task.latestRunId;
+        if (!historicalDone && !latestDone) return;
+      } else if (!runReady || !run || request.runId !== run.run.id || request.runId !== detail.task.latestRunId) return;
       if (
         request.action === "cancel" &&
-        (run.run.stopping || !["queued", "claimed", "unknown"].includes(run.run.state))
+        (!run || run.run.stopping || !["queued", "claimed", "unknown"].includes(run.run.state))
       )
         return;
-      if (request.action === "memo" && run.run.state === "queued") return;
+      if (request.action === "memo" && (!run || run.run.state === "queued")) return;
     }
     const key = selectedKey,
       token = {};

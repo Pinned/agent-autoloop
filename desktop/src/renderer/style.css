@@ -1433,6 +1433,132 @@ main:has(#task-subpage:not([hidden])) {
   font-size: 12px;
   color: var(--muted);
 }
+.business-record-card {
+  padding: 18px 20px;
+  border: 1px solid var(--soft);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.business-record-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+}
+.business-tasks-panel .business-record-heading time {
+  margin: 0 0 0 auto;
+  font-size: 11px;
+}
+.business-record-run {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--panel2);
+  color: var(--muted);
+  font-size: 11px;
+}
+.business-record-card p {
+  margin: 12px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.85;
+}
+.business-intake-subcard,
+.business-record-question {
+  margin-top: 16px;
+  padding: 16px 18px;
+  border: 1px solid var(--soft);
+  border-radius: 9px;
+  background: var(--panel2);
+}
+.business-intake-subcard h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+}
+.business-intake-subcard p {
+  font-size: 13px;
+  font-weight: 400;
+}
+.business-proposal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+}
+.business-proposal-actions > button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 240px;
+  max-width: 100%;
+  min-height: 42px;
+  box-sizing: border-box;
+}
+.business-proposal-actions .is-selected:disabled {
+  opacity: 1;
+  border: 2px solid var(--green);
+  background: color-mix(in srgb, var(--green) 10%, var(--panel));
+  color: var(--green);
+  font-weight: 600;
+}
+.selection-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border: 1px solid var(--green);
+  border-radius: 4px;
+}
+.business-proposal-actions .is-unselected:disabled {
+  color: var(--faint);
+  background: var(--panel2);
+}
+.business-completed-card {
+  border-color: color-mix(in srgb, var(--green) 24%, var(--soft));
+}
+.business-completion-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+.business-feedback-entry,
+.business-session-entry {
+  font-size: 12px;
+}
+.business-feedback-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.business-feedback-icon {
+  position: relative;
+  display: inline-block;
+  width: 13px;
+  height: 11px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+}
+.business-feedback-icon::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  bottom: -4px;
+  width: 4px;
+  height: 4px;
+  border-left: 1px solid currentColor;
+  transform: skewY(-35deg);
+}
+.business-record-error {
+  color: var(--red);
+}
+@media (max-width: 650px) {
+  .business-proposal-actions > button { width: 100%; }
+  .business-record-card { padding: 14px; }
+  .business-tasks-panel .business-record-heading time { flex-basis: 100%; margin-left: 0; }
+}
+@media (forced-colors: active) {
+  .business-proposal-actions .is-selected:disabled { outline: 2px solid Highlight; }
+}
 .task-route-summary {
   font-size: 12px;
   color: var(--muted);
