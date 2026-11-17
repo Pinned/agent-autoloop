@@ -390,6 +390,59 @@ test("finish receipt displays real proposal and done feedback with Chinese dates
     },
   );
 });
+// Prevent resolved old questions from appearing as newly proposed plans or duplicating the completion card.
+test("completion and resolving finish omit old plans while original proposal and answer retain them", async () => {
+  const oldCard = {
+    id: 4,
+    runId: 1,
+    kind: "ask",
+    state: "done",
+    title: "历史方案",
+    text: "旧问题正文",
+    options: ["实施", "不实施"],
+    choice: 0,
+    answer: "实施",
+    by: "owner",
+    result: "已收尾",
+    truncated: false,
+  };
+  const fact = (seq: number, kind: string, runId: number) => ({
+    seq,
+    kind,
+    at: null,
+    runId,
+    eventId: null,
+    cardId: null,
+    feedbackId: null,
+    text: "旧聚合问题",
+    truncated: false,
+    display: {
+      events: [],
+      cards: [oldCard],
+      completion: null,
+      feedback: [],
+      runs: [{ id: runId, state: "done", summary: `真实收尾${seq}`, error: "", truncated: false }],
+    },
+  });
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      await flush();
+      const timeline = all(root).find((node) => node.className === "business-timeline")!;
+      for (const row of timeline.children.slice(0, 2)) {
+        assert.equal(row.textContent.includes("旧问题正文"), false);
+        assert.equal(row.textContent.includes("提出方案"), false);
+        assert.ok(all(row).some((node) => node.className === "business-feedback-entry"));
+      }
+      assert.ok(timeline.children[0].textContent.includes("真实收尾4"));
+      assert.ok(timeline.children[2].textContent.includes("旧问题正文"));
+      assert.ok(timeline.children[3].textContent.includes("旧问题正文"));
+    },
+    { ...item, decisions: { items: [], hasMore: false } },
+    undefined,
+    { timeline: [fact(4, "task.completed", 2), fact(3, "finish", 2), fact(2, "answer", 2), fact(1, "finish", 1)] },
+  );
+});
 // Prevent duplicated task actions, answered questions in the header, and substituted execution titles.
 // Prevent header previews from replacing original requirements with progress, losing text on collapse,
 // or offering expansion for text that already fits within three rendered lines.

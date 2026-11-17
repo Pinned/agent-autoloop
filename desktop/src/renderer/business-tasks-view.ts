@@ -954,8 +954,16 @@ export function mountBusinessTasksView(
           "task.completed": "任务已完成",
           answer: "方案已获确认",
         };
+        // A receipt can update cards from an older round while resolving them; those are not new proposals.
+        const proposalCards = completed
+          ? []
+          : (display?.cards ?? []).filter(
+              (card) =>
+                event.kind === "answer" ||
+                (["finish", "result"].includes(event.kind) && event.runId !== null && card.runId === event.runId),
+            );
         const recordTitle =
-          ["finish", "result"].includes(event.kind) && display?.cards.some((card) => card.kind === "ask")
+          ["finish", "result"].includes(event.kind) && proposalCards.some((card) => card.kind === "ask")
             ? "本轮结束，提出方案"
             : (names[event.kind] ?? timelineLabels[event.kind] ?? "已记录操作");
         heading.append(el("strong", recordTitle));
@@ -1004,7 +1012,7 @@ export function mountBusinessTasksView(
             }
           else if (event.text && !display?.cards.length) record.append(el("p", event.text));
         }
-        for (const original of display?.cards ?? []) {
+        for (const original of proposalCards) {
           const card = original;
           const question = el("section", "", "business-record-question");
           question.append(el("h4", original.title), el("p", original.text));
