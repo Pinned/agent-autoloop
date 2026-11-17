@@ -679,6 +679,24 @@ test("list owns no outer panel surface and previews have distinct two/three-line
   assert.match(rule(".business-tasks-panel .tasks-run-detail {"), /-webkit-line-clamp:\s*3;/);
 });
 
+// Prevent detail headers from drifting away from the shared subpage typography and return control.
+test("task detail reuses subpage return, title and description styles", () => {
+  const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
+  assert.match(
+    css,
+    /\.page-head-copy \.task-back-button,\s*\.tasks-detail-head \.task-back-button\s*\{[^}]*padding:\s*3px 10px;[^}]*font-size:\s*12px;/,
+  );
+  assert.match(
+    css,
+    /\.page-head-subpage h1,\s*\.tasks-detail-head h2\s*\{[^}]*font-size:\s*18px;[^}]*line-height:\s*1\.3;/,
+  );
+  assert.match(
+    css,
+    /\.page-head-subpage p,\s*\.business-tasks-panel \.tasks-detail-head > p\s*\{[^}]*font-size:\s*12px;[^}]*color:\s*var\(--muted\);/,
+  );
+  assert.match(css, /\.business-tasks-panel \.tasks-detail-head\s*\{[^}]*align-items:\s*center;/);
+});
+
 // Prevent the return button from occupying a separate row or long titles widening the page.
 test("return and task heading share a bounded row while metadata stays below", () => {
   const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
