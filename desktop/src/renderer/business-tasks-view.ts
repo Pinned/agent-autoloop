@@ -177,14 +177,22 @@ export function mountBusinessTasksView(
   }
   const descriptionResize = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measureDescription);
   descriptionResize?.observe(headerDescription);
-  detailHead.append(back, detailHeading, headerDescription, descriptionToggle, metadata, decisionOverview);
+  const originNotice = el("p", "", "muted");
+  detailHead.append(
+    back,
+    detailHeading,
+    headerDescription,
+    descriptionToggle,
+    originNotice,
+    metadata,
+    decisionOverview,
+  );
   const actionBar = el("section", "", "business-detail-actions"),
     roundOperations = el("div", "", "business-round-operations"),
     taskOperations = el("div", "", "business-task-operations");
   actionBar.setAttribute("aria-label", "任务操作");
   actionBar.append(roundOperations, taskOperations);
-  const original = el("section", "", "business-original"),
-    progress = el("section"),
+  const progress = el("section"),
     final = el("section"),
     decisions = el("section", "", "business-decisions"),
     timeline = el("ol", "", "business-timeline"),
@@ -277,7 +285,7 @@ export function mountBusinessTasksView(
   diagnosis.append(el("summary", "执行与诊断资料"), diagnosisText);
   const executionHistory = el("section", "", "agent-execution-history");
   const history = createAgentHistoryController(options.history ?? {}, () => renderHistory());
-  let tab: "process" | "original" | "result" = "process";
+  let tab: "process" | "result" = "process";
   let tabTask = "";
   const expanded = new Set<number>();
   let polling: ReturnType<typeof setTimeout> | undefined;
@@ -287,15 +295,11 @@ export function mountBusinessTasksView(
     tab = "process";
     update();
   });
-  const originalTab = button("原始需求", () => {
-    tab = "original";
-    update();
-  });
   const resultTab = button("交付结果", () => {
     tab = "result";
     update();
   });
-  tabs.append(processTab, originalTab, resultTab);
+  tabs.append(processTab, resultTab);
   function renderHistory() {
     const limitation = el("details", "", "agent-history-scope");
     limitation.append(
@@ -412,7 +416,7 @@ export function mountBusinessTasksView(
   );
   processContent.append(executionHistory, timelineHeading, timeline, timelineMore, diagnosis);
   resultContent.append(final, feedbackControls);
-  detailPage.append(detailHead, actionBar, current, tabs, processContent, original, resultContent);
+  detailPage.append(detailHead, actionBar, current, tabs, processContent, resultContent);
   let correctionOpen = false;
   const correctionToggle = button("提交更正", () => {
     correctionOpen = !correctionOpen;
@@ -645,10 +649,8 @@ export function mountBusinessTasksView(
     }
     tabs.hidden = executionHistory.hidden = !data;
     processTab.disabled = tab === "process";
-    originalTab.disabled = tab === "original";
     resultTab.disabled = tab === "result";
     processTab.setAttribute("aria-pressed", String(tab === "process"));
-    originalTab.setAttribute("aria-pressed", String(tab === "original"));
     resultTab.setAttribute("aria-pressed", String(tab === "result"));
     timelineHeading.hidden = !data || tab !== "process";
     executionHistory.hidden = tab !== "process" || !data;
@@ -682,26 +684,25 @@ export function mountBusinessTasksView(
     readDetail.disabled = controller.detailBusy || controller.actionBusy;
     if (!data) {
       title.textContent = "任务详情";
-      original.hidden =
-        progress.hidden =
-        final.hidden =
-        decisions.hidden =
-        runActions.hidden =
-        timeline.hidden =
-        diagnosis.hidden =
-          true;
+      progress.hidden = final.hidden = decisions.hidden = runActions.hidden = timeline.hidden = diagnosis.hidden = true;
       timelineMore.hidden = true;
       return;
     }
     const task = data.task;
     progress.hidden = decisions.hidden = timeline.hidden = diagnosis.hidden = false;
-    original.hidden = tab !== "original";
     title.textContent = taskTitle(task);
     const nextDescriptionKey = `${task.key}:${task.origin.detail}`;
     if (descriptionKey !== nextDescriptionKey) descriptionExpanded = false;
     descriptionKey = nextDescriptionKey;
     headerDescription.hidden = task.origin.availability !== "recorded" || !task.origin.detail;
     headerDescription.textContent = headerDescription.hidden ? "" : task.origin.detail;
+    originNotice.textContent =
+      task.origin.availability === "missing-history"
+        ? "原始资料历史缺失，无法还原详情。"
+        : task.origin.truncated
+          ? "原始资料超过展示长度，当前仅显示部分。"
+          : "";
+    originNotice.hidden = !originNotice.textContent;
     measureDescription();
     badge.textContent = taskState(task);
     badge.dataset.state = task.kind === "legacy" ? (task.execution?.state ?? "unknown") : task.state;
@@ -712,39 +713,6 @@ export function mountBusinessTasksView(
     decisionOverview.textContent = openQuestions.length
       ? `需要你处理：${openQuestions[0].title}${openQuestions.length > 1 || task.decisions.hasMore ? " · 还有其他问题" : ""}`
       : "";
-    original.replaceChildren(
-      el("h3", task.kind === "legacy" ? "本轮触发资料（不认定最初业务需求）" : "原始需求"),
-      el(
-        "p",
-        task.origin.eventId !== null || task.origin.availability !== "missing-history" ? task.origin.title : "",
-        "task-origin-title",
-      ),
-      el(
-        "p",
-        task.origin.availability === "missing-history"
-          ? task.kind === "legacy"
-            ? task.origin.eventId !== null
-              ? "此触发事件未记录详情，已保存的标题仍展示。"
-              : "本轮没有可读取的事件关联；缺任务身份或 Agent 历史关联不代表派发资料不存在。"
-            : "原始资料历史缺失，无法还原详情。"
-          : task.origin.availability === "empty"
-            ? task.kind === "legacy"
-              ? "本轮记录未提供详情，已记录的触发标题仍展示。"
-              : "提交时未填写详情。"
-            : task.origin.detail || "提交时未填写详情。",
-      ),
-    );
-    if (task.origin.truncated)
-      original.append(
-        el(
-          "p",
-          task.kind === "legacy"
-            ? "本轮触发资料超过展示长度，当前仅显示部分。"
-            : "原始资料超过展示长度，当前仅显示部分。",
-          "muted",
-        ),
-      );
-    if (task.legacyNotice) original.append(el("p", task.legacyNotice, "muted"));
     progress.replaceChildren(
       el("h3", task.kind === "legacy" ? "本轮已记录结果或进展" : "当前进展"),
       el("p", task.latestProgress || "尚无已记录的进展。"),

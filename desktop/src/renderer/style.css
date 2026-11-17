@@ -1394,14 +1394,6 @@ main:has(#task-subpage:not([hidden])) {
   flex-basis: 100%;
   margin: 0;
 }
-.business-tasks-panel .business-original {
-  padding: 14px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
 .business-tasks-panel .business-decision {
   padding: 20px;
   margin: 12px 0;

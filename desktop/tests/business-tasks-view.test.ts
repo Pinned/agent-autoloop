@@ -1,6 +1,7 @@
 // Prevent lifecycle cards from hiding the actual decision/options or silent truncation, and prevent
 // leaving an in-flight write before its receipt can be checked. Also prevent the removed list-level
 // execution diagnostics entrance from returning while retaining associated business execution history and rejecting legacy navigation.
+// Prevent duplicate original-requirement tabs without losing the header text or truncation warning.
 // Fake DOM/bridge, no Electron or network.
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -437,25 +438,28 @@ test("legacy navigation returns to business list without showing old detail", as
     assert.match(root.textContent, /旧执行不在业务任务列表/);
   });
 });
-test("task detail defaults to process and keeps original and delivery separate", async () => {
+test("task detail keeps the original requirement in the header with only process and delivery tabs", async () => {
   await withView(async (controller, root) => {
     controller.open("task:1");
     await flush();
-    const original = all(root).find((x) => x.className === "business-original")!;
+    // Prevent the duplicate original tab from returning while preserving the header requirement.
+    assert.equal(
+      all(root).some((x) => x.className === "business-original"),
+      false,
+    );
+    assert.equal(
+      all(root).some((x) => x.tag === "button" && x.textContent === "原始需求"),
+      false,
+    );
+    assert.equal(all(root).find((x) => x.id === "business-header-description")!.textContent, "原始详情");
     const history = all(root).find((x) => x.className === "agent-execution-history")!;
-    assert.equal(original.hidden, true);
+    assert.ok(root.textContent.includes("原始资料超过展示长度，当前仅显示部分。"));
     assert.equal(history.hidden, false);
     assert.equal(history.textContent.includes("需确认"), false);
     assert.ok(history.textContent.includes("可能包含多轮"));
     all(root)
-      .find((x) => x.tag === "button" && x.textContent === "原始需求")!
-      .fire();
-    assert.equal(original.hidden, false);
-    assert.equal(history.hidden, true);
-    all(root)
       .find((x) => x.tag === "button" && x.textContent === "交付结果")!
       .fire();
-    assert.equal(original.hidden, true);
     assert.ok(root.textContent.includes("尚无明确收尾的交付结果"));
     controller.back();
     await flush();
@@ -465,6 +469,20 @@ test("task detail defaults to process and keeps original and delivery separate",
   });
 });
 
+test("header retains missing-history warnings without inventing empty requirement text", async () => {
+  for (const availability of ["missing-history", "empty"] as const) {
+    await withView(
+      async (controller, root) => {
+        controller.open("task:1");
+        await flush();
+        assert.equal(all(root).find((x) => x.id === "business-header-description")!.hidden, true);
+        assert.equal(root.textContent.includes("原始资料历史缺失，无法还原详情。"), availability === "missing-history");
+        assert.equal(root.textContent.includes("提交时未填写详情。"), false);
+      },
+      { ...item, origin: { ...item.origin, detail: "", availability, truncated: false } },
+    );
+  }
+});
 test("list decisions keep question, every option and honest truncation/more notices", async () => {
   await withView(async (_controller, root) => {
     const task = all(root).find((x) => x.dataset.taskKey === "task:1")!;
