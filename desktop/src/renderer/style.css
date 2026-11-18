@@ -1265,6 +1265,7 @@ main:has(#task-subpage:not([hidden])) {
   background: transparent;
 }
 .business-tasks-panel .tasks-detail-head {
+  --task-title-size: 24px;
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr);
   align-items: center;
@@ -2683,15 +2684,16 @@ main:has(.business-tasks-panel .tasks-detail-page:not([hidden])) {
 .business-tasks-panel .tasks-detail-head .task-back-button {
   display: grid;
   place-items: center;
+  align-self: start;
   width: 36px;
-  height: 36px;
+  height: calc(var(--task-title-size) * 1.4);
   padding: 0;
   border: 0;
   border-radius: 8px;
   background: transparent;
   font-size: 20px;
 }
-.business-tasks-panel .tasks-detail-head h2 { font-size: 24px; line-height: 1.4; font-weight: 650; letter-spacing: -0.4px; }
+.business-tasks-panel .tasks-detail-head h2 { font-size: var(--task-title-size); line-height: 1.4; font-weight: 650; letter-spacing: -0.4px; }
 .business-tasks-panel .tasks-detail-page > .business-detail-actions,
 .business-tasks-panel .tasks-detail-page > .business-current { margin: 0; padding: 12px 40px 0 90px; border: 0; }
 .business-current:has(> [hidden]):not(:has(> :not([hidden]))) { display: none; }
@@ -2722,8 +2724,7 @@ main:has(.business-tasks-panel .tasks-detail-page:not([hidden])) {
   .business-tasks-panel .tasks-detail-page > .business-process-content { padding-left: 74px; padding-right: 24px; }
 }
 @media (max-width: 650px) {
-  .business-tasks-panel .tasks-detail-head { padding: 22px 16px; gap: 8px; }
-  .business-tasks-panel .tasks-detail-head h2 { font-size: 20px; }
+  .business-tasks-panel .tasks-detail-head { --task-title-size: 20px; padding: 22px 16px; gap: 8px; }
   .business-tasks-panel .tasks-detail-page > .business-detail-actions,
   .business-tasks-panel .tasks-detail-page > .business-current { padding-left: 60px; padding-right: 16px; }
   .business-tasks-panel .tasks-detail-page > .business-process-content { padding-left: 24px; padding-right: 16px; }
