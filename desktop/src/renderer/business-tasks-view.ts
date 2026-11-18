@@ -703,7 +703,7 @@ export function mountBusinessTasksView(
     current.hidden = !data && !controller.detailBusy && !controller.detailError;
     readDetail.hidden = !controller.mustReread && !controller.detailError;
     actionStatus.hidden = !controller.actionMessage;
-    timelineStatus.hidden = !controller.detailBusy && !controller.detailError;
+    timelineStatus.hidden = !controller.detailError;
     if (data?.task.latestRunId && !history.rounds.has(data.task.latestRunId)) {
       expanded.add(data.task.latestRunId);
       history.read(data.task.latestRunId);
@@ -719,11 +719,9 @@ export function mountBusinessTasksView(
         }
       }, 2000);
     }
-    timelineStatus.textContent = controller.detailBusy
-      ? "正在读取处理记录…"
-      : controller.detailError
-        ? (messages[controller.detailError] ?? controller.detailError)
-        : "";
+    timelineStatus.textContent = controller.detailError
+      ? (messages[controller.detailError] ?? controller.detailError)
+      : "";
     back.disabled = controller.actionBusy;
     readDetail.disabled = controller.detailBusy || controller.actionBusy;
     if (!data) {

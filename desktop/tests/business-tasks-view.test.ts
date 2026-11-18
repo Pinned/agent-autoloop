@@ -6,6 +6,7 @@
 // Prevent proposal controls inside prose, suppressed recorded answers, non-compact lifecycle cards,
 // and inline editors replacing modal operations. Fake DOM/bridge, no Electron or network.
 // Prevent hidden live questions, completion blockers, manual refresh and scattered operation groups.
+// Prevent detail reads from flashing loading prose while retaining visible read errors and write guards.
 test("operation area keeps progress and live answers above records without manual refresh", () => {
   const source = readFileSync(new URL("../src/renderer/business-tasks-view.ts", import.meta.url), "utf8");
   assert.match(source, /current\.append\(progress, decisions, actionBar\)/);
@@ -151,6 +152,7 @@ async function withView(
     scrollHost?: HTMLElement;
     actionAuthority?: "missing" | "execution" | "cards" | "timers" | "hold";
     timeline?: unknown[];
+    detailRead?: () => Promise<unknown>;
   } = {},
 ) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
@@ -162,8 +164,9 @@ async function withView(
     let view: ReturnType<typeof mountBusinessTasksView>;
     const controller = createRendererBusinessTasks(
       {
-        businessTasksRead: async (request) =>
-          ({
+        businessTasksRead: async (request) => {
+          if (request.operation !== "list" && options.detailRead) return (await options.detailRead()) as never;
+          return {
             ok: true,
             data:
               request.operation === "list"
@@ -198,7 +201,8 @@ async function withView(
                           },
                         }),
                   },
-          }) as never,
+          } as never;
+        },
         taskDetail: async () => ({ version: 1, ok: true, data: runDetail }) as never,
         taskAction: () => new Promise(() => {}),
       },
@@ -215,6 +219,34 @@ async function withView(
     else Reflect.deleteProperty(globalThis, "document");
   }
 }
+test("detail reads stay silent on first load and refresh but still show read errors", async () => {
+  let finish: (response: unknown) => void = () => {};
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      assert.equal(controller.detailBusy, true);
+      assert.ok(all(root).some((node) => node.textContent === "任务详情" && !node.hidden));
+      assert.ok(!all(root).some((node) => !node.hidden && node.textContent === "正在读取处理记录…"));
+      finish({ ok: true, data: { task: item, timeline: { items: [], hasMore: false, nextBefore: null } } });
+      await flush();
+      controller.refreshDetail();
+      assert.equal(controller.detailBusy, true);
+      assert.ok(!all(root).some((node) => !node.hidden && node.textContent === "正在读取处理记录…"));
+      finish({ ok: false, error: "error" });
+      await flush();
+      assert.equal(controller.detailBusy, false);
+      assert.ok(all(root).some((node) => !node.hidden && node.textContent === "读取失败，请重新读取。"));
+    },
+    item,
+    undefined,
+    {
+      detailRead: () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    },
+  );
+});
 test("unified records remove dual tabs and repeated progress while retaining diagnosis", async () => {
   await withView(async (controller, root) => {
     controller.open("task:1");
