@@ -106,3 +106,5 @@ agent-autoloop uninstall
 - [安全边界](SECURITY.md)：密钥、执行权限和交付审查。
 
 开发检查用 `npm test`、`npm run typecheck`、`npm run format:check`，完整故障与性能检查用 `npm run test:nightly`。备份同时保留 `hub.db` 和 `master.key`；后者权限应为 0600。
+
+任务暂停使用本人 `pause-task <任务编号> <原因>`，恢复使用 `resume-task <任务编号>`。暂停、更正保留原任务资源；取消或明确完成在全任务退出与资料收尾核实后释放。旧 stop 仍只停一轮，release-hold 不能绕过任务暂停保留。新旧中台与客户端须同步能力字段，缺能力时不提供操作；不回填旧任务资源锁、不迁移日志。详见协议的任务暂停与连续资源保留。
