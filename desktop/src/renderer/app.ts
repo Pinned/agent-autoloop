@@ -338,7 +338,17 @@ const rulesPage = mountRulesCasView(rules, {
 const businessTasks = createRendererBusinessTasks(window.desktop, () => {
   if (currentPage === "tasks") tasksPage?.update();
 });
+let todayDetailReturn: { scrollTop: number } | null = null;
 const tasksPage = mountBusinessTasksView(businessTasks, {
+  backLabel: () => (todayDetailReturn ? "返回今天" : "返回任务列表"),
+  backFromDetail: () => {
+    if (!todayDetailReturn) return;
+    const { scrollTop } = todayDetailReturn;
+    todayDetailReturn = null;
+    const returnPage = "today";
+    render(returnPage);
+    main.scrollTop = scrollTop;
+  },
   history: window.desktop,
   scrollHost: main,
   detailChanged: (open) => {
@@ -502,6 +512,7 @@ function render(id: string, focus = true) {
   localReadingView = undefined;
   localSummaryView = undefined;
   renderedFlavor = isDispatchTask ? "dispatch-task" : isAutomationEntry ? "automation" : pageFlavor(role, id);
+  if (currentPage === "tasks" && id !== "tasks") todayDetailReturn = null;
   currentPage = id;
   today.setActive(id === "today" && shell === "workspace" && !document.hidden);
   businessTasks.setActive(id === "tasks" && currentRole() !== "worker" && !document.hidden);
@@ -557,7 +568,16 @@ function render(id: string, focus = true) {
       host,
       today,
       () => render("workers"),
-      () => render("tasks"),
+      () => {
+        todayDetailReturn = null;
+        render("tasks");
+      },
+      (taskId) => {
+        if (businessTasks.actionBusy || businessTasks.mustReread) return;
+        todayDetailReturn = { scrollTop: main.scrollTop };
+        businessTasks.open(`task:${taskId}`);
+        render("tasks");
+      },
     );
     todayView.update();
   } else if (id === "automation" || id === "automation-entry") {

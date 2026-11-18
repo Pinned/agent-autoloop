@@ -96,6 +96,8 @@ export function mountBusinessTasksView(
     scrollHost?: HTMLElement;
     history?: Partial<Pick<DesktopBridge, "agentHistory">>;
     detailChanged?: (open: boolean) => void;
+    backFromDetail?: () => void;
+    backLabel?: () => string;
   },
 ) {
   const root = el("section", "", "tasks-panel business-tasks-panel");
@@ -160,7 +162,10 @@ export function mountBusinessTasksView(
     scroll = 0,
     pendingScroll = false;
   listPage.append(toolbar, status, list, pagination);
-  const back = button("←", () => controller.back()),
+  const back = button("←", () => {
+      controller.back();
+      if (controller.selectedKey === null) options.backFromDetail?.();
+    }),
     title = el("h2");
   title.id = "task-detail-title";
   const badge = el("span", "", "tasks-run-state"),
@@ -725,6 +730,7 @@ export function mountBusinessTasksView(
       ? (messages[controller.detailError] ?? controller.detailError)
       : "";
     back.disabled = controller.actionBusy;
+    back.setAttribute("aria-label", options.backLabel?.() ?? "返回任务列表");
     readDetail.disabled = controller.detailBusy || controller.actionBusy;
     if (!data) {
       title.textContent = "任务详情";

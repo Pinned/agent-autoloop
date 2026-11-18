@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { readFileSync } from "node:fs";
 import { mountTodayView } from "../src/renderer/today-view.ts";
 
+// Prevent active rows opening run ids as task ids, swallowing controls/selections, or losing the return page.
 // Prevent original task requests being replaced by rule names or execution reports.
 // Prevent long cost values from wrapping, losing the full bill, or changing accounting data.
 // The production view only needs these DOM operations. Keep this test independent of
@@ -82,6 +83,7 @@ function fixture(state: unknown = { kind: "ready", snapshot: snapshot() }, withT
   let refreshes = 0,
     workers = 0,
     tasks = 0;
+  const opened: number[] = [];
   const control = {
     state,
     busy: false,
@@ -95,8 +97,9 @@ function fixture(state: unknown = { kind: "ready", snapshot: snapshot() }, withT
       control as unknown as Parameters<typeof mountTodayView>[1],
       () => workers++,
       withTasks ? () => tasks++ : undefined,
+      (id) => opened.push(id),
     );
-    return { root, control, view, refreshes: () => refreshes, workers: () => workers, tasks: () => tasks };
+    return { root, control, view, opened, refreshes: () => refreshes, workers: () => workers, tasks: () => tasks };
   } finally {
     if (previous) Object.defineProperty(globalThis, "document", previous);
     else Reflect.deleteProperty(globalThis, "document");
@@ -115,6 +118,57 @@ function update(f: ReturnType<typeof fixture>) {
     else Reflect.deleteProperty(globalThis, "document");
   }
 }
+
+test("active navigation uses only explicit task identity and protects non-navigation gestures", () => {
+  const f = fixture({
+    kind: "ready",
+    snapshot: snapshot({
+      activeRuns: [
+        {
+          id: 7,
+          agent: "codex",
+          state: "claimed",
+          request: { taskId: 42, title: "原始任务", detail: "正文", availability: "recorded", truncated: false },
+        },
+        {
+          id: 42,
+          agent: "codex",
+          state: "queued",
+          request: { taskId: null, title: "旧资料", detail: "", availability: "empty", truncated: false },
+        },
+      ],
+    }),
+  });
+  const rows = byClass(f.root, "today-run-row");
+  const link = byClass(f.root, "today-run-title-link")[0];
+  assert.ok(link);
+  assert.equal(link.attributes.get("role"), "link");
+  assert.equal(link.attributes.get("tabindex"), "0");
+  const emit = (node: TestElement, type: string, event: object) =>
+    (node.listeners.get(type) as unknown as (e: object) => void)?.(event);
+  const ordinary = { target: { closest: () => null }, preventDefault() {} };
+  emit(rows[0], "click", ordinary);
+  emit(link, "keydown", { ...ordinary, key: "Enter" });
+  emit(link, "keydown", { ...ordinary, key: " " });
+  emit(rows[1], "click", ordinary);
+  for (const modifier of ["ctrlKey", "metaKey", "shiftKey", "altKey"])
+    emit(rows[0], "click", { ...ordinary, [modifier]: true });
+  emit(rows[0], "click", { ...ordinary, target: { closest: () => ({}) } });
+  emit(rows[0], "click", { ...ordinary, button: 1 });
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { getSelection: () => ({ isCollapsed: false }) },
+  });
+  try {
+    emit(rows[0], "click", ordinary);
+  } finally {
+    if (previous) Object.defineProperty(globalThis, "window", previous);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+  assert.deepEqual(f.opened, [42, 42]);
+  assert.equal(byClass(rows[1], "today-run-title-link").length, 0);
+});
 
 test("active rows show fixed original requests, explicit legacy ids and real stopping state", () => {
   const f = fixture({

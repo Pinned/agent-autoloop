@@ -1,3 +1,4 @@
+import { permitsTaskNavigation } from "./task-item-navigation.ts";
 import type { DesktopTodaySnapshot } from "../../../host/desktop-state-contract.ts";
 import type { createRendererToday } from "./today-controller.ts";
 
@@ -53,12 +54,13 @@ function compactDollars(cost: number): string {
   return `$${number}${divisor === 1e8 ? "亿" : divisor === 1e4 ? "万" : ""}`;
 }
 
-/** A read-only snapshot: no invented answers, no per-task links, only asks and active runs. */
+/** A read-only snapshot; only explicit business identities can open task details. */
 export function mountTodayView(
   root: HTMLElement,
   control: Controller,
   openWorkers: () => void,
   openTasks?: () => void,
+  openBusinessTask?: (taskId: number) => void,
 ) {
   const section = element("section", "", "today-view");
   section.setAttribute("aria-label", "今天进展");
@@ -145,9 +147,73 @@ export function mountTodayView(
       const copy = element("div", "", "today-run-copy");
       const title = element("div", "", "today-run-title");
       const request = run.request;
+      const name = element("strong", request?.title || (request?.taskId ? "原始任务名称未记录" : "触发资料未记录"));
+      if (openBusinessTask && Number.isSafeInteger(request?.taskId) && request!.taskId! > 0) {
+        const taskId = request!.taskId!;
+        row.className += " today-run-navigable";
+        name.className = "today-run-title-link";
+        name.setAttribute("role", "link");
+        name.setAttribute("tabindex", "0");
+        const selected = () => typeof window !== "undefined" && window.getSelection?.()?.isCollapsed === false;
+        name.addEventListener("click", (event) => {
+          if (
+            !permitsTaskNavigation(
+              {
+                target: null,
+                button: event.button,
+                defaultPrevented: event.defaultPrevented,
+                ctrlKey: event.ctrlKey,
+                metaKey: event.metaKey,
+                shiftKey: event.shiftKey,
+                altKey: event.altKey,
+              },
+              selected(),
+            )
+          )
+            return;
+          event.preventDefault();
+          openBusinessTask(taskId);
+        });
+        name.addEventListener("keydown", (event) => {
+          if (
+            event.key !== "Enter" ||
+            !permitsTaskNavigation(
+              {
+                target: null,
+                defaultPrevented: event.defaultPrevented,
+                ctrlKey: event.ctrlKey,
+                metaKey: event.metaKey,
+                shiftKey: event.shiftKey,
+                altKey: event.altKey,
+              },
+              selected(),
+            )
+          )
+            return;
+          event.preventDefault();
+          openBusinessTask(taskId);
+        });
+        row.addEventListener("click", (event) => {
+          if (
+            permitsTaskNavigation(
+              {
+                target: event.target as Element | null,
+                button: event.button,
+                defaultPrevented: event.defaultPrevented,
+                ctrlKey: event.ctrlKey,
+                metaKey: event.metaKey,
+                shiftKey: event.shiftKey,
+                altKey: event.altKey,
+              },
+              selected(),
+            )
+          )
+            openBusinessTask(taskId);
+        });
+      }
       title.append(
         element("span", request?.taskId ? `任务 #${request.taskId}` : `执行 #${run.id}`, "today-run-id muted"),
-        element("strong", request?.title || (request?.taskId ? "原始任务名称未记录" : "触发资料未记录")),
+        name,
       );
       copy.append(
         title,

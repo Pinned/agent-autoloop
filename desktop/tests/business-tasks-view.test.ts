@@ -157,6 +157,8 @@ async function withView(
     actionAuthority?: "missing" | "execution" | "cards" | "timers" | "hold";
     timeline?: unknown[];
     detailRead?: () => Promise<unknown>;
+    backFromDetail?: () => void;
+    backLabel?: () => string;
   } = {},
 ) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
@@ -214,6 +216,8 @@ async function withView(
     );
     view = mountBusinessTasksView(controller, {
       scrollHost: options.scrollHost,
+      backFromDetail: options.backFromDetail,
+      backLabel: options.backLabel,
     });
     view.init();
     await flush();
@@ -959,6 +963,43 @@ test("list decisions keep question, every option and honest truncation/more noti
       assert.ok(task.textContent.includes(text), `missing decision content: ${text}`);
   });
 });
+// Prevent a today-origin detail from returning to an unrelated list, including during writes.
+test("detail back delegates to its origin only after controller permits leaving", async () => {
+  let returns = 0;
+  const options = { backFromDetail: () => returns++, backLabel: () => "返回今天" };
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      await flush();
+      all(root)
+        .find((x) => x.attributes.get("aria-label") === "返回今天")!
+        .fire();
+      assert.equal(controller.selectedKey, null);
+      assert.equal(returns, 1);
+      await flush();
+    },
+    item,
+    undefined,
+    options,
+  );
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      await flush();
+      controller.submitAction({ version: 1, action: "answer", cardId: 4, input: { choice: 1 } });
+      all(root)
+        .find((x) => x.attributes.get("aria-label") === "返回今天")!
+        .fire();
+      assert.equal(controller.selectedKey, "task:1");
+      assert.equal(returns, 1);
+      await flush();
+    },
+    item,
+    undefined,
+    options,
+  );
+});
+
 test("in-flight answers disable detail back navigation", async () => {
   await withView(async (controller, root) => {
     controller.open("task:1");
