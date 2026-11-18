@@ -4,12 +4,15 @@ export const DESKTOP_TASK_ACTION_RAW_MAX_UTF16 = 16 * 1024;
 export const DESKTOP_TASK_ACTION_INPUT_MAX_BYTES = 32 * 1024;
 export const DESKTOP_TASK_ACTION_RESULT_MAX_BYTES = 1024;
 
-export type DesktopTaskAction = "answer" | "resolve" | "cancel" | "cancelTask" | "completeTask" | "memo" | "feedback";
+export type DesktopTaskAction =
+  "answer" | "resolve" | "cancel" | "cancelTask" | "completeTask" | "pauseTask" | "resumeTask" | "memo" | "feedback";
 export type DesktopTaskFeedbackKind = "交付满意" | "需要改善" | "内容错误";
 export type DesktopTaskAnswerInput = { choice: number } | { text: string } | Record<string, never>;
 export type DesktopTaskActionInput =
   | { version: 1; action: "answer"; cardId: number; input: DesktopTaskAnswerInput }
   | { version: 1; action: "resolve"; cardId: number; input: { reason: string } }
+  | { version: 1; action: "pauseTask"; taskId: number; input: { reason: string } }
+  | { version: 1; action: "resumeTask"; taskId: number; input: Record<string, never> }
   | { version: 1; action: "completeTask"; taskId: number; input: { reason: string } }
   | { version: 1; action: "cancelTask"; taskId: number; input: { reason: string } }
   | { version: 1; action: "cancel"; runId: number; input: Record<string, never> }
@@ -27,11 +30,14 @@ export type DesktopTaskActionResult =
   | { ok: true }
   | { stopped: boolean }
   | { ok: true; id: number }
+  | { status: "active" | "pausing" | "paused" }
   | { status: "completed" }
   | { status: "cancelling" | "cancelled" };
 export type DesktopTaskActionSuccess =
   | { version: 1; ok: true; action: "answer"; cardId: number; result: DesktopTaskAnswerResult }
   | { version: 1; ok: true; action: "resolve"; cardId: number; result: { changed: boolean } }
+  | { version: 1; ok: true; action: "pauseTask"; taskId: number; result: { status: "pausing" | "paused" } }
+  | { version: 1; ok: true; action: "resumeTask"; taskId: number; result: { status: "active" } }
   | { version: 1; ok: true; action: "completeTask"; taskId: number; result: { status: "completed" } }
   | { version: 1; ok: true; action: "cancelTask"; taskId: number; result: { status: "cancelling" | "cancelled" } }
   | { version: 1; ok: true; action: "cancel"; runId: number; result: { ok: true } }
@@ -68,11 +74,13 @@ const actions: readonly DesktopTaskAction[] = [
   "cancel",
   "cancelTask",
   "completeTask",
+  "pauseTask",
+  "resumeTask",
   "memo",
   "feedback",
 ];
 const actionTarget = (action: DesktopTaskAction) =>
-  action === "cancelTask" || action === "completeTask"
+  action === "cancelTask" || action === "completeTask" || action === "pauseTask" || action === "resumeTask"
     ? "taskId"
     : action === "answer" || action === "resolve"
       ? "cardId"
@@ -144,7 +152,7 @@ export function parseDesktopTaskActionInput(value: unknown): DesktopTaskActionIn
       : Object.hasOwn(raw, "text")
         ? { text: text(raw.text) }
         : {};
-  } else if (action === "resolve" || action === "cancelTask" || action === "completeTask") {
+  } else if (action === "resolve" || action === "cancelTask" || action === "completeTask" || action === "pauseTask") {
     raw = record(item.input, ["reason"]);
     input = { reason: text(raw.reason, true) };
   } else if (action === "memo") {
@@ -172,6 +180,13 @@ export function projectDesktopTaskActionResult(action: DesktopTaskAction, value:
     result = { changed: boolean(item.changed), state: item.state as DesktopTaskAnswerResult["state"] };
   } else if (action === "resolve") {
     result = { changed: boolean(record(value, ["changed"]).changed) };
+  } else if (action === "pauseTask") {
+    const status = record(value, ["status"]).status;
+    if (status !== "pausing" && status !== "paused") invalid();
+    result = { status };
+  } else if (action === "resumeTask") {
+    if (record(value, ["status"]).status !== "active") invalid();
+    result = { status: "active" };
   } else if (action === "completeTask") {
     if (record(value, ["status"]).status !== "completed") invalid();
     result = { status: "completed" };

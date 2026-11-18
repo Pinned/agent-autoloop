@@ -1,5 +1,6 @@
 // Reads bounded committed projection fields and indexed fact references only. Never groups by lane.
-import type { View } from "../kernel/evolve.ts";
+import { rows, type View } from "../kernel/evolve.ts";
+import { configuration } from "../kernel/query.ts";
 import type { SQLInputValue, SQLOutputValue } from "node:sqlite";
 import { pageRunCards } from "./desktop-task-query.ts";
 import { jsonBytes, parseRunItem, type RunItem } from "./desktop-task-query-contract.ts";
@@ -135,7 +136,8 @@ function taskItem(view: View, key: BusinessTaskKey, fullOrigin = false): Busines
       [id],
     );
   let state: BusinessTaskItem["state"] = "active";
-  if (task.status === "cancelling" || task.status === "cancelled") state = task.status;
+  if (task.status === "pausing" || task.status === "paused") state = task.status;
+  else if (task.status === "cancelling" || task.status === "cancelled") state = task.status;
   else if (decisions.items.length) state = "waiting-decision";
   else if (run?.state === "queued") state = "queued";
   else if (run?.state === "claimed") state = "running";
@@ -239,7 +241,7 @@ export function listBusinessTasks(view: View, input: unknown = {}): BusinessTask
     SELECT id,kind,substr(COALESCE(json_extract(taskData,'$.created_at'),json_extract(runData,'$.created_at'),''),1,64) AS createdAtSort,json_extract(eventData,'$.summary') AS title,json_extract(eventData,'$.detail') AS detail,
       COALESCE(json_extract(taskData,'$.rule'),json_extract(runData,'$.rule')) AS ruleName,
       json_extract(runData,'$.summary') AS summary,json_extract(runData,'$.error') AS error,
-      CASE WHEN json_extract(taskData,'$.status') IN ('cancelling','cancelled') THEN json_extract(taskData,'$.status')
+      CASE WHEN json_extract(taskData,'$.status') IN ('cancelling','cancelled','pausing','paused') THEN json_extract(taskData,'$.status')
       WHEN EXISTS(SELECT 1 FROM projections c WHERE c.collection='cards' AND ${f("c", "kind")}='ask' AND ${f("c", "state")}='open'
         AND ((joined.kind=0 AND ${f("c", "task_id")}=joined.id) OR (joined.kind=1 AND ${f("c", "run_id")}=joined.id))) THEN 'waiting-decision'
       WHEN json_extract(runData,'$.state')='queued' THEN 'queued'
@@ -501,12 +503,48 @@ export function readBusinessTaskDetail(view: View, given: unknown): BusinessTask
   const actions = {
     cancelTask: task.kind === "task" && !terminal,
     completeTask: task.kind === "task" && !terminal && completionBlocker === null,
+    pauseTask: task.kind === "task" && !terminal && !["pausing", "paused"].includes(task.state),
+    resumeTask:
+      task.kind === "task" &&
+      task.state === "paused" &&
+      !has("runs", ` AND ${f("p", "state")} IN ('claimed','unknown')`) &&
+      !has("cards", ` AND ${f("p", "kind")}='ask' AND ${f("p", "state")}='open'`),
     completionBlocker,
   };
-  while (jsonBytes({ task, timeline, actions }) > BUSINESS_DETAIL_MAX_BYTES && timeline.items.length > 1) {
+  const ownHolds = rows(view, "holds", { task_id: task.id });
+  const currentRules = configuration(view)?.rules ?? [];
+  const latestRun = task.latestRunId == null ? undefined : view.get("runs", task.latestRunId);
+  const reasons = [
+    ...new Set(
+      ownHolds.flatMap((hold) => [
+        ...(hold.reserved ? ["本人暂停或更正后的连续资源保留"] : []),
+        ...((hold.cards ?? []).length ? ["提问尚未核实收尾"] : []),
+      ]),
+    ),
+  ];
+  const blockers =
+    latestRun && task.state === "queued"
+      ? rows(view, "holds")
+          .filter((hold) => {
+            if (hold.task_id == null || hold.task_id === task.id) return false;
+            const group = currentRules.find((rule) => rule.name === hold.rule)?.group;
+            const rule = currentRules.find((rule) => rule.name === latestRun.rule);
+            return (
+              (hold.grp === latestRun.grp || group === rule?.group) &&
+              (!hold.reserved || hold.lane === latestRun.lane || (rule?.parallel ?? 1) === 1)
+            );
+          })
+          .map((hold) => hold.task_id)
+      : [];
+  const reservation = {
+    held: ownHolds.length > 0,
+    reasons: reasons.slice(0, 20),
+    blockers: [...new Set(blockers)].slice(0, 20),
+  };
+  while (jsonBytes({ task, timeline, actions, reservation }) > BUSINESS_DETAIL_MAX_BYTES && timeline.items.length > 1) {
     timeline.items.pop();
     timeline.hasMore = true;
     timeline.nextBefore = timeline.items.at(-1)!.seq;
   }
-  return parseBusinessTaskDetail({ task, timeline, actions });
+  return parseBusinessTaskDetail({ task, timeline, actions, reservation });
 }

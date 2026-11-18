@@ -913,12 +913,12 @@ test("detail title shares the back row and stopping uses one armed button withou
       memo.value = "保留草稿";
       memo.focus();
       memo.listeners.get("input")?.();
-      const stop = all(root).find((x) => x.tag === "button" && x.textContent === "停止执行")!;
+      const stop = all(root).find((x) => x.tag === "button" && x.textContent === "暂停任务")!;
       assert.ok(stop);
       stop.fire();
       assert.equal(stop.textContent, "确认停止");
       assert.equal(controller.actionBusy, false);
-      assert.ok(root.textContent.includes("时间线与成本记录保留"));
+      assert.ok(root.textContent.includes("记录和未完成资料保留"));
       run.stopping = true;
       controller.refreshDetail();
       for (let i = 0; i < 4; i++) await flush();

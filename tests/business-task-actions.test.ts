@@ -28,7 +28,13 @@ test("detail action authority checks every unfinished fact without changing the 
       ]);
       const before = snapshot(view);
       const detail = readBusinessTaskDetail(view, "task:1");
-      assert.deepEqual(detail.actions, { cancelTask: true, completeTask: false, completionBlocker: blocker });
+      assert.deepEqual(detail.actions, {
+        cancelTask: true,
+        completeTask: false,
+        completionBlocker: blocker,
+        pauseTask: true,
+        resumeTask: false,
+      });
       assert.deepEqual(snapshot(view), before);
       const { actions: _, ...old } = detail;
       assert.deepEqual(parseBusinessTaskDetail(old), old);
@@ -79,6 +85,8 @@ test("terminal business tasks never advertise cancellation or completion", () =>
         cancelTask: false,
         completeTask: false,
         completionBlocker: null,
+        pauseTask: false,
+        resumeTask: false,
       });
     } finally {
       view.close();

@@ -108,7 +108,15 @@ export function createTaskActionSource(options: TaskActionSourceOptions): {
               ? `cards/${action.cardId}`
               : `runs/${action.runId}`;
         const operation =
-          action.action === "cancelTask" ? "cancel" : action.action === "completeTask" ? "complete" : action.action;
+          action.action === "cancelTask"
+            ? "cancel"
+            : action.action === "completeTask"
+              ? "complete"
+              : action.action === "pauseTask"
+                ? "pause"
+                : action.action === "resumeTask"
+                  ? "resume"
+                  : action.action;
         controller = new AbortController();
         const abort = controller;
         let expired = false;

@@ -13,6 +13,8 @@ const labels: Record<string, string> = {
   completed: "已完成",
   failed: "本轮执行失败，任务未完成",
   cancelling: "取消中，等待执行退出或核实",
+  pausing: "暂停中，等待执行退出或核实",
+  paused: "已暂停",
   cancelled: "已取消",
 };
 const roundLabels: Record<string, string> = {
@@ -44,7 +46,8 @@ function taskTitle(task: BusinessTaskItem) {
     : task.origin.title.trim() || `未命名任务 #${task.id}`;
 }
 function taskState(task: BusinessTaskItem) {
-  if (task.kind === "task" && ["cancelling", "cancelled"].includes(task.state)) return labels[task.state];
+  if (task.kind === "task" && ["cancelling", "cancelled", "pausing", "paused"].includes(task.state))
+    return labels[task.state];
   if (task.execution?.stopping && ["claimed", "unknown"].includes(task.execution.state)) return "正在停止，等待退出";
   if (task.kind === "legacy") return task.execution ? roundLabels[task.execution.state] : "轮次状态未记录";
   return labels[task.state];
@@ -729,6 +732,10 @@ export function mountBusinessTasksView(
     badge.dataset.state = task.kind === "legacy" ? (task.execution?.state ?? "unknown") : task.state;
     metadata.textContent = `任务 #${task.id} · ${task.rule}${task.updatedAt ? ` · 更新于 ${new Date(task.updatedAt).toLocaleString("zh-CN")}` : ""}${task.completion ? " · 本人确认完成" : ""}`;
     metadata.title = task.updatedAt ?? "";
+    if (data.reservation?.held)
+      metadata.textContent += ` · 资源保留：${data.reservation.reasons.join("、") || "等待核实收尾"}`;
+    if (data.reservation?.blockers.length)
+      metadata.textContent += ` · 等待任务 ${data.reservation.blockers.map((id) => `#${id}`).join("、")} 的资源保留`;
     const openQuestions = task.decisions.items.filter((card) => card.kind === "ask" && card.state === "open");
     decisionOverview.hidden = openQuestions.length === 0;
     decisionOverview.textContent = openQuestions.length
@@ -862,16 +869,16 @@ export function mountBusinessTasksView(
         stoppingText = el("p", "正在停止，等待执行进程退出。", "business-stopping");
         {
           const stopGroup = el("section", "", "business-stop-controls");
-          const explanation = el("p", "停止只结束所选这一轮；时间线与成本记录保留。", "muted");
+          const explanation = el("p", "暂停整件任务并保留资源，核实执行退出后可恢复；记录和未完成资料保留。", "muted");
           explanation.hidden = true;
           let armed = false;
           const disarm = button("不停止", () => {
             armed = false;
-            stop.textContent = "停止执行";
+            stop.textContent = "暂停任务";
             explanation.hidden = disarm.hidden = true;
           });
           disarm.hidden = true;
-          const stop = button("停止执行", () => {
+          const stop = button("暂停任务", () => {
             if (!armed) {
               armed = true;
               stop.textContent = "确认停止";
@@ -879,11 +886,23 @@ export function mountBusinessTasksView(
               return;
             }
             armed = false;
-            stop.textContent = "停止执行";
+            stop.textContent = "暂停任务";
             explanation.hidden = disarm.hidden = true;
-            controller.submitAction({ version: 1, action: "cancel", runId: run.id, input: {} });
+            controller.submitAction({
+              version: 1,
+              action: "pauseTask",
+              taskId: task.id,
+              input: { reason: "本人暂停任务" },
+            });
           });
-          stopGroup.append(stop, disarm, explanation);
+          const resume = button("恢复任务", () =>
+            controller.submitAction({ version: 1, action: "resumeTask", taskId: task.id, input: {} }),
+          );
+          stop.dataset.taskControl = "pause";
+          resume.dataset.taskControl = "resume";
+          resume.hidden = !data.actions?.resumeTask;
+          stop.hidden = !data.actions?.pauseTask;
+          stopGroup.append(stop, resume, disarm, explanation);
           stopControls = stopGroup;
           roundOperations.replaceChildren(stoppingText, stopControls);
         }
@@ -899,6 +918,10 @@ export function mountBusinessTasksView(
           );
         }
       }
+    }
+    for (const control of stopControls.querySelectorAll("button")) {
+      if (control.dataset.taskControl === "pause") control.hidden = !data.actions?.pauseTask;
+      if (control.dataset.taskControl === "resume") control.hidden = !data.actions?.resumeTask;
     }
     const feedbackId = Number(feedbackControls.dataset.runId);
     const feedbackKey = `${task.key}/${feedbackId}`;
@@ -943,7 +966,7 @@ export function mountBusinessTasksView(
       !controller.detailFresh ||
       !run ||
       run.stopping ||
-      !["queued", "claimed", "unknown"].includes(run.state);
+      (!data.actions?.pauseTask && !data.actions?.resumeTask);
     actionBar.hidden =
       stoppingText.hidden && stopControls.hidden && taskCompleteControls.hidden && taskCancelControls.hidden;
     correctionToggle.hidden = taskCancelled || !run || run.state === "queued";

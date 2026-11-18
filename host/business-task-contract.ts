@@ -16,6 +16,8 @@ export const BUSINESS_STATES = [
   "unknown",
   "active",
   "cancelling",
+  "pausing",
+  "paused",
   "completed",
   "failed",
   "cancelled",
@@ -94,9 +96,16 @@ export type BusinessTaskList = {
 export type BusinessTaskActions = {
   cancelTask: boolean;
   completeTask: boolean;
+  pauseTask?: boolean;
+  resumeTask?: boolean;
   completionBlocker: "execution" | "cards" | "timers" | "hold" | null;
 };
-export type BusinessTaskDetail = { task: BusinessTaskItem; timeline: BusinessTimeline; actions?: BusinessTaskActions };
+export type BusinessTaskDetail = {
+  task: BusinessTaskItem;
+  timeline: BusinessTimeline;
+  actions?: BusinessTaskActions;
+  reservation?: { held: boolean; reasons: string[]; blockers: number[] };
+};
 function invalid(): never {
   throw new Error("invalid-business-task-query");
 }
@@ -406,13 +415,16 @@ export function parseBusinessTimeline(v: unknown): BusinessTimeline {
   return result;
 }
 export function parseBusinessTaskDetail(v: unknown): BusinessTaskDetail {
-  const r = record(v, ["task", "timeline"], false, ["actions"]);
+  const r = record(v, ["task", "timeline"], false, ["actions", "reservation"]);
   const result: BusinessTaskDetail = {
     task: parseBusinessTaskItem(r.task),
     timeline: parseBusinessTimeline(r.timeline),
   };
   if ("actions" in r) {
-    const a = record(r.actions, ["cancelTask", "completeTask", "completionBlocker"]);
+    const a = record(r.actions, ["cancelTask", "completeTask", "completionBlocker"], false, [
+      "pauseTask",
+      "resumeTask",
+    ]);
     result.actions = {
       cancelTask: bool(a.cancelTask),
       completeTask: bool(a.completeTask),
@@ -421,6 +433,8 @@ export function parseBusinessTaskDetail(v: unknown): BusinessTaskDetail {
           ? null
           : one(a.completionBlocker, ["execution", "cards", "timers", "hold"] as const),
     };
+    if ("pauseTask" in a) result.actions.pauseTask = bool(a.pauseTask);
+    if ("resumeTask" in a) result.actions.resumeTask = bool(a.resumeTask);
     if (result.actions.completeTask && result.actions.completionBlocker !== null) invalid();
     if (result.task.kind !== "task" && (result.actions.cancelTask || result.actions.completeTask)) invalid();
     if (
@@ -428,6 +442,14 @@ export function parseBusinessTaskDetail(v: unknown): BusinessTaskDetail {
       (result.actions.cancelTask || result.actions.completeTask)
     )
       invalid();
+  }
+  if ("reservation" in r) {
+    const reservation = record(r.reservation, ["held", "reasons", "blockers"]);
+    result.reservation = {
+      held: bool(reservation.held),
+      reasons: array(reservation.reasons, 20).map((v) => text(v, 200)),
+      blockers: array(reservation.blockers, 20).map(runId),
+    };
   }
   if (jsonBytes(result) > BUSINESS_DETAIL_MAX_BYTES) invalid();
   return result;

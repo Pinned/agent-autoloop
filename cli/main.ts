@@ -299,6 +299,26 @@ async function completeTask(args: string[]) {
   else fail("完成结果未确认，请重新读取任务，不要直接重发。");
 }
 
+async function pauseTask(args: string[]) {
+  const [id, ...words] = args;
+  const task = Number(id),
+    reason = words.join(" ").trim();
+  if (!Number.isSafeInteger(task) || task < 1 || !reason || [...reason].length > 1000)
+    return fail("用法：agent-autoloop pause-task <任务编号> <暂停原因>");
+  const result = await ownerClient().pauseTask(task, reason);
+  if (result?.status === "pausing") console.log("任务暂停中，等待核实执行退出；资源保留。");
+  else if (result?.status === "paused") console.log("任务已暂停，原资料与资源保留，需本人恢复才继续。");
+  else fail("暂停结果未确认，请重新读取任务，不要直接重发。");
+}
+async function resumeTask(args: string[]) {
+  const task = Number(args[0]);
+  if (args.length !== 1 || !Number.isSafeInteger(task) || task < 1)
+    return fail("用法：agent-autoloop resume-task <任务编号>");
+  const result = await ownerClient().resumeTask(task);
+  if (result?.status === "active") console.log("任务已恢复，将在原资源保留范围内继续。");
+  else fail("恢复结果未确认，请重新读取任务，不要直接重发。");
+}
+
 async function cancelTask(args: string[]) {
   const [id, ...words] = args;
   const task = Number(id);
@@ -553,6 +573,8 @@ const commands: Record<string, () => unknown> = {
   "cancel-task": () => cancelTask(args),
   "settle-card": () => settleCard(args),
   "complete-task": () => completeTask(args),
+  "pause-task": () => pauseTask(args),
+  "resume-task": () => resumeTask(args),
   "release-hold": () => releaseHold(args),
   doctor,
   check,
