@@ -9,7 +9,11 @@
 // Prevent detail reads from flashing loading prose while retaining visible read errors and write guards.
 test("operation area keeps progress and live answers above records without manual refresh", () => {
   const source = readFileSync(new URL("../src/renderer/business-tasks-view.ts", import.meta.url), "utf8");
-  assert.match(source, /current\.append\(progress, decisions, actionBar\)/);
+  assert.match(source, /current\.append\(operationTitle, progress, decisions, actionBar\)/);
+  assert.match(source, /entry\.type = "radio"/);
+  assert.match(source, /current\.hidden =/);
+  const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
+  assert.match(css, /\.business-tasks-panel \.business-current\s*\{[^}]*border: 1px solid/);
   assert.doesNotMatch(source, /button\("刷新"/);
   assert.doesNotMatch(source, /暂不能确认完成/);
   assert.match(source, /const waitingForAnswer =/);
@@ -802,7 +806,7 @@ test("completed empty action bar is hidden but permitted active task operations 
         controller.open("task:1");
         await flush();
         const bar = all(root).find((node) => node.className === "business-detail-actions")!;
-        assert.equal(bar.hidden, false);
+        assert.equal(bar.hidden, state === "completed");
       },
       { ...item, state, decisions: { items: [], hasMore: false } },
     );
@@ -1138,8 +1142,8 @@ test("live questions validate empty/custom input and keep other cards independen
       send.fire();
       assert.equal(controller.actionBusy, false);
       assert.ok(first.textContent.includes("请选择选项或填写回答"));
-      const select = all(first).find((node) => node.tag === "select")!;
-      select.value = "other";
+      const other = all(first).find((node) => node.tag === "input" && node.value === "other")!;
+      other.listeners.get("change")?.();
       send.fire();
       assert.equal(controller.actionBusy, false);
       assert.ok(first.textContent.includes("请说明你的其他想法"));

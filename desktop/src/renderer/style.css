@@ -3045,3 +3045,29 @@ main:has(.settings-agent-subpage-panel) {
 }
 .business-decisions select { width: 100%; margin: 12px 0; }
 .business-decisions textarea { width: 100%; min-height: 90px; }
+
+.business-tasks-panel .business-current {
+  border: 1px solid #e0e5ed;
+  border-radius: 14px;
+  background: var(--panel);
+  padding: 20px 24px;
+  margin: 22px 0 28px;
+  min-width: 0;
+}
+.business-operation-title { margin: 0 0 16px; font-size: 15px; }
+.business-current .business-decisions > h3 { display: none; }
+.business-current .business-decision { padding: 18px; border: 1px solid #eadfca; border-radius: 9px; background: var(--bg); margin-bottom: 16px; min-width: 0; overflow-wrap: anywhere; }
+.business-answer-options { border: 0; padding: 0; margin: 16px 0; min-width: 0; }
+.business-answer-options legend { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.business-answer-option { display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--soft); border-radius: 8px; padding: 12px 14px; margin-top: 8px; cursor: pointer; background: var(--panel); }
+.business-answer-option:has(input:checked) { border-color: #91b0ed; background: var(--accent-soft); }
+.business-answer-option input { flex: 0 0 auto; margin-top: 4px; }
+.business-answer-option span { min-width: 0; overflow-wrap: anywhere; }
+.business-current textarea { box-sizing: border-box; max-width: 100%; }
+.business-task-operations .business-danger-action { margin-left: 14px; }
+@media (max-width: 650px) {
+  .business-tasks-panel .business-current { padding: 16px; }
+  .business-current .business-detail-actions { flex-direction: column; }
+  .business-current .business-task-operations { align-self: flex-end; }
+  .business-current .business-decision { padding: 14px; }
+}

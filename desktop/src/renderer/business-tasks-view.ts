@@ -453,7 +453,9 @@ export function mountBusinessTasksView(
   const current = el("section", "", "business-current");
   const progress = el("p", "", "business-current-progress");
   progress.setAttribute("aria-label", "当前进展");
-  current.append(progress, decisions, actionBar);
+  const operationTitle = el("h3", "任务操作", "business-operation-title");
+  current.setAttribute("aria-label", "任务操作");
+  current.append(operationTitle, progress, decisions, actionBar);
   const processContent = el("section", "", "business-process-content");
   const operationExplanation = el("p", "", "business-operation-explanation");
   operationExplanation.setAttribute("role", "status");
@@ -732,8 +734,9 @@ export function mountBusinessTasksView(
     }
     const task = data.task;
     roundNote.textContent = `${task.execution ? roundLabels[task.execution.state] : "轮次状态未记录"}${task.decisions.items.length || task.decisions.hasMore ? " · 有待回答问题" : " · 无待回答问题"}`;
-    progress.textContent = task.latestProgress || "当前进展未记录";
-    progress.hidden = !task.latestProgress;
+    const transition = ["pausing", "cancelling"].includes(task.state) ? labels[task.state] : "";
+    progress.textContent = transition || task.latestProgress || "";
+    progress.hidden = !progress.textContent;
     decisions.hidden = timeline.hidden = diagnosis.hidden = false;
     title.textContent = taskTitle(task);
     const nextDescriptionKey = `${task.key}:${task.origin.detail}`;
@@ -786,27 +789,30 @@ export function mountBusinessTasksView(
         if (card.truncated) form.append(el("p", "此问题当前仅显示部分，不代表原文已完整展示。", "muted"));
         const text = draftArea(`${task.key}/answer/${card.id}`, `${card.title}：文字回答`);
         text.placeholder = "填写回答或补充要求";
-        const choices = el("select");
-        choices.setAttribute("aria-label", `${card.title}：回答选项`);
-        const none = el("option", "选择选项或填写文字");
-        none.value = "";
-        choices.append(none);
-        for (const [index, option] of card.options.entries()) {
-          const entry = el("option", option);
-          entry.value = String(index);
-          choices.append(entry);
+        const choices = el("fieldset", "", "business-answer-options");
+        choices.append(el("legend", "选择选项，或直接填写文字回答"));
+        let selectedChoice = controller.drafts.get(`${task.key}/choice/${card.id}`) ?? "";
+        for (const [value, option] of [
+          ...card.options.map((option, index) => [String(index), option]),
+          ["other", "其他想法（请填写说明）"],
+        ]) {
+          const label = el("label", "", "business-answer-option");
+          const entry = el("input");
+          entry.type = "radio";
+          entry.name = `answer-${task.id}-${card.id}`;
+          entry.value = value;
+          entry.checked = selectedChoice === value;
+          entry.addEventListener("change", () => {
+            selectedChoice = value;
+            controller.drafts.set(`${task.key}/choice/${card.id}`, value);
+          });
+          label.append(entry, el("span", option));
+          choices.append(label);
         }
-        const other = el("option", "其他想法（请填写说明）");
-        other.value = "other";
-        choices.append(other);
-        choices.value = controller.drafts.get(`${task.key}/choice/${card.id}`) ?? "";
-        choices.addEventListener("change", () => {
-          controller.drafts.set(`${task.key}/choice/${card.id}`, choices.value);
-        });
         const validation = el("p", "", "rules-status");
         validation.setAttribute("role", "status");
         const send = button("提交回答", () => {
-          const selected = choices.value;
+          const selected = selectedChoice;
           const note = text.value.trim();
           if ((!selected || selected === "other") && !note) {
             validation.textContent = selected === "other" ? "请说明你的其他想法。" : "请选择选项或填写回答。";
@@ -1017,6 +1023,16 @@ export function mountBusinessTasksView(
     memoControls.hidden = correctionToggle.hidden || !correctionOpen;
     decisions.hidden = !task.decisions.items.length && !task.decisions.hasMore;
     progress.hidden ||= waitingForAnswer;
+    operationTitle.textContent = openQuestions.length ? "待你回答" : "任务操作";
+    adjustments.hidden = correctionToggle.hidden && stopControls.hidden && stoppingText.hidden;
+    actionBar.hidden = adjustments.hidden && taskCompleteControls.hidden && taskCancelControls.hidden;
+    current.hidden =
+      progress.hidden &&
+      decisions.hidden &&
+      actionBar.hidden &&
+      operationExplanation.hidden &&
+      !controller.actionMessage &&
+      !controller.mustReread;
     if (!feedbackControls.dataset.runId) feedbackControls.hidden = true;
     for (const control of [
       ...roundOperations.querySelectorAll("button"),
