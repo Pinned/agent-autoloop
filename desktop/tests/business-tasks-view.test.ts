@@ -13,7 +13,7 @@ test("operation area keeps progress and live answers above records without manua
   assert.match(source, /entry\.type = "radio"/);
   assert.match(source, /current\.hidden =/);
   const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
-  assert.match(css, /\.business-tasks-panel \.business-current\s*\{[^}]*border: 1px solid/);
+  assert.match(css, /\.business-tasks-panel \.tasks-detail-page > \.business-current\s*\{[^}]*border: 1px solid/);
   assert.doesNotMatch(source, /button\("刷新"/);
   assert.doesNotMatch(source, /暂不能确认完成/);
   assert.match(source, /const waitingForAnswer =/);
