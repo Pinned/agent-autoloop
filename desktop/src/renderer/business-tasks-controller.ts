@@ -71,9 +71,11 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
   let poll: ReturnType<typeof setTimeout> | undefined;
   function schedule() {
     clearTimeout(poll);
-    if (active && !selectedKey && allowed)
+    if (active && allowed)
       poll = setTimeout(() => {
-        readList(false, true);
+        if (selectedKey) {
+          if (!actionBusy) readDetail(false, true);
+        } else readList(false, true);
         schedule();
       }, 5000);
   }
@@ -249,7 +251,7 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
         (!run || run.run.stopping || !["queued", "claimed", "unknown"].includes(run.run.state))
       )
         return;
-      if (request.action === "memo" && (!run || run.run.state === "queued")) return;
+      if (request.action === "memo" && (!detail.actions?.correctTask || !run || run.run.state === "queued")) return;
     }
     const key = selectedKey,
       token = {};
@@ -406,11 +408,17 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
       if (active === next) return;
       active = next;
       if (!active) pendingList = false;
+      if (active && selectedKey && !actionBusy) readDetail(false, true);
       if (active && !selectedKey) {
         if (listInFlight) pendingList = true;
         else readList(false, true);
       }
       schedule();
+    },
+    verifyForeground() {
+      if (!active || !allowed || actionBusy) return;
+      if (selectedKey) readDetail(false, true);
+      else readList(false, true);
     },
     refresh: () => readList(),
     more: () => readList(true),
@@ -448,6 +456,7 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
       mustReread = false;
       actionMessage = "";
       readDetail();
+      schedule();
     },
     back() {
       if (actionBusy) return;

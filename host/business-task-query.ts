@@ -516,6 +516,15 @@ export function readBusinessTaskDetail(view: View, given: unknown): BusinessTask
               ? "hold"
               : null;
   const actions = {
+    correctTask:
+      task.kind === "task" &&
+      !["cancelling", "cancelled", "pausing"].includes(task.state) &&
+      !!rule &&
+      latestRun?.agent === rule.to &&
+      latestRun?.state !== "queued" &&
+      !(latestRun?.cancel_at && ["claimed", "unknown"].includes(latestRun.state)) &&
+      !!(latestRun?.session || latestRun?.resume) &&
+      !has("cards", ` AND ${f("p", "kind")} = 'ask' AND ${f("p", "state")} = 'open'`),
     cancelTask: task.kind === "task" && !terminal,
     completeTask: task.kind === "task" && !terminal && completionBlocker === null,
     pauseTask: task.kind === "task" && !terminal && !["pausing", "paused"].includes(task.state),

@@ -5,6 +5,15 @@
 // Prevent duplicate detail tabs, repeated result summaries and raw fact entrances in unified records.
 // Prevent proposal controls inside prose, suppressed recorded answers, non-compact lifecycle cards,
 // and inline editors replacing modal operations. Fake DOM/bridge, no Electron or network.
+// Prevent hidden live questions, completion blockers, manual refresh and scattered operation groups.
+test("operation area keeps progress and live answers above records without manual refresh", () => {
+  const source = readFileSync(new URL("../src/renderer/business-tasks-view.ts", import.meta.url), "utf8");
+  assert.match(source, /current\.append\(progress, decisions, actionBar\)/);
+  assert.doesNotMatch(source, /button\("刷新"/);
+  assert.doesNotMatch(source, /暂不能确认完成/);
+  assert.match(source, /const waitingForAnswer =/);
+  assert.match(source, /其他想法/);
+});
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
@@ -185,6 +194,7 @@ async function withView(
                               !options.actionAuthority &&
                               !["completed", "cancelling", "cancelled"].includes((shown as typeof item).state),
                             completionBlocker: options.actionAuthority ?? null,
+                            correctTask: true,
                           },
                         }),
                   },
@@ -760,24 +770,24 @@ test("completed empty action bar is hidden but permitted active task operations 
         controller.open("task:1");
         await flush();
         const bar = all(root).find((node) => node.className === "business-detail-actions")!;
-        assert.equal(bar.hidden, state === "completed");
+        assert.equal(bar.hidden, false);
       },
       { ...item, state, decisions: { items: [], hasMore: false } },
     );
   }
 });
 // Prevent absent capabilities or bounded previews from enabling an owner completion write.
-test("verified completion blockers have nearby explanations and missing authority grants no task actions", async () => {
+test("unavailable completion is hidden without blocker explanations and grants no task actions", async () => {
   for (const blocker of ["missing", "execution", "cards", "timers", "hold"] as const) {
     await withView(
       async (controller, root) => {
         controller.open("task:1");
         await flush();
         const explanation = all(root).find((x) => x.className === "business-operation-explanation")!;
-        assert.equal(explanation.hidden, false);
+        assert.equal(explanation.hidden, blocker !== "missing");
         const start = all(root).find((x) => x.tag === "button" && x.textContent === "本人确认完成")!;
         assert.equal(start.disabled, true);
-        if (blocker === "missing") assert.ok(all(root).some((x) => x.hidden && x.children.includes(start)));
+        assert.ok(all(root).some((x) => x.hidden && x.children.includes(start)));
         controller.submitAction({ version: 1, action: "completeTask", taskId: 1, input: { reason: "不能绕过" } });
         assert.equal(controller.actionBusy, false);
       },
@@ -966,7 +976,7 @@ test("detail title shares the back row and stopping uses one armed button withou
       const stop = all(root).find((x) => x.tag === "button" && x.textContent === "暂停任务")!;
       assert.ok(stop);
       stop.fire();
-      assert.equal(stop.textContent, "确认停止");
+      assert.equal(stop.textContent, "确认暂停");
       assert.equal(controller.actionBusy, false);
       assert.ok(root.textContent.includes("记录和未完成资料保留"));
       run.stopping = true;
@@ -977,6 +987,41 @@ test("detail title shares the back row and stopping uses one armed button withou
       assert.equal(memo.focused, true);
     },
     item,
+    { run, association: { kind: "unavailable" }, events: page, cards: page, relatedRuns: page },
+  );
+});
+
+// A confirmed stopped round retains stopping=true in history but must allow a paused task correction.
+test("paused task correction remains writable after a stopped historical round", async () => {
+  const page = { items: [], hasMore: false, nextCursor: null };
+  const run = {
+    id: 2,
+    rule: "r",
+    agent: "a",
+    state: "cancelled",
+    attempts: 1,
+    createdAt: null,
+    claimedAt: null,
+    finishedAt: null,
+    notBefore: null,
+    summary: "已停止",
+    error: "",
+    stopping: true,
+    usage: null,
+    truncated: false,
+  };
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      for (let i = 0; i < 4; i++) await flush();
+      const toggle = all(root).find((node) => node.className === "business-correct-toggle")!;
+      assert.equal(toggle.hidden, false);
+      toggle.fire();
+      assert.equal(all(root).find((node) => node.tag === "dialog")!.open, true);
+      controller.submitAction({ version: 1, action: "memo", runId: 2, input: { text: "暂停后更正" } });
+      assert.equal(controller.actionBusy, true);
+    },
+    { ...item, state: "paused", decisions: { items: [], hasMore: false } },
     { run, association: { kind: "unavailable" }, events: page, cards: page, relatedRuns: page },
   );
 });
@@ -1015,9 +1060,9 @@ test("unified DOM retains protected current actions and correction drafts", asyn
         const detail = all(root).find((x) => x.className === "tasks-detail-page")!;
         assert.deepEqual(
           detail.children.slice(0, 4).map((x) => x.className),
-          ["tasks-detail-head", "business-detail-actions", "business-current", "business-process-content"],
+          ["tasks-detail-head", "business-current", "business-process-content"],
         );
-        const current = detail.children[2];
+        const current = detail.children[1];
         const decisions = all(current).find((x) => x.className === "business-decisions")!;
         assert.equal(decisions.hidden, true);
         const memo = all(current).find((x) => x.className === "business-correction")!;
@@ -1044,6 +1089,37 @@ test("unified DOM retains protected current actions and correction drafts", asyn
       { run, association: { kind: "unavailable" }, events: page, cards: page, relatedRuns: page },
     );
   }
+});
+
+// Empty and custom answers must validate locally; one card cannot answer another.
+test("live questions validate empty/custom input and keep other cards independent", async () => {
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      await flush();
+      const decisions = all(root).find((node) => node.className === "business-decisions")!;
+      assert.equal(decisions.hidden, false);
+      const forms = all(decisions).filter((node) => node.className === "business-decision");
+      assert.equal(forms.length, 2);
+      const first = forms[0];
+      const send = all(first).find((node) => node.textContent === "提交回答")!;
+      send.fire();
+      assert.equal(controller.actionBusy, false);
+      assert.ok(first.textContent.includes("请选择选项或填写回答"));
+      const select = all(first).find((node) => node.tag === "select")!;
+      select.value = "other";
+      send.fire();
+      assert.equal(controller.actionBusy, false);
+      assert.ok(first.textContent.includes("请说明你的其他想法"));
+      const text = all(first).find((node) => node.tag === "textarea")!;
+      text.value = "改为这个方向";
+      send.fire();
+      send.fire();
+      assert.equal(controller.actionBusy, true);
+      assert.equal(all(forms[1]).find((node) => node.tag === "textarea")!.value, "");
+    },
+    { ...item, decisions: { items: [card, { ...card, id: 5 }], hasMore: false } },
+  );
 });
 
 test("a newly arriving decision leaves an existing answer input mounted", async () => {

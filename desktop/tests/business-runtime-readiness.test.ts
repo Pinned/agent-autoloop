@@ -49,7 +49,7 @@ function fixture() {
           legacyNotice: null,
         },
         timeline: { items: [], hasMore: false, nextBefore: null },
-        actions: { cancelTask: true, completeTask: true, completionBlocker: null },
+        actions: { cancelTask: true, completeTask: true, correctTask: true, completionBlocker: null },
       },
     });
   const run = (index: number) =>

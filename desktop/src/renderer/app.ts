@@ -359,6 +359,7 @@ document.addEventListener("visibilitychange", () => {
   today.setActive(currentPage === "today" && shell === "workspace" && !document.hidden);
   businessTasks.setActive(currentPage === "tasks" && currentRole() !== "worker" && !document.hidden);
 });
+window.addEventListener("focus", () => businessTasks.verifyForeground());
 function currentRole(): Role {
   if (run.state.kind === "ready" && run.state.snapshot.role) return run.state.snapshot.role;
   const launch = setup.launch;

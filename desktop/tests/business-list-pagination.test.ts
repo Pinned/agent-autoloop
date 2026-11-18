@@ -21,6 +21,54 @@ const item = (id: number) => ({
   updatedAt: null,
   legacyNotice: null,
 });
+// Detail polls must not acknowledge uncertain writes or continue in a hidden window.
+test("visible detail polls and foreground verification preserve write uncertainty", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let reads = 0;
+  const controller = createRendererBusinessTasks(
+    {
+      businessTasksRead: async () => {
+        reads++;
+        return {
+          ok: true,
+          data: {
+            task: item(1),
+            timeline: { items: [], hasMore: false, nextBefore: null },
+            actions: { cancelTask: true, completeTask: true, completionBlocker: null },
+          },
+        } as never;
+      },
+      taskAction: async () => undefined as never,
+    },
+    () => {},
+  );
+  controller.open("task:1");
+  await flush();
+  controller.setActive(true);
+  await flush();
+  controller.submitAction({ version: 1, action: "cancelTask", taskId: 1, input: { reason: "取消" } });
+  await flush();
+  assert.equal(controller.mustReread, true);
+  const before = reads;
+  t.mock.timers.tick(5000);
+  await flush();
+  assert.equal(reads, before + 1);
+  assert.equal(controller.mustReread, true);
+  controller.setActive(false);
+  t.mock.timers.tick(10000);
+  await flush();
+  assert.equal(reads, before + 1);
+  controller.setActive(true);
+  await flush();
+  assert.equal(reads, before + 2);
+  controller.verifyForeground();
+  await flush();
+  assert.equal(controller.mustReread, true);
+  controller.refreshDetail();
+  await flush();
+  assert.equal(controller.mustReread, false);
+  controller.dispose();
+});
 // Combined filters must survive page navigation and refresh, and reset the anchor when changed.
 test("rule and state remain server query fields across every page", async () => {
   const queries: any[] = [];
@@ -56,7 +104,7 @@ test("rule and state remain server query fields across every page", async () => 
   assert.deepEqual(queries.at(-1), { rule: "另一规则", state: "completed", scope: "business", limit: 20 });
   controller.dispose();
 });
-test("visible list polls every five seconds and pauses off page or in details", async (t) => {
+test("visible list polling stops in details while detail queries continue", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   let reads = 0;
   const controller = createRendererBusinessTasks(
@@ -86,16 +134,16 @@ test("visible list polls every five seconds and pauses off page or in details", 
   const afterOpen = reads;
   t.mock.timers.tick(10000);
   await flush();
-  assert.equal(reads, afterOpen);
+  assert.equal(reads, afterOpen + 1);
   controller.back();
   await flush();
   t.mock.timers.tick(5000);
   await flush();
-  assert.equal(reads, afterOpen + 2);
+  assert.equal(reads, afterOpen + 3);
   controller.dispose();
   t.mock.timers.tick(10000);
   await flush();
-  assert.equal(reads, afterOpen + 2);
+  assert.equal(reads, afterOpen + 3);
 });
 test("polls do not overlap and a failed refresh retains the admitted page", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });

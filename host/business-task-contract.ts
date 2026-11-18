@@ -98,6 +98,7 @@ export type BusinessTaskActions = {
   completeTask: boolean;
   pauseTask?: boolean;
   resumeTask?: boolean;
+  correctTask?: boolean;
   completionBlocker: "execution" | "cards" | "timers" | "hold" | null;
 };
 export type BusinessTaskDetail = {
@@ -424,6 +425,7 @@ export function parseBusinessTaskDetail(v: unknown): BusinessTaskDetail {
     const a = record(r.actions, ["cancelTask", "completeTask", "completionBlocker"], false, [
       "pauseTask",
       "resumeTask",
+      "correctTask",
     ]);
     result.actions = {
       cancelTask: bool(a.cancelTask),
@@ -434,6 +436,7 @@ export function parseBusinessTaskDetail(v: unknown): BusinessTaskDetail {
           : one(a.completionBlocker, ["execution", "cards", "timers", "hold"] as const),
     };
     if ("pauseTask" in a) result.actions.pauseTask = bool(a.pauseTask);
+    if ("correctTask" in a) result.actions.correctTask = bool(a.correctTask);
     if ("resumeTask" in a) result.actions.resumeTask = bool(a.resumeTask);
     if (result.actions.completeTask && result.actions.completionBlocker !== null) invalid();
     if (result.task.kind !== "task" && (result.actions.cancelTask || result.actions.completeTask)) invalid();
