@@ -22,8 +22,14 @@ test("back arrow stays centered on the first title line at wide and narrow width
 });
 
 test("detail sections align with the title after narrowing the sidebar inset", () => {
-  assert.match(css, /padding:\s*12px 40px 0 74px;/);
-  assert.match(css, /padding:\s*26px 40px 36px 74px;/);
+  assert.match(css, /padding:\s*12px 40px 0 62px;/);
+  assert.match(css, /padding:\s*26px 40px 36px 62px;/);
+});
+
+test("medium and narrow windows do not restore the larger sidebar inset", () => {
+  assert.match(css, /padding-left: 12px; padding-right: 24px;/);
+  assert.match(css, /padding-left: 62px; padding-right: 24px;/);
+  assert.match(css, /padding-left: 56px; padding-right: 16px;/);
 });
 
 test("task details reuse the shared sidebar at every viewport width", () => {
@@ -36,9 +42,9 @@ test("task detail title has only one top inset beneath the titlebar", () => {
   assert.match(main, /padding:\s*0;/);
   const head = css.match(/\.business-tasks-panel \.tasks-detail-head\s*\{([^}]+)\}/)?.[1];
   assert.ok(head);
-  assert.match(head, /padding:\s*24px 40px 28px 24px;/);
+  assert.match(head, /padding:\s*24px 40px 28px 12px;/);
   assert.match(
     css,
-    /@media \(max-width: 650px\)\s*\{\s*\.business-tasks-panel \.tasks-detail-head \{ (?:--task-title-size: 20px; )?padding: 22px 16px;/,
+    /@media \(max-width: 650px\)\s*\{\s*\.business-tasks-panel \.tasks-detail-head \{ (?:--task-title-size: 20px; )?padding: 22px 16px 22px 12px;/,
   );
 });
