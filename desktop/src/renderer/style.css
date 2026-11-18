@@ -2566,10 +2566,9 @@ main:has(#task-subpage:not([hidden])) {
     border-color: CanvasText;
   }
 }
-body:has(.business-tasks-panel .tasks-detail-page:not([hidden])) .sidebar { width: 220px; background: #f7f8fa; border-right: 1px solid #e5e8ee; }
 main:has(.business-tasks-panel .tasks-detail-page:not([hidden])) {
   background: var(--panel);
-  padding: 24px 0 0;
+  padding: 0;
   max-width: none;
   width: 100%;
 }
@@ -2717,14 +2716,13 @@ main:has(.business-tasks-panel .tasks-detail-page:not([hidden])) {
 .business-operation-dialog h3 { font-size: 18px; margin: 0 0 12px; }
 .business-operation-dialog > button { float: right; margin-top: 20px; }
 @media (max-width: 900px) {
-  body:has(.business-tasks-panel .tasks-detail-page:not([hidden])) .sidebar { width: 180px; }
   .business-tasks-panel .tasks-detail-head { padding-left: 24px; padding-right: 24px; }
   .business-tasks-panel .tasks-detail-page > .business-detail-actions,
   .business-tasks-panel .tasks-detail-page > .business-current,
   .business-tasks-panel .tasks-detail-page > .business-process-content { padding-left: 74px; padding-right: 24px; }
 }
 @media (max-width: 650px) {
-  .business-tasks-panel .tasks-detail-head { padding: 20px 16px; gap: 8px; }
+  .business-tasks-panel .tasks-detail-head { padding: 22px 16px; gap: 8px; }
   .business-tasks-panel .tasks-detail-head h2 { font-size: 20px; }
   .business-tasks-panel .tasks-detail-page > .business-detail-actions,
   .business-tasks-panel .tasks-detail-page > .business-current { padding-left: 60px; padding-right: 16px; }
@@ -3022,11 +3020,6 @@ main:has(.settings-agent-subpage-panel) {
 .business-tasks-panel .business-refresh-snapshot { background: none; border: 0; padding: 7px 4px; font-size: 12px; color: #627998; }
 .business-tasks-panel .business-correct-toggle { background: #fff; border-color: #dce2eb; color: #465974; padding: 8px 13px; font-size: 12px; border-radius: 7px; }
 @media (max-width: 650px) {
-  body:has(.business-tasks-panel .tasks-detail-page:not([hidden])) .sidebar { width: 64px; padding: 18px 8px; }
-  body:has(.business-tasks-panel .tasks-detail-page:not([hidden])) .sidebar .brand > div,
-  body:has(.business-tasks-panel .tasks-detail-page:not([hidden])) .sidebar-footer,
-  body:has(.business-tasks-panel .tasks-detail-page:not([hidden])) .sidebar .new-task-button { display: none; }
-  body:has(.business-tasks-panel .tasks-detail-page:not([hidden])) .sidebar nav button { font-size: 0; gap: 0; justify-content: center; padding: 13px; }
   .business-header-actions { flex-wrap: wrap; }
   .business-round-note { flex-basis: 100%; }
   .business-tasks-panel .business-record-card,

@@ -10,8 +10,8 @@ import { test } from "node:test";
 import { readFileSync } from "node:fs";
 import { createRendererBusinessTasks } from "../src/renderer/business-tasks-controller.ts";
 import { mountBusinessTasksView } from "../src/renderer/business-tasks-view.ts";
-// Prevent shared blue tokens and wide navigation from overriding the confirmed detail palette.
-test("detail parity uses exact prototype colors and narrow sidebar", () => {
+// Keep the detail card palette without replacing the shared workspace navigation.
+test("detail parity uses exact prototype colors and shared sidebar", () => {
   const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
   assert.match(css, /background:\s*#fcfcfd;/);
   assert.match(css, /background:\s*#fcfefc;/);
@@ -20,7 +20,7 @@ test("detail parity uses exact prototype colors and narrow sidebar", () => {
   assert.match(css, /background:\s*#e8f5ec;/);
   assert.match(css, /border:\s*2px solid #419765;/);
   assert.match(css, /margin-top:\s*22px;/);
-  assert.match(css, /\.sidebar\s*\{\s*width:\s*64px;/);
+  assert.doesNotMatch(css, /body:has\([^\n]+tasks-detail-page[^\n]+\) \.sidebar/);
   // Keep the native traffic lights above detail content in the shared draggable titlebar.
   assert.doesNotMatch(css, /\.titlebar\s*\{[^}]*display:\s*none;/);
   assert.match(css, /\.titlebar\s*\{[^}]*height:\s*44px;[^}]*-webkit-app-region:\s*drag;/);
@@ -1138,7 +1138,7 @@ test("detail surfaces, compact heading and selected tabs follow shared theme and
   assert.match(surface, /background:\s*transparent;/);
   assert.match(surface, /border:\s*0;/);
   assert.match(surface, /padding:\s*0;/);
-  assert.match(rule("main:has(.business-tasks-panel .tasks-detail-page:not([hidden])) {"), /padding:\s*24px 0 0;/);
+  assert.match(rule("main:has(.business-tasks-panel .tasks-detail-page:not([hidden])) {"), /padding:\s*0;/);
   assert.match(rule(".business-tasks-panel .tasks-detail-head {"), /display:\s*grid;/);
   assert.match(rule(".tasks-detail-head h2 {"), /font-size:\s*18px;/);
   assert.match(rule(".task-detail-tabs {"), /flex-wrap:\s*wrap;/);
