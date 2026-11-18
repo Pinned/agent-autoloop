@@ -1,4 +1,4 @@
-// Prevent task details from replacing the sidebar, doubling top insets, or centering back on a multiline title.
+// Prevent oversized sidebar spacing, misaligned detail sections, doubled top insets, or multiline back-arrow drift.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -21,6 +21,11 @@ test("back arrow stays centered on the first title line at wide and narrow width
   );
 });
 
+test("detail sections align with the title after narrowing the sidebar inset", () => {
+  assert.match(css, /padding:\s*12px 40px 0 74px;/);
+  assert.match(css, /padding:\s*26px 40px 36px 74px;/);
+});
+
 test("task details reuse the shared sidebar at every viewport width", () => {
   assert.doesNotMatch(css, /body:has\([^\n]+tasks-detail-page[^\n]+\) \.sidebar/);
 });
@@ -31,7 +36,7 @@ test("task detail title has only one top inset beneath the titlebar", () => {
   assert.match(main, /padding:\s*0;/);
   const head = css.match(/\.business-tasks-panel \.tasks-detail-head\s*\{([^}]+)\}/)?.[1];
   assert.ok(head);
-  assert.match(head, /padding:\s*24px 40px 28px;/);
+  assert.match(head, /padding:\s*24px 40px 28px 24px;/);
   assert.match(
     css,
     /@media \(max-width: 650px\)\s*\{\s*\.business-tasks-panel \.tasks-detail-head \{ (?:--task-title-size: 20px; )?padding: 22px 16px;/,
