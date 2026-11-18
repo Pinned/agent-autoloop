@@ -274,4 +274,4 @@ Start reading at `bin/agent-autoloop.ts` → `cli/main.ts`, then follow the feat
 
 [MIT License](LICENSE)
 
-任务暂停使用本人 `pause-task <任务编号> <原因>`，恢复使用 `resume-task <任务编号>`。暂停、更正保留原任务资源；取消或明确完成在全任务退出与资料收尾核实后释放。旧 stop 仍只停一轮，release-hold 不能绕过任务暂停保留。新旧中台与客户端须同步能力字段，缺能力时不提供操作；不回填旧任务资源锁、不迁移日志。详见协议的任务暂停与连续资源保留。
+Owners can pause a task with `pause-task <task-id> <reason>` and resume it with `resume-task <task-id>`. Pauses and corrections retain the task's original resource slot; cancellation or explicit completion releases it only after execution exit and whole-task cleanup are verified. Existing `stop` still stops one run, and `release-hold` cannot bypass task reservations. Upgrade hub and clients together; missing capabilities hide unsupported controls. Historical tasks are not backfilled with locks and facts are not migrated. See the [task pause protocol](docs/protocol.md#任务暂停与连续资源保留).

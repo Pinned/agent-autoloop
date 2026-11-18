@@ -170,8 +170,13 @@ function resumeTask(draft: Draft, id: number) {
   if (rows(draft.view, "cards", { task_id: id, kind: "ask", state: "open" }).length)
     throw new Conflict("任务还有未回答的问题，请先回答后恢复");
   put(draft, "tasks", id, { status: "active", updated_at: draft.at });
-  if (!rows(draft.view, "runs", { task_id: id, state: "queued" }).length) {
-    const session = latest.session ?? latest.resume;
+  const previous = rows(draft.view, "runs", { task_id: id }, undefined, true).find(
+    (run) => run.agent === rule.to && (run.session || run.resume),
+  );
+  const session = previous?.session ?? previous?.resume;
+  const queued = rows(draft.view, "runs", { task_id: id, state: "queued" });
+  for (const run of queued) if (!run.resume && session) put(draft, "runs", run.id, { resume: session });
+  if (!queued.length) {
     if (!session) throw new Conflict("没有可接续的历史会话或排队执行");
     const event = recordEvent(
       draft,

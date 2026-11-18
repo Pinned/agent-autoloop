@@ -5,6 +5,30 @@ import { test } from "node:test";
 import { decide } from "../kernel/decide.ts";
 import { empty, evolve, rows, snapshot, type Fact } from "../kernel/evolve.ts";
 import { parseRules } from "../protocol/rules.ts";
+import { readBusinessTaskDetail } from "../host/business-task-query.ts";
+
+test("resume inherits the exited session for queued external material and owner completion releases", () => {
+  const f = fixture();
+  try {
+    f.event("a", "same");
+    const a = f.act("claimNext", "w1", "a");
+    f.act("started", a.run, a.token, { session: "original" });
+    f.act("pauseTask", a.task.id, "暂停");
+    f.event("more", "same");
+    f.act("finish", a.run, a.token, { outcome: "cancelled" });
+    assert.equal(readBusinessTaskDetail(f.view, "task:1").actions!.resumeTask, true);
+    f.act("resumeTask", a.task.id);
+    const next = f.act("claimNext", "w1", "next");
+    assert.equal(next.session, "original");
+    f.act("finish", next.run, next.token, { outcome: "done" });
+    f.act("pauseTask", a.task.id, "等待本人验收");
+    assert.equal(readBusinessTaskDetail(f.view, "task:1").actions!.completeTask, true);
+    f.act("completeTask", a.task.id, "验收完成");
+    assert.equal(rows(f.view, "holds", { task_id: a.task.id }).length, 0);
+  } finally {
+    f.view.close();
+  }
+});
 
 test("pause keeps answered questions pending until resumed cleanup and protects release", () => {
   const f = fixture();

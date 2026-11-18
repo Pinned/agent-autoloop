@@ -488,6 +488,21 @@ export function readBusinessTaskDetail(view: View, given: unknown): BusinessTask
       collection,
       task.id,
     ]);
+  const ownHolds = rows(view, "holds", { task_id: task.id });
+  const currentRules = configuration(view)?.rules ?? [];
+  const latestRun = task.latestRunId == null ? undefined : view.get("runs", task.latestRunId);
+  const rule = currentRules.find((rule) => rule.name === task.rule);
+  const releasable = ownHolds.every(
+    (hold) =>
+      hold.reserved &&
+      (hold.cards ?? []).every((id: number) => {
+        const card = view.get("cards", id);
+        return (
+          card?.task_id === task.id &&
+          (card.state === "done" || (card.state === "closed" && /^第 [1-9][0-9]* 轮$/.test(card.by ?? "")))
+        );
+      }),
+  );
   const completionBlocker =
     task.kind !== "task" || terminal
       ? null
@@ -497,7 +512,7 @@ export function readBusinessTaskDetail(view: View, given: unknown): BusinessTask
           ? "cards"
           : has("timers", ` AND ${f("p", "event_id")} IS NULL`)
             ? "timers"
-            : has("holds")
+            : ownHolds.length && !releasable
               ? "hold"
               : null;
   const actions = {
@@ -507,13 +522,14 @@ export function readBusinessTaskDetail(view: View, given: unknown): BusinessTask
     resumeTask:
       task.kind === "task" &&
       task.state === "paused" &&
+      !!rule &&
+      latestRun?.agent === rule.to &&
+      (has("runs", ` AND ${f("p", "state")}='queued'`) ||
+        rows(view, "runs", { task_id: task.id }).some((run) => run.agent === rule.to && (run.session || run.resume))) &&
       !has("runs", ` AND ${f("p", "state")} IN ('claimed','unknown')`) &&
       !has("cards", ` AND ${f("p", "kind")}='ask' AND ${f("p", "state")}='open'`),
     completionBlocker,
   };
-  const ownHolds = rows(view, "holds", { task_id: task.id });
-  const currentRules = configuration(view)?.rules ?? [];
-  const latestRun = task.latestRunId == null ? undefined : view.get("runs", task.latestRunId);
   const reasons = [
     ...new Set(
       ownHolds.flatMap((hold) => [
@@ -522,6 +538,26 @@ export function readBusinessTaskDetail(view: View, given: unknown): BusinessTask
       ]),
     ),
   ];
+  const allHolds = rows(view, "holds");
+  const occupied = rows(view, "runs", { state: ["claimed", "unknown"] }).filter(
+    (run) =>
+      run.state === "claimed" ||
+      ["cancelling", "cancelled"].includes(view.get("tasks", run.task_id)?.status) ||
+      allHolds.some((hold) => hold.task_id != null && hold.task_id === run.task_id),
+  );
+  const shares = (hold: Record<string, any>) =>
+    latestRun &&
+    (hold.grp === latestRun.grp || currentRules.find((rule) => rule.name === hold.rule)?.group === rule?.group);
+  const slots = latestRun
+    ? occupied.filter((run) => run.grp === latestRun.grp).length +
+      allHolds.filter(
+        (hold) =>
+          hold.reserved &&
+          hold.task_id !== task.id &&
+          shares(hold) &&
+          !occupied.some((run) => run.task_id === hold.task_id && run.lane === hold.lane),
+      ).length
+    : 0;
   const blockers =
     latestRun && task.state === "queued"
       ? rows(view, "holds")
@@ -531,7 +567,7 @@ export function readBusinessTaskDetail(view: View, given: unknown): BusinessTask
             const rule = currentRules.find((rule) => rule.name === latestRun.rule);
             return (
               (hold.grp === latestRun.grp || group === rule?.group) &&
-              (!hold.reserved || hold.lane === latestRun.lane || (rule?.parallel ?? 1) === 1)
+              (!hold.reserved || hold.lane === latestRun.lane || slots >= (rule?.parallel ?? 1))
             );
           })
           .map((hold) => hold.task_id)
