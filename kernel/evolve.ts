@@ -183,7 +183,7 @@ export function keyOf(table: Table, row: Row): string {
   if (table === "run_events") return `${row.run_id}:${row.event_id}`;
   if (table === "deliveries") return `${row.card_id}:${row.channel}`;
   if (table === "schedules") return row.rule;
-  if (table === "holds") return row.grp;
+  if (table === "holds") return row.key ?? row.grp;
   if (table === "seen" || table === "keys") return `${row.kind}:${row.name}`;
   if (table === "due") return `${row.kind}:${row.key}`;
   return "rules";

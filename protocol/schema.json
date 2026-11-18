@@ -2,6 +2,25 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:agent-autoloop:protocol:v1",
   "$defs": {
+    "taskPause": {
+      "type": "object",
+      "properties": { "reason": { "type": "string", "minLength": 1, "maxLength": 1000 } },
+      "required": ["reason"],
+      "additionalProperties": false
+    },
+    "taskPauseResult": {
+      "type": "object",
+      "properties": { "status": { "enum": ["pausing", "paused"] } },
+      "required": ["status"],
+      "additionalProperties": false
+    },
+    "taskResume": { "type": "object", "properties": {}, "additionalProperties": false },
+    "taskResumeResult": {
+      "type": "object",
+      "properties": { "status": { "const": "active" } },
+      "required": ["status"],
+      "additionalProperties": false
+    },
     "taskOwnerCompletion": {
       "type": "object",
       "properties": { "reason": { "type": "string", "minLength": 1, "maxLength": 1000 } },

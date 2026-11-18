@@ -232,6 +232,22 @@ async function route(call: Call): Promise<Response> {
     if (!given || Object.keys(given).join() !== "reason") throw new InputError("只填写本人收尾原因");
     return json(act(call, "settleCard", id, given.reason));
   }
+  const taskControl = /^\/v1\/tasks\/([1-9][0-9]*)\/(pause|resume)$/.exec(path);
+  if (method === "POST" && taskControl) {
+    requireKey(call, "owner");
+    if (request.url.includes("?")) throw new InputError("任务控制不能带查询");
+    const id = Number(taskControl[1]);
+    if (!Number.isSafeInteger(id)) throw new InputError("任务编号不正确");
+    const given = await readJson(request);
+    if (
+      !given ||
+      typeof given !== "object" ||
+      Array.isArray(given) ||
+      Object.keys(given).join() !== (taskControl[2] === "pause" ? "reason" : "")
+    )
+      throw new InputError("暂停只填写原因，恢复不填写其他内容");
+    return json(act(call, taskControl[2] === "pause" ? "pauseTask" : "resumeTask", id, given.reason));
+  }
   const taskComplete = /^\/v1\/tasks\/([1-9][0-9]*)\/complete$/.exec(path);
   if (method === "POST" && taskComplete) {
     requireKey(call, "owner");

@@ -56,6 +56,8 @@ export function hubClient(url: string, key: string) {
     releaseHold: (run: number, reason: string) => call("POST", `/v1/holds/${run}/release`, { body: { reason } }),
     settleCard: (card: number, reason: string) => call("POST", `/v1/cards/${card}/settle`, { body: { reason } }),
     completeTask: (task: number, reason: string) => call("POST", `/v1/tasks/${task}/complete`, { body: { reason } }),
+    pauseTask: (task: number, reason: string) => call("POST", `/v1/tasks/${task}/pause`, { body: { reason } }),
+    resumeTask: (task: number) => call("POST", `/v1/tasks/${task}/resume`, { body: {} }),
     cancelTask: (task: number, reason: string) => call("POST", `/v1/tasks/${task}/cancel`, { body: { reason } }),
     cancel: (run: number) => call("POST", `/v1/runs/${run}/cancel`, { body: {} }),
     memo: (run: number, text: string) => call("POST", `/v1/runs/${run}/memo`, { body: { text } }),

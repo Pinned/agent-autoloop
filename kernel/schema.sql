@@ -13,7 +13,9 @@ CREATE TABLE tasks (
   completion_reason TEXT,
   cancel_requested_at TEXT,
   cancel_reason TEXT,
-  cancelled_at TEXT
+  cancelled_at TEXT,
+  pause_requested_at TEXT,
+  pause_reason TEXT
 );
 
 -- The columns of the read-only SQL views over the projections. host/runtime.ts reads the table and column names and makes
@@ -60,7 +62,10 @@ CREATE TABLE runs (
 );
 
 CREATE TABLE holds (
-  task_id INTEGER,  grp TEXT PRIMARY KEY,
+  task_id INTEGER,
+  key TEXT,
+  grp TEXT NOT NULL,
+  reserved INTEGER,
   rule TEXT NOT NULL,
   lane TEXT NOT NULL,
   run_id INTEGER NOT NULL,

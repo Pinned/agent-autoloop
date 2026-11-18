@@ -18,7 +18,7 @@ const note = (n: number) => ({
   summary: `第 ${n} 条`,
 });
 const clean = () => {
-  for (const table of ["run_events", "runs", "events", "seen", "cards", "deliveries", "timers"])
+  for (const table of ["run_events", "runs", "events", "seen", "cards", "deliveries", "timers", "holds"])
     run(`DELETE FROM ${table}`);
 };
 const claim = (now: number) => claimNext("w1", `c${Math.random()}`, now);

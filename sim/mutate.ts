@@ -8,7 +8,12 @@ const edits: [string, string, string, string][] = [
   ["event-duplicate", "decide.ts", "if (existing) return { event:", "if (false && existing) return { event:"],
   ["source-boundary", "decide.ts", "rule.when.source === source", "true"],
   ["parallel-lane", "decide.ts", 'rule.parallel ? subject : ""', 'false ? subject : ""'],
-  ["group-capacity", "decide.ts", "occupied.filter((other) => occupiesGroup(other, run.grp)).length <", "0 <"],
+  [
+    "group-capacity",
+    "decide.ts",
+    "occupied.filter((other) => occupiesGroup(other, run.grp)).length + reservedSlots(run)",
+    "0",
+  ],
   [
     "lane-exclusion",
     "decide.ts",
