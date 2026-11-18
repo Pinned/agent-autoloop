@@ -61,6 +61,44 @@ function requestOfRun(all: Reads["all"], run: Row) {
   };
 }
 
+// Exact answer_event links, not the latest card in a task. Both row count and text reads are bounded.
+function triggersOfRun(all: Reads["all"], run: Row) {
+  const count = all<Row>(
+    `SELECT COUNT(*) AS trigger_count FROM run_events re CROSS JOIN events e ON e.id=re.event_id JOIN cards c ON c.id=CAST(substr(e.key,instr(e.key,':')+1) AS INTEGER) AND c.answer_event=e.id WHERE re.run_id=? AND e.type IN ('card.answered','owner.memo')`,
+    [run.id],
+  )[0].trigger_count as number;
+  const rows = all<Row>(
+    `SELECT e.id AS eventId, e.type AS kind, c.id AS cardId,
+    substr(c.title,1,201) AS title,
+    substr(CASE WHEN c.choice IS NULL THEN '' ELSE json_extract(c.options, '$[' || c.choice || ']') END,1,501) AS choice,
+    substr(c.answer,1,1001) AS answer
+    FROM run_events re CROSS JOIN events e ON e.id=re.event_id
+    JOIN cards c ON c.id=CAST(substr(e.key,instr(e.key,':')+1) AS INTEGER) AND c.answer_event=e.id
+    WHERE re.run_id=? AND e.type IN ('card.answered','owner.memo') ORDER BY e.id, c.id LIMIT 4`,
+    [run.id],
+  );
+  const cut = (value: unknown, max: number) => [...String(value ?? "")].slice(0, max).join("");
+  return {
+    count,
+    truncated:
+      count > rows.length ||
+      rows.some(
+        (r) =>
+          [...String(r.title ?? "")].length > 200 ||
+          [...String(r.choice ?? "")].length > 500 ||
+          [...String(r.answer ?? "")].length > 1000,
+      ),
+    items: rows.map((r) => ({
+      eventId: r.eventId as number,
+      cardId: (r.cardId ?? null) as number | null,
+      kind: r.kind as "card.answered" | "owner.memo",
+      title: cut(r.title, 200),
+      choice: cut(r.choice, 500),
+      answer: cut(r.answer, 1000),
+    })),
+  };
+}
+
 const sum = (counted: Row[], field: string): number => counted.reduce((total, row) => total + row[field], 0);
 
 export function spendingOf(all: Reads["all"], now: number, timezone: string) {
@@ -151,7 +189,7 @@ export function stateOf(now: number, before: number | undefined, rules: Rules, {
       usage: run.usage ? JSON.parse(run.usage) : null,
       stopping: run.cancel_at != null,
       ...(run.state === "queued" || run.state === "claimed" || run.state === "unknown"
-        ? { request: requestOfRun(all, run) }
+        ? { request: requestOfRun(all, run), triggers: triggersOfRun(all, run) }
         : {}),
       events: all<Row>(EVENTS_OF_RUN, [run.id]),
     })),

@@ -37,7 +37,7 @@ const told = () =>
     "SELECT key, title, text, state FROM cards ORDER BY id",
   );
 const clean = () => {
-  for (const table of ["tasks", "run_events", "runs", "events", "seen", "cards", "deliveries", "timers"])
+  for (const table of ["tasks", "run_events", "runs", "events", "seen", "cards", "deliveries", "timers", "holds"])
     run(`DELETE FROM ${table}`);
 };
 const claim = (worker: string, now: number) => claimNext(worker, `c${Math.random()}`, now);
@@ -57,6 +57,114 @@ test("owner state keeps fixed original request rather than retry updates", async
   assert.equal(row.request?.detail, "最初详情");
   assert.equal(row.request?.taskId, one<{ task_id: number }>("SELECT task_id FROM runs WHERE id=?", [row.id])!.task_id);
   assert.deepEqual(all("SELECT * FROM facts"), before);
+});
+
+// Prevent cross-round answers, lost supplements and corrections replacing the original request.
+test("owner state reads actual answer and memo links", async () => {
+  clean();
+  const { answer, memo, stateOf } = await import("../host/runtime.ts");
+  ingest("app", { ...note(1), detail: "最初详情" }, at(0));
+  ingest(
+    "app",
+    { ...note(1, "forged"), type: "feedback.updated", summary: "card.answered", detail: "不可猜测" },
+    at(0),
+  );
+  const first = claim("w1", at(0))!;
+  finish(
+    first.run,
+    first.token,
+    {
+      outcome: "done",
+      session: "s1",
+      ask: [{ key: "q1", title: "选择方案", text: "请选择", options: ["甲", "乙"], recommend: 0 }],
+    },
+    at(1),
+  );
+  const cardId = one<{ id: number }>("SELECT id FROM cards WHERE run_id=?", [first.run])!.id;
+  answer(cardId, { choice: 1, text: "补充说明", by: "本人" }, at(2));
+  const second = claim("w1", at(3))!;
+  let row = stateOf(at(3)).runs.find((r) => r.id === second.run)!;
+  assert.equal(row.request?.detail, "最初详情");
+  assert.deepEqual(
+    row.triggers?.items.map((item) => [item.kind, item.title, item.choice, item.answer]),
+    [["card.answered", "选择方案", "乙", "补充说明"]],
+  );
+  finish(
+    second.run,
+    second.token,
+    {
+      outcome: "done",
+      session: "s1",
+      ask: [{ key: "q2", title: "文字问题", text: "请回答", options: ["甲", "乙"], recommend: 0 }],
+    },
+    at(4),
+  );
+  const nextCard = one<{ id: number }>("SELECT id FROM cards WHERE run_id=?", [second.run])!.id;
+  answer(nextCard, { text: "文字回答", by: "本人" }, at(5));
+  const third = claim("w1", at(6))!;
+  row = stateOf(at(6)).runs.find((r) => r.id === third.run)!;
+  assert.deepEqual(
+    row.triggers?.items.map((item) => [item.title, item.choice, item.answer]),
+    [["文字问题", "", "文字回答"]],
+  );
+  finish(third.run, third.token, { outcome: "done", session: "s1" }, at(7));
+  memo(third.run, "更正原文", at(8));
+  row = stateOf(at(8)).runs.find((r) => r.state === "queued")!;
+  assert.deepEqual(
+    row.triggers?.items.map((item) => [item.kind, item.answer]),
+    [["owner.memo", "更正原文"]],
+  );
+  memo(row.id, "第二条更正", at(9));
+  row = stateOf(at(9)).runs.find((r) => r.id === row.id)!;
+  assert.equal(row.triggers?.count, 2);
+  assert.deepEqual(
+    row.triggers?.items.map((item) => item.answer),
+    ["更正原文", "第二条更正"],
+  );
+  assert.equal(row.request?.detail, "最初详情");
+});
+
+// Prevent multiple real answers merged into one continuation from losing their association.
+test("owner state preserves all merged answers", async () => {
+  clean();
+  const hub = await import("../host/runtime.ts");
+  const previous = structuredClone(hub.rules);
+  const changed = structuredClone(previous);
+  changed.rules[0].pauseOnAsk = true;
+  try {
+    hub.execute("rules", [changed], at(0));
+    ingest("app", note(1), at(1));
+    const first = claim("w1", at(1))!;
+    finish(
+      first.run,
+      first.token,
+      {
+        outcome: "done",
+        session: "merged",
+        ask: [
+          { key: "a", title: "问题一", text: "请选择", options: ["甲", "乙"] },
+          { key: "b", title: "问题二", text: "请选择", options: ["丙", "丁"] },
+        ],
+      },
+      at(2),
+    );
+    const cards = all<{ id: number }>("SELECT id FROM cards WHERE run_id=? ORDER BY id", [first.run]);
+    hub.answer(cards[0].id, { choice: 0, by: "本人" }, at(3));
+    assert.equal(claim("w1", at(3)), null);
+    hub.answer(cards[1].id, { choice: 1, text: "补充", by: "本人" }, at(4));
+    const next = claim("w1", at(5))!;
+    const evidence = hub.stateOf(at(5)).runs.find((row) => row.id === next.run)!.triggers!;
+    assert.equal(evidence.count, 2);
+    assert.deepEqual(
+      evidence.items.map((item) => [item.title, item.choice, item.answer]),
+      [
+        ["问题一", "甲", ""],
+        ["问题二", "丁", "补充"],
+      ],
+    );
+  } finally {
+    hub.execute("rules", [previous], at(6));
+  }
 });
 
 test("usage accumulates across attempts once, without inventing unreported fields", () => {

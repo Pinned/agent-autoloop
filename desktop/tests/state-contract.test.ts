@@ -89,6 +89,18 @@ test("request preview survives projection without exposing extra fields", () => 
         agent: "a",
         state: "queued",
         summary: "",
+        triggers: {
+          count: 5,
+          truncated: true,
+          items: Array.from({ length: 4 }, (_, j) => ({
+            eventId: j + 1,
+            cardId: j + 1,
+            kind: "card.answered",
+            title: "\u0000".repeat(200),
+            choice: "\u0000".repeat(500),
+            answer: "\u0000".repeat(1000),
+          })),
+        },
         request: { ...request, title: "字".repeat(500), detail: "字".repeat(2000) },
       })),
     }),

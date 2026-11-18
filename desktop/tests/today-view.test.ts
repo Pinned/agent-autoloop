@@ -204,6 +204,37 @@ test("active rows show fixed original requests, explicit legacy ids and real sto
   assert.equal(byClass(f.root, "today-run-summary")[0].attributes.get("title"), "<b>原始详情</b>");
 });
 
+// Prevent merged trigger evidence being hidden by the original requirement or rendered as markup.
+test("active descriptions show merged actual answers and corrections as text", () => {
+  const f = fixture({
+    kind: "ready",
+    snapshot: snapshot({
+      activeRuns: [
+        {
+          id: 7,
+          rule: "r",
+          agent: "a",
+          state: "claimed",
+          summary: "ignored",
+          request: { taskId: 42, title: "原始任务", detail: "原始详情", availability: "recorded", truncated: false },
+          triggers: {
+            count: 2,
+            truncated: true,
+            items: [
+              { eventId: 10, cardId: 1, kind: "card.answered", title: "问题", choice: "乙", answer: "补充" },
+              { eventId: 11, cardId: 2, kind: "owner.memo", title: "本人的更正", choice: "", answer: "<b>更正</b>" },
+            ],
+          },
+        },
+      ],
+    }),
+  });
+  const preview = byClass(f.root, "today-run-summary")[0];
+  assert.equal(preview.textContent, "本轮 2 条触发：回答「问题」：乙；补充 · 更正：<b>更正</b>");
+  assert.match(preview.attributes.get("title")!, /资料已截断/);
+  assert.match(byId(f.root, "today-active").textContent, /原始任务/);
+});
+
 test("four independent headline tiles use exact ask/running/doneToday and real USD cost", () => {
   const f = fixture();
   const tiles = byClass(f.root, "today-stat");

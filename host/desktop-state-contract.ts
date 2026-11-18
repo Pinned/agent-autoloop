@@ -9,7 +9,8 @@ export const DESKTOP_TODAY_VERSION = 3 as const;
 // Enough for 20 full protocol cards, 6 active run summaries and original requests, and JSON escaping.
 // Every Unicode code point consumes at most 6 serialized bytes (including control/lone-surrogate escapes).
 // 20 * (200 + 4000 + 200) * 6 + 6 * (200 + 200 + 2000 + 500 + 2000) * 6 < 0.7 MiB;
-// 1.5 MiB leaves ample bounded space for identifiers, metadata, and JSON structure.
+// Original fields < 0.7 MiB; triggers add at most 6 * 4 * (200 + 500 + 1000) * 6 bytes.
+// Their combined text remains below 1 MiB; 1.5 MiB bounds metadata and JSON structure.
 export const DESKTOP_TODAY_RESPONSE_MAX_BYTES = 1536 * 1024;
 export const DESKTOP_TODAY_CARDS_MAX = 20 as const;
 export const DESKTOP_TODAY_RUNS_MAX = 6 as const;
@@ -21,6 +22,18 @@ export type DesktopTodayRun = {
   state: DesktopTodayRunState;
   summary: string;
   stopping?: boolean;
+  triggers?: {
+    count: number;
+    truncated: boolean;
+    items: {
+      eventId: number;
+      cardId: number | null;
+      kind: "card.answered" | "owner.memo";
+      title: string;
+      choice: string;
+      answer: string;
+    }[];
+  };
   request?: {
     taskId: number | null;
     title: string;
@@ -175,9 +188,29 @@ function parseRequest(value: unknown): NonNullable<DesktopTodayRun["request"]> {
     truncated: boolean(item.truncated),
   };
 }
+function parseTriggers(value: unknown): NonNullable<DesktopTodayRun["triggers"]> {
+  const item = record(value, ["count", "truncated", "items"]);
+  const total = count(item.count);
+  const items = list(item.items, 4).map((value) => {
+    const row = record(value, ["eventId", "cardId", "kind", "title", "choice", "answer"]);
+    const eventId = count(row.eventId),
+      cardId = row.cardId === null ? null : count(row.cardId);
+    if (!eventId || cardId === 0) invalid();
+    return {
+      eventId,
+      cardId,
+      kind: oneOf(row.kind, ["card.answered", "owner.memo"]),
+      title: protocolText(row.title, 200),
+      choice: protocolText(row.choice, 500),
+      answer: protocolText(row.answer, 1000),
+    };
+  });
+  if (items.length !== Math.min(total, 4)) invalid();
+  return { count: total, truncated: boolean(item.truncated), items };
+}
 function parseRun(value: unknown): DesktopTodayRun {
   const raw = displayRecord(value);
-  const optional = ["stopping", "request"].filter((name) => Object.hasOwn(raw, name));
+  const optional = ["stopping", "request", "triggers"].filter((name) => Object.hasOwn(raw, name));
   const item = record(value, ["id", "rule", "agent", "state", "summary", ...optional]);
   return {
     id: count(item.id),
@@ -186,6 +219,7 @@ function parseRun(value: unknown): DesktopTodayRun {
     state: oneOf(item.state, activeStates),
     summary: text(item.summary, 2000),
     ...(optional.includes("stopping") ? { stopping: boolean(item.stopping) } : {}),
+    ...(optional.includes("triggers") ? { triggers: parseTriggers(item.triggers) } : {}),
     ...(optional.includes("request") ? { request: parseRequest(item.request) } : {}),
   };
 }
@@ -287,6 +321,7 @@ export function projectDesktopTodaySnapshot(value: unknown): DesktopTodaySnapsho
           state,
           summary: field(view, "summary"),
           ...(Object.hasOwn(view, "stopping") ? { stopping: field(view, "stopping") } : {}),
+          ...(Object.hasOwn(view, "triggers") ? { triggers: field(view, "triggers") } : {}),
           ...(Object.hasOwn(view, "request") ? { request: field(view, "request") } : {}),
         }),
       );

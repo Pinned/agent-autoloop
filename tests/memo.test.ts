@@ -61,7 +61,7 @@ test("a correction to a run still working stops it first, and the next turn resu
   assert.equal(corrections(again)[0].text, "更正：方向反了");
 });
 
-test("two corrections while one run still waits join it, not two runs", () => {
+test("two corrections while one run still waits join it, not two runs", async () => {
   clean();
   ingest("app", note(1), at(0));
   const first = claim(at(0))!;
@@ -71,6 +71,13 @@ test("two corrections while one run still waits join it, not two runs", () => {
   const [waiting] = queued();
   assert.deepEqual(memo(waiting.id, "第二句更正", at(4)), { stopped: false });
   assert.equal(queued().length, 1);
+  const { stateOf } = await import("../host/runtime.ts");
+  const evidence = stateOf(at(4)).runs.find((row) => row.id === waiting.id)!.triggers!;
+  assert.equal(evidence.count, 2);
+  assert.deepEqual(
+    evidence.items.map((item) => item.answer),
+    ["第一句更正", "第二句更正"],
+  );
   const again = claim(at(4))!;
   assert.deepEqual(
     corrections(again).map((answer) => answer.text),

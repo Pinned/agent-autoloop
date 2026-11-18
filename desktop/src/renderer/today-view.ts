@@ -223,14 +223,20 @@ export function mountTodayView(
           "today-run-meta muted",
         ),
       );
-      const detail =
+      const originalDetail =
         request?.availability === "recorded"
           ? request.detail
           : request?.availability === "empty"
             ? "未填写详情"
             : "资料未记录";
+      const detail = run.triggers?.count
+        ? `${run.triggers.count > 1 ? `本轮 ${run.triggers.count} 条触发：` : ""}${run.triggers.items.map((item) => (item.kind === "owner.memo" ? `更正：${item.answer || "原文未记录"}` : `回答「${item.title || "问题未记录"}」：${[item.choice, item.answer].filter((text, index, values) => !!text && values.indexOf(text) === index).join("；") || "回答未记录"}`)).join(" · ")}`
+        : originalDetail;
       const preview = element("p", detail, "today-run-summary muted");
-      preview.setAttribute("title", detail + (request?.truncated ? "（资料已截断）" : ""));
+      preview.setAttribute(
+        "title",
+        detail + ((run.triggers?.count ? run.triggers.truncated : request?.truncated) ? "（资料已截断）" : ""),
+      );
       copy.append(preview);
       row.append(
         copy,
