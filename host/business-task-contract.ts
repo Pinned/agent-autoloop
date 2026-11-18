@@ -1,3 +1,4 @@
+import { parseRequest, parseTriggers, type DesktopTodayRun } from "./desktop-state-contract.ts";
 // Pure strict display DTOs; no transport, projection or capability dependencies.
 import {
   runId,
@@ -48,6 +49,7 @@ export type BusinessTaskItem = {
   execution?: { state: RunState; stopping: boolean };
 };
 export type BusinessTimelineDisplay = {
+  trigger?: { request: NonNullable<DesktopTodayRun["request"]>; triggers: NonNullable<DesktopTodayRun["triggers"]> };
   events: {
     id: number;
     title: string;
@@ -306,9 +308,17 @@ export function parseBusinessTaskList(v: unknown): BusinessTaskList {
   return result;
 }
 function parseTimelineDisplay(v: unknown): BusinessTimelineDisplay {
-  const d = record(v, ["events", "runs", "cards", "completion", "feedback"]);
+  const d = record(v, ["events", "runs", "cards", "completion", "feedback"], false, ["trigger"]);
   const nullableText = (v: unknown, max: number) => (v === null ? null : text(v, max));
   return {
+    ...("trigger" in d
+      ? {
+          trigger: (() => {
+            const x = record(d.trigger, ["request", "triggers"]);
+            return { request: parseRequest(x.request), triggers: parseTriggers(x.triggers) };
+          })(),
+        }
+      : {}),
     events: array(d.events, 20).map((v) => {
       const x = record(v, ["id", "title", "detail", "availability", "truncated"]);
       return {

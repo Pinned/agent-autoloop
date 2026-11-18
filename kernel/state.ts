@@ -38,7 +38,7 @@ type Reads = {
   unrouted: () => Row[];
 };
 
-function requestOfRun(all: Reads["all"], run: Row) {
+export function requestOfRun(all: Reads["all"], run: Row) {
   const taskId = run.task_id ?? null;
   const origin =
     taskId !== null
@@ -62,7 +62,7 @@ function requestOfRun(all: Reads["all"], run: Row) {
 }
 
 // Exact answer_event links, not the latest card in a task. Both row count and text reads are bounded.
-function triggersOfRun(all: Reads["all"], run: Row) {
+export function triggersOfRun(all: Reads["all"], run: Row) {
   const count = all<Row>(
     `SELECT COUNT(*) AS trigger_count FROM run_events re CROSS JOIN events e ON e.id=re.event_id JOIN cards c ON c.id=CAST(substr(e.key,instr(e.key,':')+1) AS INTEGER) AND c.answer_event=e.id WHERE re.run_id=? AND e.type IN ('card.answered','owner.memo')`,
     [run.id],

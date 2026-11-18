@@ -227,6 +227,63 @@ async function withView(
     else Reflect.deleteProperty(globalThis, "document");
   }
 }
+test("claim trigger area is read-only, expandable and absent on started or old responses", async () => {
+  const trigger = {
+    request: { taskId: 1, title: "需求", detail: "需求正文", availability: "recorded", truncated: false },
+    triggers: {
+      count: 1,
+      truncated: false,
+      items: [
+        {
+          eventId: 3,
+          cardId: 2,
+          kind: "owner.memo",
+          title: "",
+          choice: "",
+          answer: "<script>更正</script>".repeat(20),
+        },
+      ],
+    },
+  };
+  const display = { events: [], runs: [], cards: [], completion: null, feedback: [], trigger };
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      await flush();
+      const records = all(root).filter((node) => node.className === "business-record-card");
+      const claims = records.filter((node) => node.textContent.includes("接单程序领取任务"));
+      assert.equal(claims.length, 2);
+      assert.equal(claims.filter((node) => node.textContent.includes("本轮触发资料")).length, 1);
+      const section = all(claims.find((node) => node.textContent.includes("本轮触发资料"))!).find(
+        (node) => node.tag === "details",
+      )!;
+      assert.ok(section.textContent.includes("<script>更正</script>"));
+      assert.equal(all(section).filter((node) => ["button", "textarea", "script"].includes(node.tag)).length, 0);
+      assert.ok(
+        records
+          .filter((node) => node.textContent.includes("开始执行"))
+          .every((node) => !node.textContent.includes("本轮触发资料")),
+      );
+    },
+    item,
+    undefined,
+    {
+      timeline: ["claim", "claimNext", "started"].map((kind, index) => ({
+        seq: 3 - index,
+        kind,
+        at: null,
+        runId: index + 1,
+        eventId: null,
+        cardId: null,
+        feedbackId: null,
+        text: "",
+        truncated: false,
+        display: index === 1 ? { events: [], runs: [], cards: [], completion: null, feedback: [] } : display,
+      })),
+    },
+  );
+});
+
 test("detail reads stay silent on first load and refresh but still show read errors", async () => {
   let finish: (response: unknown) => void = () => {};
   await withView(

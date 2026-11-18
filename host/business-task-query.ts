@@ -1,5 +1,7 @@
 // Reads bounded committed projection fields and indexed fact references only. Never groups by lane.
 import { rows, type View } from "../kernel/evolve.ts";
+import { parseRequest } from "./desktop-state-contract.ts";
+import { requestOfRun, triggersOfRun } from "../kernel/state.ts";
 import { configuration } from "../kernel/query.ts";
 import type { SQLInputValue, SQLOutputValue } from "node:sqlite";
 import { pageRunCards } from "./desktop-task-query.ts";
@@ -451,6 +453,24 @@ export function pageBusinessTaskTimeline(view: View, given: unknown, input: unkn
           reason: cut(d.completion_reason, 1000),
           runId: typeof d.completedRunId === "number" ? d.completedRunId : item.runId,
         };
+    }
+    if (["claim", "claimNext"].includes(item.kind) && item.runId !== null) {
+      const fields: Record<string, string[]> = {
+        tasks: ["id", "origin_event_id"],
+        events: ["id", "summary", "detail", "type", "key"],
+        run_events: ["run_id", "event_id"],
+        cards: ["id", "answer_event", "title", "choice", "options", "answer"],
+      };
+      const read = <T>(sql: string, params: SQLInputValue[] = []) => {
+        const adapted = sql.replace(
+          /\b(tasks|events|run_events|cards)\b/g,
+          (table) =>
+            `(SELECT ${fields[table].map((name) => `json_extract(data,'$.${name}') AS ${name}`).join(",")} FROM projections WHERE collection='${table}')`,
+        );
+        return view.db.prepare(adapted).all(...params) as T[];
+      };
+      const run = { id: item.runId, task_id: kind === "task" ? Number(id) : null };
+      display.trigger = { request: parseRequest(requestOfRun(read, run)), triggers: triggersOfRun(read, run) };
     }
     item.display = display;
     item.truncated ||=

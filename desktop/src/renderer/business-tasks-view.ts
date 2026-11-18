@@ -1,3 +1,4 @@
+import { runTriggerDescription } from "./run-trigger-description.ts";
 import { BUSINESS_STATES, type BusinessTaskItem } from "../../../host/business-task-contract.ts";
 import { createAgentHistoryController } from "./agent-history-controller.ts";
 import { permitsTaskNavigation } from "./task-item-navigation.ts";
@@ -1113,6 +1114,18 @@ export function mountBusinessTasksView(
               record.append(intake);
             }
           else record.append(el("p", "当前记录未提供完整任务资料，请升级中台后重新读取。", "muted"));
+        } else if (["claim", "claimNext"].includes(event.kind)) {
+          if (display?.trigger) {
+            const section = el("section", "", "business-record-explanation");
+            section.append(el("span", "本轮触发资料", "business-card-label"));
+            const text = runTriggerDescription(display.trigger);
+            if ([...text].length > 160) {
+              const long = el("details");
+              long.append(el("summary", [...text].slice(0, 160).join("") + "…（展开）"), el("pre", text));
+              section.append(long);
+            } else section.append(el("p", text));
+            record.append(section);
+          }
         } else if (event.kind === "started" && event.runId !== null) {
           const id = event.runId;
           const session = button("查看执行会话 →", () => {

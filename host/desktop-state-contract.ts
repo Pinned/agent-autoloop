@@ -176,7 +176,7 @@ function parseSpending(value: unknown): DesktopTodaySpending {
   if (typeof item.cost !== "number" || !Number.isFinite(item.cost) || item.cost < 0 || missingCost > rounds) invalid();
   return { rounds, cost: item.cost, missingCost };
 }
-function parseRequest(value: unknown): NonNullable<DesktopTodayRun["request"]> {
+export function parseRequest(value: unknown): NonNullable<DesktopTodayRun["request"]> {
   const item = record(value, ["taskId", "title", "detail", "availability", "truncated"]);
   const taskId = item.taskId === null ? null : count(item.taskId);
   if (taskId === 0) invalid();
@@ -188,7 +188,7 @@ function parseRequest(value: unknown): NonNullable<DesktopTodayRun["request"]> {
     truncated: boolean(item.truncated),
   };
 }
-function parseTriggers(value: unknown): NonNullable<DesktopTodayRun["triggers"]> {
+export function parseTriggers(value: unknown): NonNullable<DesktopTodayRun["triggers"]> {
   const item = record(value, ["count", "truncated", "items"]);
   const total = count(item.count);
   const items = list(item.items, 4).map((value) => {
