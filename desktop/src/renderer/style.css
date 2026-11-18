@@ -2696,7 +2696,10 @@ main:has(.business-tasks-panel .tasks-detail-page:not([hidden])) {
 .business-tasks-panel .selection-badge { border: 0; background: #2f8553; color: white; line-height: 16px; }
 .business-operation-dialog {
   width: min(540px, calc(100vw - 32px));
-  padding: 28px;
+  padding: 20px;
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  box-sizing: border-box;
   border: 1px solid var(--soft);
   border-radius: 14px;
   background: var(--panel);
@@ -2704,8 +2707,13 @@ main:has(.business-tasks-panel .tasks-detail-page:not([hidden])) {
   box-shadow: 0 24px 80px #17243c26;
 }
 .business-operation-dialog::backdrop { background: #17243c40; }
-.business-operation-dialog h3 { font-size: 18px; margin: 0 0 12px; }
-.business-operation-dialog > button { float: right; margin-top: 20px; }
+.business-operation-dialog > section { border: 0; padding: 0; }
+.business-dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.business-operation-dialog h3 { font-size: 18px; margin: 0; }
+.business-dialog-close { width: 36px; height: 36px; flex-shrink: 0; padding: 0; border: 0; background: transparent; font-size: 24px; line-height: 1; }
+.business-dialog-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+.business-operation-dialog textarea { display: block; }
+.business-operation-dialog select { margin-bottom: 10px; }
 @media (max-width: 900px) {
   .business-tasks-panel .tasks-detail-head { padding-left: 12px; padding-right: 24px; }
   .business-tasks-panel .tasks-detail-page > .business-detail-actions,

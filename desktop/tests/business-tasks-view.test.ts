@@ -308,10 +308,20 @@ test("historical done feedback is admitted without latest-run diagnosis and reje
       const text = all(form).find((node) => node.tag === "textarea")!;
       text.value = "历史轮次评价";
       text.listeners.get("input")?.();
+      const close = all(form).find((node) => node.className === "business-dialog-close")!;
+      assert.equal(close.attributes.get("aria-label"), "关闭弹窗，保留草稿");
+      close.fire();
+      assert.equal(dialog.open, false);
+      assert.equal(controller.actionBusy, false, "closing must not send feedback or change task state");
+      liveFeedback.fire();
+      assert.equal(text.value, "历史轮次评价", "reopening preserves the input draft");
+      assert.equal(all(form).filter((node) => node.className === "business-dialog-header").length, 1);
       all(form)
-        .find((node) => node.textContent === "记录反馈")!
+        .find((node) => node.tag === "button" && node.textContent === "记录反馈")!
         .fire();
       assert.equal(controller.actionBusy, true);
+      close.fire();
+      assert.equal(dialog.open, true, "in-flight writes cannot be dismissed");
     },
     { ...item, decisions: { items: [], hasMore: false } },
     undefined,

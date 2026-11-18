@@ -416,7 +416,36 @@ export function mountBusinessTasksView(
     if (controller.actionBusy || controller.mustReread) return;
     dialogTrigger = trigger;
     content.hidden = false;
-    operationDialog.replaceChildren(content, button("取消", closeDialog));
+    if ([...content.querySelectorAll("div")].some((node) => node.className === "business-dialog-header")) {
+      content.append(actionStatus, readDetail);
+      operationDialog.setAttribute("aria-label", content.querySelectorAll("h3")[0]?.textContent ?? "任务操作");
+      operationDialog.replaceChildren(content);
+      if (!operationDialog.open) operationDialog.showModal();
+      content.querySelectorAll("textarea")[0]?.focus();
+      return;
+    }
+    const title = content.querySelectorAll("h3")[0];
+    const submit = content.querySelectorAll("button")[0];
+    const fields = [...content.children].filter((node) => node !== title && node !== submit);
+    const header = el("div", "", "business-dialog-header");
+    const close = button("×", closeDialog);
+    close.className = "business-dialog-close";
+    close.setAttribute("aria-label", "关闭弹窗，保留草稿");
+    close.title = "关闭弹窗，保留草稿";
+    if (title) {
+      operationDialog.setAttribute("aria-label", title.textContent ?? "任务操作");
+      header.append(title);
+    }
+    header.append(close);
+    content.replaceChildren(header, ...fields);
+    if (submit) {
+      submit.className = "setup-primary";
+      const actions = el("div", "", "business-dialog-actions");
+      actions.append(submit);
+      content.append(actions);
+    }
+    content.append(actionStatus, readDetail);
+    operationDialog.replaceChildren(content);
     if (!operationDialog.open) operationDialog.showModal();
     content.querySelectorAll("textarea")[0]?.focus();
   }
