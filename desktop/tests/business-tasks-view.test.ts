@@ -596,6 +596,22 @@ test("answered cards never become a header decision and empty titles retain busi
     { ...item, origin: { ...item.origin, title: "" }, decisions: { items: [], hasMore: false } },
   );
 });
+// Prevent result/progress previews from crowding list cards while retaining decisions and whole-card navigation.
+test("list cards omit progress and completion results but keep original material and decisions", async () => {
+  await withView(
+    async (controller, root) => {
+      const entry = all(root).find((x) => x.className.includes("tasks-run-card"))!;
+      assert.match(entry.textContent, /原始任务/);
+      assert.match(entry.textContent, /原始详情/);
+      assert.match(entry.textContent, /必须保留哪些内容/);
+      assert.doesNotMatch(entry.textContent, /当前进展|最终结果|本人确认完成|进展占位|结果占位|验收占位/);
+      entry.listeners.get("click")?.({ button: 0, target: { closest: () => null } });
+      assert.equal(controller.selectedKey, "task:1");
+      await flush();
+    },
+    { ...item, state: "completed", latestProgress: "进展占位", finalResult: "结果占位" },
+  );
+});
 // Prevent duplicate detail controls and stale or inaccessible card navigation after refresh.
 test("task title is the keyboard entrance and card whitespace opens the exact task after refresh", async () => {
   await withView(async (controller, root) => {
@@ -657,12 +673,13 @@ test("business list exposes rule and state in one compact toolbar without search
 test("owner completion displays acceptance separately from the original executor report", async () => {
   await withView(
     async (controller, root) => {
-      assert.match(root.textContent, /本人确认完成：已验收界面/);
+      const listCard = all(root).find((x) => x.dataset.taskKey === "task:1")!;
+      assert.doesNotMatch(listCard.textContent, /已验收界面|原执行报告/);
       controller.open("task:1");
       await flush();
-      assert.match(root.textContent, /本人确认完成：已验收界面/);
+      assert.match(root.textContent, /已验收界面/);
       assert.doesNotMatch(root.textContent, /不代表自动测试全部通过|不会启动 Agent|这是本人验收/);
-      assert.match(root.textContent, /原执行报告/);
+      assert.doesNotMatch(all(root).find((x) => x.dataset.taskKey === "task:1")!.textContent, /原执行报告/);
     },
     {
       ...item,
@@ -670,6 +687,29 @@ test("owner completion displays acceptance separately from the original executor
       latestProgress: "原执行报告",
       decisions: { items: [], hasMore: false },
       completion: { by: "owner", reason: "已验收界面", at: "2026-11-16T00:00:00.000Z" },
+    },
+    undefined,
+    {
+      timeline: [
+        {
+          seq: 1,
+          kind: "completeTask",
+          at: "2026-11-16T00:00:00.000Z",
+          runId: null,
+          eventId: null,
+          cardId: null,
+          feedbackId: null,
+          truncated: false,
+          text: "",
+          display: {
+            events: [],
+            runs: [{ id: 2, state: "done", summary: "原执行报告", error: "", truncated: false }],
+            cards: [],
+            completion: { by: "owner", reason: "已验收界面", runId: null },
+            feedback: [],
+          },
+        },
+      ],
     },
   );
 });
@@ -1081,11 +1121,11 @@ test("list owns no outer panel surface and previews have distinct two/three-line
     assert.ok(!root.className.split(" ").includes("panel"));
     const card = all(root).find((x) => x.dataset.taskKey === "task:1")!;
     assert.equal(all(card).find((x) => x.className === "tasks-run-detail")?.textContent, "原始详情");
-    assert.ok(
-      all(card)
-        .find((x) => x.className === "business-card-progress")
-        ?.textContent.includes("需确认"),
+    assert.equal(
+      all(card).some((x) => x.className === "business-card-progress"),
+      false,
     );
+    assert.match(card.textContent, /待你决定：选择记录范围/);
   });
   const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
   const rule = (selector: string) => css.slice(css.indexOf(selector)).split("}")[0];

@@ -1217,17 +1217,6 @@ main:has(#task-subpage:not([hidden])) {
   line-height: 1.7;
   white-space: pre-wrap;
 }
-.business-card-progress {
-  margin-top: 18px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-  font-size: 13px;
-  line-height: 1.7;
-}
-.business-card-progress > p {
-  margin: 0 0 8px;
-  white-space: pre-wrap;
-}
 .business-tasks-panel .tasks-run-card .business-decision {
   border: 0;
   border-left: 3px solid var(--amber);

@@ -643,12 +643,6 @@ export function mountBusinessTasksView(
             "tasks-run-detail",
           ),
         );
-      const cardProgress = el("section", "", "business-card-progress");
-      cardProgress.append(el("p", `${legacy ? "本轮结果" : "当前进展"}：${task.latestProgress || "尚无已记录的进展"}`));
-      card.append(cardProgress);
-      if (task.completion) cardProgress.append(el("p", `本人确认完成：${task.completion.reason}`));
-      if (task.finalResult !== null)
-        cardProgress.append(el("p", `最终结果：${task.finalResult || "明确完成，未填写最终结果"}`));
       if (task.origin.truncated)
         card.append(el("p", `${legacy ? "触发资料" : "原始需求"}当前仅显示部分，请进入详情核对。`, "muted"));
       for (const question of task.decisions.items) {
@@ -658,7 +652,7 @@ export function mountBusinessTasksView(
           decision.append(el("p", `${index + 1}. ${option}${question.recommend === index ? " · 推荐" : ""}`)),
         );
         if (question.truncated) decision.append(el("p", "此问题当前仅显示部分，请进入详情核对。", "muted"));
-        cardProgress.append(decision);
+        card.append(decision);
       }
       if (task.decisions.hasMore) card.append(el("p", "还有待决策问题，请进入详情查看。", "muted"));
       list.append(card);
