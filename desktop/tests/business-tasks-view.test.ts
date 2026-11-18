@@ -21,7 +21,9 @@ test("detail parity uses exact prototype colors and narrow sidebar", () => {
   assert.match(css, /border:\s*2px solid #419765;/);
   assert.match(css, /margin-top:\s*22px;/);
   assert.match(css, /\.sidebar\s*\{\s*width:\s*64px;/);
-  assert.match(css, /\.titlebar\s*\{\s*display:\s*none;/);
+  // Keep the native traffic lights above detail content in the shared draggable titlebar.
+  assert.doesNotMatch(css, /\.titlebar\s*\{[^}]*display:\s*none;/);
+  assert.match(css, /\.titlebar\s*\{[^}]*height:\s*44px;[^}]*-webkit-app-region:\s*drag;/);
   assert.match(css, /\.tasks-detail-head > \.business-header-description\s*\{[^}]*margin-top:\s*22px;/);
   assert.match(css, /\.business-session-entry\s*\{[^}]*margin-top:\s*10px;/);
   assert.match(css, /li:first-child::after\s*\{[^}]*border-color:\s*#49996d;/);

@@ -2996,7 +2996,6 @@ main:has(.settings-agent-subpage-panel) {
   margin-top: 10px;
 }
 /* The confirmed task detail has its own palette; shared list tokens must not tint its records. */
-body:has(.business-tasks-panel .tasks-detail-page:not([hidden])) .titlebar { display: none; }
 .business-tasks-panel .tasks-detail-head > .business-header-description { margin-top: 22px; }
 .business-tasks-panel .business-session-entry { margin-top: 10px; line-height: normal; }
 .business-tasks-panel .business-card-label { line-height: normal; }
