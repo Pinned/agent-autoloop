@@ -158,7 +158,7 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <text x="232" y="415" class="l" text-anchor="end">全答或正式关闭，有答才续办</text>
 
 <!-- 客户端只读业务查询，不改调度或历史事实 -->
-<text x="480" y="566" class="s" text-anchor="middle">桌面客户端：仅业务任务 · 今天待决策按可信身份进入详情 · 草稿保留，结果不明显式核实</text>
+<text x="480" y="566" class="s" text-anchor="middle">桌面客户端：可信任务直达 · 草稿保留、结果不明显式核实 · 原事实复查，触发不等于验收</text>
 
 <!-- 底部：交付流水线 -->
 <rect class="plug" x="22" y="584" width="916" height="72" rx="14"/>
