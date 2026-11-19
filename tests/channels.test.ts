@@ -4,6 +4,8 @@
 // the listener dying isn't started again. A GitHub webhook with a bad signature, or with none, is taken; what isn't an
 // identifier reaches the subject; a ping makes an event; replacement tokens in card text rewrite a webhook template.
 // A slow CLI call must not block the hub's HTTP loop while looking up a user, sending or updating a card.
+// Feishu forms must submit choice and text together, reject malformed/empty submissions, never submit a select callback,
+// preserve legacy clicks and identity/ref for hub validation, and display untrusted text without markup.
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -38,10 +40,42 @@ const base: Card = {
 
 test("a card shows its options while it's open, and what became of it after", () => {
   const open = render(base);
-  const blocks = open.body.elements.filter((e) => e.tag === "interactive_container") as any[];
-  assert.equal(blocks.length, 2);
-  assert.deepEqual(blocks[1].behaviors[0].value, { card: 5, choice: 1 });
-  assert.equal(blocks[1].border_color, "blue", "what's recommended stands out");
+  const form = open.body.elements.find((e) => e.tag === "form") as any;
+  assert.equal(form.name, "answer");
+  const select = form.elements.find((e: any) => e.tag === "select_static");
+  assert.equal(select.name, "choice");
+  assert.equal(select.required, false);
+  assert.deepEqual(
+    select.options,
+    base.options.map((content, i) => ({ text: { tag: "plain_text", content }, value: String(i) })),
+  );
+  assert.deepEqual(select.behaviors, [{ type: "callback", value: { card: 5 } }]);
+  const input = form.elements.find((e: any) => e.tag === "input");
+  assert.equal(input.name, "text");
+  assert.equal(input.required, false);
+  assert.deepEqual(input.placeholder, { tag: "plain_text", content: "补充说明或其他要求" });
+  const button = form.elements.find((e: any) => e.tag === "button");
+  assert.equal(button.name, "submit");
+  assert.equal(button.form_action_type, "submit");
+  assert.deepEqual(button.behaviors, [{ type: "callback", value: { card: 5, submit: true } }]);
+  const literal = "**正文** <at id=all>所有人</at>\n第二行";
+  const safe = render({ ...base, text: literal, state: "decided", choice: 1, answer: literal });
+  assert.ok(!JSON.stringify(safe).includes('"tag":"markdown"'));
+  assert.deepEqual(safe.body.elements[0], { tag: "div", text: { tag: "plain_text", content: literal } });
+  assert.match(JSON.stringify(safe), /留着[\s\S]*补充说明/);
+  assert.equal(
+    render({ ...base, options: [] }).body.elements.some((e: any) => e.tag === "form"),
+    true,
+  );
+  assert.equal(
+    render({ ...base, kind: "notice", options: [] }).body.elements.some((e: any) => e.tag === "form"),
+    false,
+  );
+  const notice = render({ ...base, kind: "notice", options: ["已处理"] });
+  const noticeButton = notice.body.elements.find((element) => element.tag === "interactive_container") as any;
+  assert.ok(noticeButton, "an open notice keeps its acknowledgement entry");
+  assert.deepEqual(noticeButton.behaviors, [{ type: "callback", value: { card: 5, choice: 0 } }]);
+  assert.deepEqual(noticeButton.elements, [{ tag: "div", text: { tag: "plain_text", content: "已处理" } }]);
   const said = (card: Card) => JSON.stringify(render(card).body.elements);
   assert.match(said({ ...base, state: "decided", choice: 1 }), /你选了「留着」，已记录/);
   assert.ok(!said({ ...base, state: "decided", choice: 1 }).includes("callback"));
@@ -129,10 +163,14 @@ esac
     { ...base, id: 6, title: "fail-me", ref: null },
   ];
   const calls: unknown[][] = [];
+  let answered!: () => void;
+  const clickHandled = new Promise<void>((resolve) => {
+    answered = resolve;
+  });
   const hub = {
     async nextCard() {
       if (cards.length) return { card: cards.shift()! };
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      await clickHandled;
       stop.abort();
       return { card: null };
     },
@@ -146,6 +184,7 @@ esac
     },
     async answer(...args: unknown[]) {
       calls.push(["answer", ...args]);
+      answered();
       return { changed: true };
     },
   };
@@ -183,6 +222,99 @@ esac
     [["answer", 5, { choice: 1, by: "ou_me", ref: "om_5" }]],
   );
 });
+
+test(
+  "feishu forms forward combined answers and identities, reject bad submissions, and leave duplicates to the hub",
+  { timeout: 15_000 },
+  async () => {
+    const event = (value: unknown, form: unknown = {}, extra: object = {}) =>
+      JSON.stringify({
+        action_value: JSON.stringify(value),
+        form_value: JSON.stringify(form),
+        action_tag: "button",
+        action_name: "submit",
+        operator_id: "ou_other",
+        message_id: "om_other",
+        ...extra,
+      });
+    const combined = event({ card: 5, submit: true }, { choice: "1", text: "先备份\n再处理" });
+    const lines = [
+      combined,
+      combined,
+      event({ card: 5, submit: true }, { text: "归档" }),
+      event({ card: 5, submit: true }, { choice: "0", text: "" }),
+      event({ card: 5, choice: 1 }),
+      event({ card: 5 }, { choice: "1" }, { action_tag: "select_static", action_name: "choice" }),
+      ...[
+        {},
+        { text: "  " },
+        { choice: 1 },
+        { choice: "-1" },
+        { choice: "01" },
+        { choice: "1.2" },
+        { choice: "9007199254740992" },
+        { text: {} },
+        { text: "ok", admin: true },
+        null,
+        [],
+      ].map((form) => event({ card: 5, submit: true }, form)),
+      event({ card: 5, submit: true }, { text: "ok" }, { form_value: "not-json-secret" }),
+      event({ card: 5, submit: true }, { text: "ok" }, { action_name: "choice" }),
+      event({ card: 5, submit: true }, { text: "ok" }, { action_tag: "select_static" }),
+      event({ card: 5, submit: true }, { text: "ok" }, { operator_id: null }),
+      event({ card: 5, submit: true }, { text: "ok" }, { message_id: "" }),
+      "not-json-secret",
+    ];
+    const lark = join(dir, "form-lark");
+    writeFileSync(
+      lark,
+      `#!${process.execPath}\nif (process.argv[2] === 'event') {\nfor (const line of ${JSON.stringify(lines)}) console.log(line);\nsetInterval(() => {}, 1000);\n}\n`,
+      { mode: 0o755 },
+    );
+    const stop = new AbortController();
+    const calls: unknown[][] = [];
+    const logs: string[] = [];
+    let finish!: () => void;
+    const handled = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const hub = {
+      async nextCard() {
+        await handled;
+        stop.abort();
+        return { card: null };
+      },
+      async answer(...args: unknown[]) {
+        calls.push(args);
+        if (calls.length === 5) throw new Error("private-token-secret");
+        return { changed: calls.length !== 2 };
+      },
+    };
+    try {
+      await feishu({
+        hub: hub as any,
+        options: { user: "ou_me", lark },
+        log: (line) => {
+          logs.push(line);
+          if (logs.length === lines.length - 1) finish();
+        },
+        signal: stop.signal,
+      });
+    } finally {
+      stop.abort();
+    }
+    assert.deepEqual(calls, [
+      [5, { choice: 1, text: "先备份\n再处理", by: "ou_other", ref: "om_other" }],
+      [5, { choice: 1, text: "先备份\n再处理", by: "ou_other", ref: "om_other" }],
+      [5, { text: "归档", by: "ou_other", ref: "om_other" }],
+      [5, { choice: 0, by: "ou_other", ref: "om_other" }],
+      [5, { choice: 1, by: "ou_other", ref: "om_other" }],
+    ]);
+    assert.ok(logs.some((line) => line.includes("already settled")));
+    assert.ok(logs.some((line) => line.includes("未处理")));
+    assert.ok(!logs.join("\n").includes("secret"));
+  },
+);
 
 test("a webhook channel posts words and the link once, and has nothing to do for an update", async () => {
   const seen: any[] = [];

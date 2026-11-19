@@ -9,8 +9,10 @@ import type { Card, ChannelContext } from "../../host/channels.ts";
 
 function outcomeOf(card: Card) {
   const chosen = card.choice === null ? card.answer : card.options[card.choice];
-  if (card.state === "decided") return `你选了「${chosen}」，已记录，等待处理。`;
-  if (card.state === "done") return `你选了「${chosen}」。${card.result ? `已执行：${card.result}` : "已执行。"}`;
+  const supplement = card.choice !== null && card.answer ? `补充说明：${card.answer}。` : "";
+  if (card.state === "decided") return `你选了「${chosen}」，${supplement}已记录，等待处理。`;
+  if (card.state === "done")
+    return `你选了「${chosen}」。${supplement}${card.result ? `已执行：${card.result}` : "已执行。"}`;
   if (card.state === "closed" && card.kind === "ask") return `不用决定了：${card.result ?? ""}`;
   return card.state === "closed" && card.result ? card.result : null;
 }
@@ -18,18 +20,45 @@ function outcomeOf(card: Card) {
 /** One card, as it looks now: the options while it's open, what became of it after. */
 export function render(card: Card) {
   const outcome = outcomeOf(card);
-  // Each option is a block across the card, its words wrapping: buttons in a row, one line high, cut long options off.
-  const option = (label: string, index: number) => ({
-    tag: "interactive_container",
-    width: "fill",
-    has_border: true,
-    border_color: index === card.recommend ? "blue" : "grey",
-    corner_radius: "8px",
-    padding: "8px 12px 8px 12px",
-    behaviors: [{ type: "callback", value: { card: card.id, choice: index } }],
-    elements: [{ tag: "div", text: { tag: "plain_text", content: label } }],
-  });
-  const afterwards = outcome ? [{ tag: "markdown", content: `**${outcome}**` }] : [];
+  const plain = (content: string) => ({ tag: "div", text: { tag: "plain_text", content } });
+  const form = {
+    tag: "form",
+    name: "answer",
+    elements: [
+      ...card.options.map((label, index) =>
+        plain(`${index + 1}. ${label}${index === card.recommend ? "（推荐）" : ""}`),
+      ),
+      ...(card.options.length
+        ? [
+            {
+              tag: "select_static",
+              name: "choice",
+              placeholder: { tag: "plain_text", content: "选择一个选项（也可以只写说明）" },
+              required: false,
+              options: card.options.map((content, index) => ({
+                text: { tag: "plain_text", content },
+                value: String(index),
+              })),
+              behaviors: [{ type: "callback", value: { card: card.id } }],
+            },
+          ]
+        : []),
+      {
+        tag: "input",
+        name: "text",
+        placeholder: { tag: "plain_text", content: "补充说明或其他要求" },
+        required: false,
+      },
+      {
+        tag: "button",
+        name: "submit",
+        text: { tag: "plain_text", content: "提交回答" },
+        form_action_type: "submit",
+        behaviors: [{ type: "callback", value: { card: card.id, submit: true } }],
+      },
+    ],
+  };
+  const afterwards = outcome ? [plain(outcome)] : [];
   return {
     schema: "2.0",
     config: { update_multi: true, enable_forward: false },
@@ -39,8 +68,21 @@ export function render(card: Card) {
     },
     body: {
       elements: [
-        ...(card.text ? [{ tag: "markdown", content: card.text }] : []),
-        ...(card.state === "open" ? card.options.map(option) : afterwards),
+        ...(card.text ? [plain(card.text)] : []),
+        ...(card.state === "open"
+          ? card.kind === "ask"
+            ? [form]
+            : card.options.map((label, choice) => ({
+                tag: "interactive_container",
+                width: "fill",
+                has_border: true,
+                border_color: choice === card.recommend ? "blue" : "grey",
+                corner_radius: "8px",
+                padding: "8px 12px 8px 12px",
+                behaviors: [{ type: "callback", value: { card: card.id, choice } }],
+                elements: [plain(label)],
+              }))
+          : afterwards),
       ],
     },
   };
@@ -102,10 +144,60 @@ export default async function feishu({ hub, options, log, signal }: ChannelConte
 
   /** Only the owner's click on the card that was sent counts; the hub checks both. */
   async function clicked(line: string) {
+    const object = (value: unknown): value is Record<string, unknown> =>
+      value !== null && typeof value === "object" && !Array.isArray(value);
     const event = JSON.parse(line);
+    if (!object(event) || typeof event.action_value !== "string") throw new Error("invalid event");
     const value = JSON.parse(event.action_value);
-    if (!Number.isInteger(value.card) || !Number.isInteger(value.choice)) return;
-    const answer = await hub.answer(value.card, { choice: value.choice, by: event.operator_id, ref: event.message_id });
+    if (!object(value) || !Number.isSafeInteger(value.card) || (value.card as number) <= 0)
+      throw new Error("invalid card");
+    if (
+      typeof event.operator_id !== "string" ||
+      !event.operator_id.trim() ||
+      typeof event.message_id !== "string" ||
+      !event.message_id.trim()
+    )
+      throw new Error("missing identity");
+    let choice: number | undefined;
+    let text: string | undefined;
+    if (value.submit === true) {
+      if (
+        Object.keys(value).some((key) => key !== "card" && key !== "submit") ||
+        event.action_tag !== "button" ||
+        event.action_name !== "submit" ||
+        typeof event.form_value !== "string"
+      )
+        throw new Error("invalid submit");
+      const form = JSON.parse(event.form_value);
+      if (!object(form) || Object.keys(form).some((key) => key !== "choice" && key !== "text"))
+        throw new Error("invalid form");
+      if (form.choice !== undefined && form.choice !== "") {
+        if (
+          typeof form.choice !== "string" ||
+          !/^(0|[1-9]\d*)$/.test(form.choice) ||
+          !Number.isSafeInteger(Number(form.choice))
+        )
+          throw new Error("invalid choice");
+        choice = Number(form.choice);
+      }
+      if (form.text !== undefined) {
+        if (typeof form.text !== "string") throw new Error("invalid text");
+        if (form.text.trim()) text = form.text;
+      }
+      if (choice === undefined && text === undefined) throw new Error("empty answer");
+    } else {
+      if (Object.keys(value).some((key) => key !== "card" && key !== "choice"))
+        throw new Error("invalid legacy action");
+      if (value.choice === undefined) return; // Selection callbacks are not form submissions.
+      if (!Number.isSafeInteger(value.choice) || (value.choice as number) < 0) throw new Error("invalid choice");
+      choice = value.choice as number;
+    }
+    const answer = await hub.answer(value.card as number, {
+      ...(choice !== undefined ? { choice } : {}),
+      ...(text !== undefined ? { text } : {}),
+      by: event.operator_id,
+      ref: event.message_id,
+    });
     log(`card ${value.card}: answered by ${event.operator_id}, ${answer.changed ? "counted" : "already settled"}`);
   }
 
@@ -120,7 +212,10 @@ export default async function feishu({ hub, options, log, signal }: ChannelConte
       readline.createInterface({ input: consume.stderr }).on("line", (line) => log(line));
       readline
         .createInterface({ input: consume.stdout })
-        .on("line", (line) => void clicked(line).catch((error) => log(`click not handled: ${error}`)));
+        .on(
+          "line",
+          (line) => void clicked(line).catch(() => log("飞书回答未处理，请检查填写内容或确认回答权限后重试。")),
+        );
       await new Promise((resolve) => consume.on("close", resolve));
       signal.removeEventListener("abort", stop);
       if (!signal.aborted) {

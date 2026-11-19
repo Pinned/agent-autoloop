@@ -162,7 +162,17 @@ test("a channel's answer must come from someone on its list, on the message it s
   assert.throws(() => answer(id, { choice: 0, by: "someone-else", channel: "chat", ref: "om_1" }, at(2)), AuthError);
   assert.throws(() => answer(id, { choice: 0, by: "me", channel: "chat", ref: "om_forwarded" }, at(2)), AuthError);
   assert.equal(card(id).state, "open");
-  assert.equal(answer(id, { choice: 0, by: "me", channel: "chat", ref: "om_1" }, at(2)).changed, true);
+  assert.equal(
+    answer(id, { choice: 0, text: "补充要求", by: "me", channel: "chat", ref: "om_1" }, at(2)).changed,
+    true,
+  );
+  assert.equal(
+    answer(id, { choice: 1, text: "不能覆盖", by: "me", channel: "chat", ref: "om_1" }, at(3)).changed,
+    false,
+  );
+  const job = claim("w1", at(3))!;
+  assert.deepEqual([job.context.answers[0].choice, job.context.answers[0].text], [0, "补充要求"]);
+  assert.deepEqual([card(id).choice, card(id).answer], [0, "补充要求"]);
 });
 
 test("a run may resolve only what it was given to check, and a bad id doesn't spoil its own result", () => {
