@@ -1040,7 +1040,7 @@ test("session entrance preserves detail nodes and scroll and rejects late depart
       assert.equal(detail.hidden, true);
       assert.equal(scrollHost.scrollTop, 0);
       all(root)
-        .find((node) => node.tag === "button" && node.className === "session-back")!
+        .find((node) => node.tag === "button" && node.className.split(" ").includes("session-back"))!
         .fire();
       assert.equal(detail.hidden, false);
       assert.equal(scrollHost.scrollTop, 245);
@@ -1180,7 +1180,7 @@ test("session pagination appends stable nodes and lifecycle stops polling", asyn
         view.setActive(true);
         assert.equal(requests.length, before, "already active must not reread from the beginning");
         all(root)
-          .find((node) => node.tag === "button" && node.className === "session-back")!
+          .find((node) => node.tag === "button" && node.className.split(" ").includes("session-back"))!
           .fire();
         assert.equal(timers.size, 0);
       },
@@ -1705,7 +1705,7 @@ test("detail surfaces, compact heading and selected tabs follow shared theme and
   assert.match(surface, /background:\s*transparent;/);
   assert.match(surface, /border:\s*0;/);
   assert.match(surface, /padding:\s*0;/);
-  assert.match(rule("main:has(.business-tasks-panel .tasks-detail-page:not([hidden])) {"), /padding:\s*0;/);
+  assert.match(rule("main:has(.business-tasks-panel .tasks-detail-page:not([hidden])),"), /padding:\s*0;/);
   assert.match(rule(".business-tasks-panel .tasks-detail-head {"), /display:\s*grid;/);
   assert.match(rule(".tasks-detail-head h2 {"), /font-size:\s*18px;/);
   assert.match(rule(".task-detail-tabs {"), /flex-wrap:\s*wrap;/);

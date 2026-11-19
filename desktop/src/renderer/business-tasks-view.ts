@@ -312,7 +312,7 @@ export function mountBusinessTasksView(
   let sessionRun: number | null = null;
   let sessionScroll = 0;
   let sessionActive = true;
-  const sessionBack = button("← 返回任务详情", () => {
+  const sessionBack = button("←", () => {
     if (controller.actionBusy || controller.mustReread) return;
     sessionRun = null;
     history.select(null);
@@ -321,16 +321,8 @@ export function mountBusinessTasksView(
     detailPage.hidden = false;
     if (options.scrollHost) options.scrollHost.scrollTop = sessionScroll;
   });
-  sessionBack.className = "session-back";
+  sessionBack.className = "session-back task-back-button";
   sessionBack.setAttribute("aria-label", "返回任务详情");
-  sessionBack.replaceChildren();
-  const backIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  backIcon.setAttribute("viewBox", "0 0 24 24");
-  backIcon.setAttribute("aria-hidden", "true");
-  const backPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  backPath.setAttribute("d", "m14 6-6 6 6 6M8 12h12");
-  backIcon.append(backPath);
-  sessionBack.append(backIcon);
   const sessionHeading = el("h2", "执行会话");
   const sessionIdentity = el("p", "", "session-identity");
   const sessionMeta = el("div", "", "session-meta");
@@ -358,11 +350,11 @@ export function mountBusinessTasksView(
   const sessionSectionHead = el("div", "", "session-section-head");
   sessionSectionHead.append(el("h3", "会话记录"));
   sessionBody.append(sessionToolbar, sessionNotes, sessionControls, sessionSectionHead, sessionMessages);
-  const sessionHeader = el("header", "", "session-header");
-  const sessionTitleRow = el("div", "", "session-title-row");
+  const sessionHeader = el("header", "", "session-header tasks-detail-head");
+  const sessionTitleRow = el("div", "", "session-title-row business-detail-heading");
   const sessionState = el("span", "", "session-state");
-  sessionTitleRow.append(sessionBack, sessionHeading, sessionState);
-  sessionHeader.append(sessionTitleRow, sessionHeaderAligned);
+  sessionTitleRow.append(sessionHeading, sessionState);
+  sessionHeader.append(sessionBack, sessionTitleRow, sessionHeaderAligned);
   executionHistory.append(sessionHeader, sessionBody);
   const expanded = new Set<number>();
   const historyRows = new Map<string, HTMLElement>();

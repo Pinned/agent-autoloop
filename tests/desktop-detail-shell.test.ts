@@ -37,7 +37,9 @@ test("task details reuse the shared sidebar at every viewport width", () => {
 });
 
 test("task detail title has only one top inset beneath the titlebar", () => {
-  const main = css.match(/main:has\([^\n]+tasks-detail-page[^\n]+\)\s*\{([^}]+)\}/)?.[1];
+  const main = css.match(
+    /main:has\([^\n]+tasks-detail-page[^\n]+\),\s*main:has\([^\n]+agent-execution-history[^\n]+\)\s*\{([^}]+)\}/,
+  )?.[1];
   assert.ok(main);
   assert.match(main, /padding:\s*0;/);
   const head = css.match(/\.business-tasks-panel \.tasks-detail-head\s*\{([^}]+)\}/)?.[1];

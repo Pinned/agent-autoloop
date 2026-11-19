@@ -2571,7 +2571,8 @@ main:has(#task-subpage:not([hidden])) {
     border-color: CanvasText;
   }
 }
-main:has(.business-tasks-panel .tasks-detail-page:not([hidden])) {
+main:has(.business-tasks-panel .tasks-detail-page:not([hidden])),
+main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
   background: var(--panel);
   padding: 0;
   max-width: none;
@@ -2678,20 +2679,13 @@ main:has(.business-tasks-panel .tasks-detail-page:not([hidden])) {
 .session-payload { margin-top: 12px; overflow: hidden; border: 1px solid var(--border); border-radius: 6px; }
 .agent-history-timeline pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; padding: 12px 14px; font: 12px/1.75 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .session-payload-expand { width: 100%; border: 0; border-top: 1px solid var(--border); border-radius: 0; background: transparent; }
-/* Session owns its chrome: detail and global button rules must not redefine the prototype. */
-main:has(.agent-execution-history:not([hidden])) { background: var(--panel); padding: 24px 40px 48px; max-width: none; }
-.business-tasks-panel:has(.agent-execution-history:not([hidden])) { padding: 0; margin: 0; border: 0; background: var(--panel); }
-.business-tasks-panel .agent-execution-history { max-width: 1080px; margin: auto; padding: 0; border: 0; background: var(--panel); font-size: 14px; line-height: 1.6; min-width: 0; }
-.agent-execution-history .session-header { border: 0; border-bottom: 1px solid #e5eaf1; padding: 16px 0 26px; margin: 0; background: transparent; }
-.agent-execution-history .session-title-row { display: flex; align-items: center; gap: 14px; }
-.agent-execution-history .session-title-row h2 { margin: 0; font-size: 24px; line-height: 1.4; font-weight: 650; letter-spacing: -0.4px; color: #252a34; }
-.agent-execution-history .session-back { width: 44px; height: 44px; min-height: 44px; padding: 0; border: 0; border-radius: 7px; background: transparent; display: grid; place-items: center; flex-shrink: 0; color: #4b586a; }
-.agent-execution-history .session-back:hover { background: #f1f4f8; }
-.agent-execution-history .session-back svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+/* Navigation shares the task detail grid and button; session records retain their own chrome. */
+.business-tasks-panel .agent-execution-history { margin: 0; padding: 0; border: 0; background: var(--panel); font-size: 14px; line-height: 1.6; min-width: 0; }
+.agent-execution-history .session-header > .session-aligned { grid-column: 2; margin-left: 0; }
 .agent-execution-history .session-state { margin-left: auto; display: inline-flex; gap: 7px; align-items: center; padding: 5px 10px; border: 1px solid #dfefe4; background: #edf7f0; color: #26744c; border-radius: 7px; font-size: 12px; white-space: nowrap; }
 .agent-execution-history .session-state::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .agent-execution-history .session-state[data-state="failed"], .agent-execution-history .session-state[data-state="unknown"] { color: var(--amber); background: var(--panel2); border-color: var(--border); }
-.agent-execution-history .session-aligned { margin-left: 58px; }
+.agent-execution-history .session-aligned { margin-left: 62px; }
 .agent-execution-history .session-identity { margin: 9px 0 0; color: #4b586a; font-size: 13px; }
 .agent-execution-history .session-meta { display: flex; flex-wrap: wrap; gap: 8px 12px; font-size: 12px; color: #657183; margin-top: 10px; }
 .agent-execution-history .session-meta span + span { border-left: 1px solid #e5eaf1; padding-left: 12px; }
@@ -2719,14 +2713,8 @@ main:has(.agent-execution-history:not([hidden])) { background: var(--panel); pad
 .agent-execution-history .session-record::after { border-color: #aeb8c8; background: #fff; }
 .agent-execution-history .session-activity::after { width: 5px; height: 5px; top: 25px; border: 0; background: #b8c0cc; }
 .agent-execution-history .session-card:not(.session-tool-card) pre { font-size: 14px; color: #4b586a; }
-@media (min-width: 1500px) { main:has(.agent-execution-history:not([hidden])) { padding-left: 64px; padding-right: 64px; } }
-@media (max-width: 1000px) { main:has(.agent-execution-history:not([hidden])) { padding: 24px; } .agent-execution-history .session-aligned { margin-left: 0; } }
 @media (max-width: 650px) {
-  main:has(.agent-execution-history:not([hidden])) { padding: 16px; }
-  .agent-execution-history .session-header { padding-top: 8px; }
-  .agent-execution-history .session-title-row { gap: 8px; flex-wrap: wrap; }
-  .agent-execution-history .session-title-row h2 { font-size: 21px; flex: 1; }
-  .agent-execution-history .session-state { margin-left: 52px; }
+  .agent-execution-history .session-aligned { margin-left: 56px; }
   .agent-execution-history .session-card { padding: 14px; }
 }
 .session-card:not(.session-tool-card) .session-payload { border: 0; }
