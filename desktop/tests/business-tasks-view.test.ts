@@ -43,6 +43,10 @@ test("detail parity uses exact prototype colors and shared sidebar", () => {
   assert.match(css, /li:first-child::after\s*\{[^}]*border-color:\s*#49996d;/);
 });
 class Element {
+  isConnected = true;
+  get firstElementChild() {
+    return this.children[0];
+  }
   className = "";
   type = "";
   hidden = false;
@@ -148,7 +152,11 @@ const item = {
   legacyNotice: null,
 };
 async function withView(
-  action: (controller: ReturnType<typeof createRendererBusinessTasks>, root: Element) => Promise<void>,
+  action: (
+    controller: ReturnType<typeof createRendererBusinessTasks>,
+    root: Element,
+    view: ReturnType<typeof mountBusinessTasksView>,
+  ) => Promise<void>,
   shown: unknown = item,
   runDetail?: unknown,
   options: {
@@ -224,7 +232,8 @@ async function withView(
     });
     view.init();
     await flush();
-    await action(controller, view.root as unknown as Element);
+    await action(controller, view.root as unknown as Element, view);
+    view.dispose();
   } finally {
     if (previous) Object.defineProperty(globalThis, "document", previous);
     else Reflect.deleteProperty(globalThis, "document");
@@ -1069,6 +1078,120 @@ test("session entrance preserves detail nodes and scroll and rejects late depart
       },
     },
   );
+});
+
+// Prevent pagination/incremental reads from replacing old message nodes, collapsing tools, or scrolling.
+// Prevent hidden/departed pages from polling or accepting late results, and repeated activation from rereading.
+test("session pagination appends stable nodes and lifecycle stops polling", async () => {
+  const originalSet = globalThis.setTimeout,
+    originalClear = globalThis.clearTimeout;
+  const timers = new Map<number, () => void>();
+  let serial = 0;
+  globalThis.setTimeout = ((fn: () => void, ms: number) => {
+    const id = ++serial;
+    if (ms === 2000) timers.set(id, fn);
+    return id;
+  }) as never;
+  globalThis.clearTimeout = ((id: number) => {
+    timers.delete(id);
+  }) as never;
+  const requests: any[] = [];
+  const pending: ((value: unknown) => void)[] = [];
+  const scrollHost = { scrollTop: 0 } as HTMLElement;
+  const message = (id: string, kind = "message") => ({ id, kind, at: null, text: `记录 ${id}`, truncated: false });
+  const page = (items: unknown[], hasMore = false) => ({
+    runId: 9,
+    attempt: 1,
+    launch: 0,
+    launches: 1,
+    page: { status: "available", scope: "session", items, cursor: "11111111-1111-1111-1111-111111111111", hasMore },
+  });
+  try {
+    await withView(
+      async (controller, root, view) => {
+        controller.open("task:1");
+        await flush();
+        all(root)
+          .find((node) => node.className === "business-session-entry")!
+          .fire();
+        pending.shift()!(page([message("a", "tool-call")], true));
+        await flush();
+        const list = all(root).find((node) => node.className === "agent-history-timeline")!;
+        const row = list.children[0];
+        const tool = all(row).find((node) => node.tag === "details")!;
+        tool.open = true;
+        scrollHost.scrollTop = 120;
+        assert.equal(timers.size, 0, "older pages require an explicit load");
+        all(root)
+          .find((node) => node.tag === "button" && node.textContent === "加载后续记录")!
+          .fire();
+        assert.equal(requests[1].cursor, "11111111-1111-1111-1111-111111111111");
+        pending.shift()!(page([message("b")]));
+        await flush();
+        assert.equal(
+          all(root).find((node) => node.className === "agent-history-timeline"),
+          list,
+        );
+        assert.equal(list.children[0], row);
+        assert.equal(tool.open, true);
+        assert.equal(list.children.length, 2);
+        assert.equal(scrollHost.scrollTop, 120);
+        assert.equal(timers.size, 1);
+        const poll = [...timers.values()][0];
+        timers.clear();
+        poll();
+        assert.equal(requests.length, 3);
+        view.setActive(false);
+        assert.equal(timers.size, 0);
+        pending.shift()!(page([message("late")]));
+        await flush();
+        assert.equal(root.textContent.includes("记录 late"), false);
+        view.setActive(true);
+        assert.equal(requests.length, 4);
+        pending.shift()!(page([message("a", "tool-call"), message("b")]));
+        await flush();
+        const before = requests.length;
+        view.setActive(true);
+        assert.equal(requests.length, before, "already active must not reread from the beginning");
+        all(root)
+          .find((node) => node.tag === "button" && node.textContent === "← 返回任务详情")!
+          .fire();
+        assert.equal(timers.size, 0);
+      },
+      item,
+      undefined,
+      {
+        scrollHost,
+        timeline: [
+          {
+            seq: 10,
+            kind: "started",
+            at: null,
+            runId: 9,
+            eventId: null,
+            cardId: null,
+            feedbackId: null,
+            text: "",
+            truncated: false,
+            display: {
+              events: [],
+              runs: [{ id: 9, state: "claimed", summary: "", error: "", truncated: false }],
+              cards: [],
+              completion: null,
+              feedback: [],
+            },
+          },
+        ],
+        historyRead: async (request) => {
+          requests.push(request);
+          return new Promise((resolve) => pending.push(resolve));
+        },
+      },
+    );
+  } finally {
+    globalThis.setTimeout = originalSet;
+    globalThis.clearTimeout = originalClear;
+  }
 });
 
 test("header retains missing-history warnings without inventing empty requirement text", async () => {

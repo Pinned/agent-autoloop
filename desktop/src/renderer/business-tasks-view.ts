@@ -1328,6 +1328,7 @@ export function mountBusinessTasksView(
       update();
     },
     setActive(active: boolean) {
+      if (sessionActive === active) return;
       sessionActive = active;
       clearTimeout(polling);
       if (!active) history.select(null);
