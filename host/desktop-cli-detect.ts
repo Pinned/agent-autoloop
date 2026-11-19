@@ -70,7 +70,7 @@ function portOf(listen: string): number {
 function readCliConfig(
   home: string,
   io: DesktopSetupReadIO,
-): { shape: "worker" } | { shape: "hub"; port: number; owner: string } {
+): { shape: "worker" } | { shape: "hub"; port: number; owner: string; value: Record<string, unknown> } {
   if (!homeIsSafe(home, io)) invalid();
   const file = path.join(home, "config.json");
   const found = io.lstat(file);
@@ -100,10 +100,35 @@ function readCliConfig(
     const listen = value.hub.listen;
     if (typeof listen !== "string") invalid();
     if (!credential(value.owner)) invalid();
-    return { shape: "hub", port: portOf(listen), owner: value.owner };
+    return { shape: "hub", port: portOf(listen), owner: value.owner, value };
   } finally {
     io.close(handle);
   }
+}
+
+// History needs the local worker binding, not the owner-only synthetic attach config.
+export function readDesktopCliHistoryConfig(
+  home: string,
+  port: number,
+  io: DesktopSetupReadIO = desktopSetupReadIO,
+): unknown {
+  const config = readCliConfig(home, io);
+  if (config.shape !== "hub" || config.port !== port) invalid();
+  const worker = config.value.worker;
+  if (!isObject(worker) || !credential(worker.key) || typeof worker.name !== "string") invalid();
+  const url = config.value.url;
+  if (typeof url !== "string") invalid();
+  const endpoint = new URL(url);
+  if (
+    endpoint.origin !== `http://127.0.0.1:${port}` ||
+    endpoint.pathname !== "/" ||
+    endpoint.search ||
+    endpoint.hash ||
+    endpoint.username ||
+    endpoint.password
+  )
+    invalid();
+  return config.value;
 }
 
 /** Direction only. No credential crosses this boundary, so it is safe to hold in long-lived state. */

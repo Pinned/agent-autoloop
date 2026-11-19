@@ -45,7 +45,13 @@ import {
   parseHubEndpoint,
 } from "./state-source.ts";
 import { createBootControl } from "./boot-control.ts";
-import { detectDesktopCli, desktopCliHome, readDesktopCliEndpoint } from "../../host/desktop-cli-detect.ts";
+import { homedir } from "node:os";
+import {
+  detectDesktopCli,
+  desktopCliHome,
+  readDesktopCliEndpoint,
+  readDesktopCliHistoryConfig,
+} from "../../host/desktop-cli-detect.ts";
 import { createTaskSource } from "./task-source.ts";
 import { createHubWatcher, type HubGlance } from "./hub-watcher.ts";
 import { createNotifier } from "./notify.ts";
@@ -388,7 +394,20 @@ if (ownsAppLock)
       const agentHistorySource = createAgentHistorySource({
         home: runtimeHome,
         owned: () => !boot.attach() && controller.getState().ownership === "owned",
-        readConfig,
+        local: () => {
+          const decision = boot.decision();
+          if (decision?.kind !== "attach") return null;
+          if (boot.attach()?.getState().status !== "running") return null;
+          const home = desktopCliHome(process.env);
+          readDesktopCliHistoryConfig(home, decision.port);
+          return { home, claudeRoot: join(homedir(), ".claude") };
+        },
+        readConfig: (home) => {
+          const decision = boot.decision();
+          return decision?.kind === "attach"
+            ? readDesktopCliHistoryConfig(home, decision.port)
+            : readRuntimeConfig(home);
+        },
         readRun: async (id, canRead) => {
           const result = await detailSource.detail(id, canRead);
           return result.ok ? result.data.run : null;

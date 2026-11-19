@@ -1,7 +1,7 @@
-// Metadata is connection-bound and contains no credentials or transcript. Attached/remote workers are unsupported.
+// Metadata is connection-bound; only verified local stores may supply transcript references.
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { adapterFor } from "../../worker/agents.ts";
+import { readClaudeHistory } from "../../plugins/claude/history.ts";
 import { emptyHistory, localHistoryScope, readHistoryFile, type HistoryAssociation } from "../../worker/history.ts";
 import type { AgentHistoryInput, AgentHistoryResponse } from "./agent-history-contract.ts";
 import type { Config } from "../../host/config.ts";
@@ -9,7 +9,11 @@ export function createAgentHistorySource(options: {
   home: string;
   owned(): boolean;
   readConfig(home: string): unknown;
-  readRun(runId: number, canRead: () => boolean): Promise<{ id: number; agent: string; attempts: number } | null>;
+  local?(): { home: string; claudeRoot: string } | null;
+  readRun(
+    runId: number,
+    canRead: () => boolean,
+  ): Promise<{ id: number; agent: string; attempts: number; state: string } | null>;
 }) {
   const cursors = new Map<string, { binding: string; cursor: string; at: number }>();
   return {
@@ -26,20 +30,28 @@ export function createAgentHistorySource(options: {
           result.page = emptyHistory("unavailable");
           return result;
         }
-        if (!options.owned()) {
+        const local =
+          options.local?.() ??
+          (options.owned() ? { home: options.home, claudeRoot: path.join(options.home, ".claude") } : null);
+        if (!local) {
           result.page = emptyHistory("unsupported");
           return result;
         }
-        const config = options.readConfig(options.home) as Config;
+        const config = options.readConfig(local.home) as Config;
         if (!config.hub || !config.worker || typeof config.worker.key !== "string" || typeof config.url !== "string")
           return result;
-        const scope = localHistoryScope(options.home, config.url, config.worker.key);
+        const current = () => {
+          const next = options.local?.() ?? (options.owned() ? local : null);
+          return next?.home === local.home && next.claudeRoot === local.claudeRoot;
+        };
+        const scope = localHistoryScope(local.home, config.url, config.worker.key);
         const run = await options.readRun(request.runId, canRead);
-        if (!run || !canRead() || !options.owned()) return result;
-        result.attempt = request.attempt ?? run.attempts;
-        if (result.attempt < 1 || result.attempt > run.attempts) return result;
+        if (!run || !canRead() || !current()) return result;
+        result.attempt = request.attempt ?? (run.state === "queued" ? run.attempts : run.attempts + 1);
+        if (result.attempt < 1 || result.attempt > (run.state === "queued" ? run.attempts : run.attempts + 1))
+          return result;
         const bytes = readHistoryFile(
-          options.home,
+          local.home,
           `worker/history/${request.runId}-${result.attempt}.json`,
           0,
           16385,
@@ -84,20 +96,23 @@ export function createAgentHistorySource(options: {
           }
           cursor = known.cursor;
         }
-        const adapter = await adapterFor(association.use);
-        if (!canRead() || !options.owned()) return result;
-        const latest = options.readConfig(options.home) as Config;
-        if (!latest.worker || localHistoryScope(options.home, latest.url, latest.worker.key) !== scope) {
+        // Bundle the supported read-only capability; worker plugin discovery requires unbundled TS sources.
+        if (!canRead() || !current()) return result;
+        const latest = options.readConfig(local.home) as Config;
+        if (
+          !latest.worker ||
+          latest.owner !== config.owner ||
+          localHistoryScope(local.home, latest.url, latest.worker.key) !== scope
+        ) {
           result.page = emptyHistory("changed");
           return result;
         }
-        result.page =
-          adapter.history?.read({
-            root: path.join(options.home, ".claude"),
-            cwd: launch.cwd,
-            session: launch.session,
-            ...(cursor && { cursor }),
-          }) ?? emptyHistory("unsupported");
+        result.page = readClaudeHistory({
+          root: local.claudeRoot,
+          cwd: launch.cwd,
+          session: launch.session,
+          ...(cursor && { cursor }),
+        });
         if (result.page.cursor) {
           const token = randomUUID();
           cursors.set(token, { binding, cursor: result.page.cursor, at: Date.now() });

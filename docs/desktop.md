@@ -105,7 +105,7 @@ DESKTOP_HOME="$(mktemp -d)" npm --prefix desktop start
 
 领取卡仅在 claim/claimNext 使用可选 `display.trigger`，按事实 runId 复用今天页 request/triggers 的真实关联与摘要规则；显示「本轮触发资料」次级纯文字区，超过 160 码点折叠并可展开。历史回答没有提交控件，started 不显示此区，旧中台缺字段保留原卡。中台与桌面需同步更新以获得新资料字段，固定原始需求及既有预算不变。
 
-`desktop:agent-history:read` 只接受 runId 与可选 attempt、launch、opaque cursor。主进程先通过既有本人查询验证执行存在，沿用发送者核验与可撤销租约；只读取 App 自己管理的本机运行目录，不支持挂接的 CLI 中台或远端 worker。连接指纹绑定固定 URL、worker 凭据与本机 hub.db 的文件身份，换中台文件不能复用旧关联；仅留在主进程/本机元数据，不交给页面。worker 在新启动时保存 `worker/history/<run>-<attempt>.json`，仅含执行关联、Agent、工作目录和启动会话；该目录不在交给 Agent 的资料目录内，也不随 entry 删除或运行目录的 14 天清理一起删除，不复制 JSONL。旧启动缺关联时不可读，不扫描用户所有会话来猜关联。
+`desktop:agent-history:read` 只接受 runId 与可选 attempt、launch、opaque cursor。主进程先通过既有本人查询验证执行存在，沿用发送者核验与可撤销租约；读取 App 自己管理的本机运行目录，或经过安全 CLI 配置检查与本人鉴权的挂接本机目录；远端 worker 不支持。挂接逐次核对固定 loopback 端口、CLI 配置的本机 worker URL 与凭据，沿用祖先目录及配置文件的有界 no-follow 检查；Claude 默认根目录来自系统账号 home，renderer 不能提供目录。读取前后重新核对目录与连接指纹。runs.attempts 是失败重试次数：非 queued 执行的编号为 attempts + 1，queued 只可读取已经失败的 attempts 次执行，不猜旧关联。连接指纹绑定固定 URL、worker 凭据与本机 hub.db 的文件身份，换中台文件不能复用旧关联；仅留在主进程/本机元数据，不交给页面。worker 在新启动时保存 `worker/history/<run>-<attempt>.json`，仅含执行关联、Agent、工作目录和启动会话；该目录不在交给 Agent 的资料目录内，也不随 entry 删除或运行目录的 14 天清理一起删除，不复制 JSONL。旧启动缺关联时不可读，不扫描用户所有会话来猜关联。
 
 历史能力是 Adapter 的可选接口，第一版只实现 Claude 默认本机配置目录中的已保存主会话 JSONL；自定义 launcher、CLAUDE_CONFIG_DIR、Codex、完整 subagent 历史均不支持。记录来源由会话标识限定，不宣称准确分轮：每个执行关联都明确标「关联会话历史（可能包含多轮）」。只允许主会话的公开 assistant 文字、tool_use 名称和 tool_result 返回/错误状态；忽略 user 指令文字、系统消息、内部推理、附件、API 请求资料和侧链。工具参数、原始工具输出可能包含密钥或系统资料，默认全部不公开；公开文字遇到私密封套或常见凭据标记整块隐藏，这不是通用秘密检测器，Agent 的系统隔离仍由运行账号/容器负责。
 

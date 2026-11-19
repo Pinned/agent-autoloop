@@ -6,11 +6,14 @@ import { parseAgentHistoryInput } from "../src/agent-history-contract.ts";
 import { createAgentHistoryController } from "../src/renderer/agent-history-controller.ts";
 import { createAgentHistorySource } from "../src/agent-history-source.ts";
 import { localHistoryScope } from "../../worker/history.ts";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, unlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, unlinkSync, realpathSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { build } from "esbuild";
+import { readDesktopCliHistoryConfig } from "../../host/desktop-cli-detect.ts";
 test("history source binds metadata to connection, hides cursor paths, and survives entry deletion", async () => {
-  const home = mkdtempSync(path.join(tmpdir(), "history-source-"));
+  const home = realpathSync(mkdtempSync(path.join(tmpdir(), "history-source-")));
   const session = "11111111-1111-4111-8111-111111111111";
   let key = "private-key",
     owned = true;
@@ -46,7 +49,7 @@ test("history source binds metadata to connection, hides cursor paths, and survi
       home,
       owned: () => owned,
       readConfig: () => ({ url: "http://hub", hub: {}, worker: { name: "local", key } }),
-      readRun: async (id) => ({ id, agent: "a", attempts: 1 }),
+      readRun: async (id) => ({ id, agent: "a", attempts: 0, state: "done" }),
     });
     const first = await source.read({ runId: 1 }, () => true);
     assert.equal(first.page.status, "available");
@@ -63,6 +66,65 @@ test("history source binds metadata to connection, hides cursor paths, and survi
     assert.notEqual((await source.read({ runId: 1 }, () => true)).page.status, "available");
     owned = false;
     assert.equal((await source.read({ runId: 1 }, () => true)).page.status, "unsupported");
+    key = "private-key";
+    let local = true;
+    const attached = createAgentHistorySource({
+      home: path.join(home, "unused-runtime"),
+      owned: () => false,
+      local: () => (local ? { home, claudeRoot: path.join(home, ".claude") } : null),
+      readConfig: () => ({ url: "http://hub", hub: {}, worker: { name: "local", key } }),
+      readRun: async (id) => ({ id, agent: "a", attempts: 0, state: "done" }),
+    });
+    assert.equal((await attached.read({ runId: 1 }, () => true)).page.status, "available");
+    assert.equal((await attached.read({ runId: 1, attempt: 2 }, () => true)).page.status, "missing");
+    // A bundled main has no sibling .ts plugins: exercise the IPC door, not only the parser.
+    const bundle = path.join(home, "app/dist/history.mjs");
+    await build({
+      entryPoints: [path.resolve(import.meta.dirname, "../src/agent-history-source.ts")],
+      bundle: true,
+      platform: "node",
+      format: "esm",
+      target: "node24",
+      outfile: bundle,
+    });
+    writeFileSync(
+      path.join(home, "config.json"),
+      JSON.stringify({
+        url: "http://127.0.0.1:3350",
+        hub: { listen: "127.0.0.1:3350" },
+        owner: "owner",
+        worker: { name: "local", key },
+      }),
+    );
+    const config = () => readDesktopCliHistoryConfig(home, 3350) as any;
+    const metadata = JSON.parse(readFileSync(path.join(home, "worker/history/1-1.json"), "utf8"));
+    metadata.scope = localHistoryScope(home, config().url, key);
+    writeFileSync(path.join(home, "worker/history/1-1.json"), JSON.stringify(metadata));
+    const bundled = (await import(pathToFileURL(bundle).href)).createAgentHistorySource({
+      home: path.join(home, "unused-runtime"),
+      owned: () => false,
+      local: () => {
+        config();
+        return { home, claudeRoot: path.join(home, ".claude") };
+      },
+      readConfig: config,
+      readRun: async (id: number) => ({ id, agent: "a", attempts: 0, state: "done" }),
+    });
+    let valid = true;
+    const ipc = createAgentHistoryIpc({
+      assertSender() {},
+      presentation: {
+        acquireTaskLease: () => ({}),
+        checkTaskLease: () => valid,
+        releaseTaskLease() {},
+      },
+      read: (request, canRead) => bundled.read(request, canRead),
+    });
+    assert.equal((await ipc.read({}, [{ runId: 1 }])).page.status, "available");
+    valid = false;
+    assert.equal((await ipc.read({}, [{ runId: 1 }])).page.status, "unavailable");
+    local = false;
+    assert.equal((await attached.read({ runId: 1 }, () => true)).page.status, "unsupported");
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
