@@ -304,10 +304,59 @@ export function mountBusinessTasksView(
     diagnosisText = el("p", "", "muted");
   diagnosis.append(el("summary", "执行与诊断资料"), diagnosisText);
   const executionHistory = el("section", "", "agent-execution-history");
-  const history = createAgentHistoryController(options.history ?? {}, () => renderHistory());
+  const history = createAgentHistoryController(options.history ?? {}, () => {
+    renderHistory();
+    scheduleHistory();
+  });
   let tabTask = "";
+  let sessionRun: number | null = null;
+  let sessionScroll = 0;
+  let sessionActive = true;
+  const sessionBack = button("← 返回任务详情", () => {
+    if (controller.actionBusy || controller.mustReread) return;
+    sessionRun = null;
+    history.select(null);
+    clearTimeout(polling);
+    executionHistory.hidden = true;
+    detailPage.hidden = false;
+    if (options.scrollHost) options.scrollHost.scrollTop = sessionScroll;
+  });
+  sessionBack.className = "task-back-button";
+  const sessionHeading = el("h2", "执行会话");
+  const sessionIdentity = el("p", "", "muted");
+  const sessionBody = el("section");
+  const sessionNotes = el("section");
+  const sessionControls = el("section");
+  const sessionMessages = el("section");
+  sessionBody.append(sessionNotes, sessionControls, sessionMessages);
+  executionHistory.append(sessionBack, sessionHeading, sessionIdentity, sessionBody);
   const expanded = new Set<number>();
+  const historyRows = new Map<string, HTMLElement>();
+  let renderedIdentity = "";
+  let historyList: HTMLOListElement | undefined;
   let polling: ReturnType<typeof setTimeout> | undefined;
+  function scheduleHistory() {
+    clearTimeout(polling);
+    const id = sessionRun;
+    const key = controller.selectedKey;
+    const data = controller.detail;
+    const recorded = data?.timeline.items.flatMap((event) => event.display?.runs ?? []).find((run) => run.id === id);
+    const state = recorded?.state ?? (controller.run?.run.id === id ? controller.run.run.state : null);
+    const page = history.rounds.get(id ?? 0)?.page;
+    if (
+      !sessionActive ||
+      id === null ||
+      history.busy.has(id) ||
+      page?.hasMore ||
+      page?.status === "changed" ||
+      !["claimed", "unknown"].includes(state ?? "")
+    )
+      return;
+    polling = setTimeout(() => {
+      if (root.isConnected && sessionActive && sessionRun === id && controller.selectedKey === key)
+        history.read(id, !!history.rounds.get(id)?.page.cursor);
+    }, 2000);
+  }
   function renderHistory() {
     const limitation = el("details", "", "agent-history-scope");
     limitation.append(
@@ -318,29 +367,29 @@ export function mountBusinessTasksView(
         "muted",
       ),
     );
-    executionHistory.replaceChildren(el("p", "已保存的关联会话历史，可能包含多轮。", "agent-history-note"), limitation);
+    sessionNotes.replaceChildren(el("p", "已保存的关联会话历史，可能包含多轮。", "agent-history-note"), limitation);
+    sessionControls.replaceChildren();
     const data = controller.detail;
     if (!data) return;
-    const ids = [
-      ...new Set(
-        [data.task.latestRunId, ...data.timeline.items.map((x) => x.runId)].filter((id): id is number => id !== null),
-      ),
-    ];
+    const ids = sessionRun === null ? [] : [sessionRun];
+    sessionHeading.textContent = "执行会话";
+    const knownRun = data.timeline.items
+      .flatMap((event) => event.display?.runs ?? [])
+      .find((run) => run.id === sessionRun);
+    const currentRun = controller.run?.run;
+    const agent = currentRun?.id === sessionRun ? currentRun.agent : "Agent 名称未记录";
+    const state = knownRun?.state ?? (currentRun?.id === sessionRun ? currentRun.state : null);
+    sessionIdentity.textContent = `${agent} · 执行 #${sessionRun} · ${roundLabels[state ?? ""] ?? "轮次状态未记录"}`;
     for (const id of ids) {
-      const round = el("details", "", "agent-history-round");
-      round.open = expanded.has(id);
-      round.append(el("summary", `执行 #${id}${id === data.task.latestRunId ? " · 当前轮" : " · 旧轮"}`));
-      round.addEventListener("toggle", () => {
-        if (round.open) {
-          expanded.add(id);
-          if (!history.rounds.has(id)) history.read(id);
-        } else expanded.delete(id);
-      });
+      const round = el("section", "", "agent-history-round");
       const result = history.rounds.get(id);
       if (!result && history.rounds.size + history.busy.size >= 20)
         round.append(el("p", "本任务已达 20 个会话的读取上限，请重新进入任务后选择需要的旧轮。", "muted"));
       if (history.busy.has(id)) round.append(el("p", "正在读取已保存记录…", "muted"));
+      if (!options.history?.agentHistory)
+        round.append(el("p", "此连接暂不支持会话读取；已记录资料与结果仍可查看。", "muted"));
       if (result) {
+        if (result.page.status !== "available") sessionMessages.replaceChildren();
         const messages: Record<string, string> = {
           missing: "缺少新启动的可信历史关联，或会话文件尚未落盘；不猜会话，也不据此判断派发资料缺失。",
           unavailable: "本机历史不可读（权限、路径安全或运行身份不满足）；已记录触发资料和执行结果仍在任务记录中。",
@@ -372,11 +421,23 @@ export function mountBusinessTasksView(
           }
           if (result.attempt > 1)
             round.append(button("读取前一次执行关联", () => history.read(id, false, { attempt: result.attempt - 1 })));
-          const list = el("ol", "", "agent-history-timeline");
+          const identity = `${id}/${result.attempt}/${result.launch}`;
+          if (
+            renderedIdentity !== identity ||
+            result.page.items.length < historyRows.size ||
+            [...historyRows.keys()].some((key) => !result.page.items.some((item) => item.id === key))
+          ) {
+            renderedIdentity = identity;
+            historyRows.clear();
+            historyList = undefined;
+          }
+          const list = historyList ?? (historyList = el("ol", "", "agent-history-timeline"));
           for (const item of result.page.items) {
+            if (historyRows.has(item.id)) continue;
             const row = el("li");
+            historyRows.set(item.id, row);
             row.append(el("time", item.at ? new Date(item.at).toLocaleString("zh-CN") : "时间未记录", "muted"));
-            if (item.text.length > 600) {
+            if (item.kind !== "message" || item.text.length > 600) {
               const long = el("details");
               long.append(el("summary", item.text.slice(0, 160) + "…（展开）"), el("pre", item.text));
               row.append(long);
@@ -384,7 +445,7 @@ export function mountBusinessTasksView(
             if (item.truncated) row.append(el("p", "此消息仅显示有界片段。", "muted"));
             list.append(row);
           }
-          round.append(list);
+          if (sessionMessages.firstElementChild !== list) sessionMessages.replaceChildren(list);
           if (!result.page.items.length)
             round.append(el("p", "尚无可公开的已保存过程记录，不用业务摘要补造。", "muted"));
         }
@@ -399,7 +460,7 @@ export function mountBusinessTasksView(
         if (result.page.items.length >= 200 || history.capped.has(id))
           round.append(el("p", "本页已达条数或任务内容保留上限，已读取的内容仍保留。", "muted"));
       }
-      executionHistory.append(round);
+      sessionControls.append(round);
     }
   }
   back.className = "task-back-button";
@@ -475,7 +536,7 @@ export function mountBusinessTasksView(
     readDetail,
     timelineStatus,
   );
-  diagnosis.append(executionHistory);
+  root.append(executionHistory);
   processContent.append(timeline, timelineMore, diagnosis);
   const roundNote = el("span", "", "business-round-note");
   adjustments.append(runActions, roundOperations);
@@ -771,32 +832,23 @@ export function mountBusinessTasksView(
     const data = controller.detail;
     clearTimeout(polling);
     polling = undefined;
-    history.select(open && controller.detailFresh ? controller.selectedKey : null);
     if (tabTask !== (controller.selectedKey ?? "")) {
+      sessionRun = null;
+      historyRows.clear();
+      historyList = undefined;
       tabTask = controller.selectedKey ?? "";
       expanded.clear();
     }
-    executionHistory.hidden = !data;
+    history.select(open && sessionRun !== null && sessionActive ? `${controller.selectedKey}/${sessionRun}` : null);
+    executionHistory.hidden = !open || sessionRun === null;
+    detailPage.hidden = !open || sessionRun !== null;
     processContent.hidden = !data;
     current.hidden = !data && !controller.detailBusy && !controller.detailError;
     readDetail.hidden = !controller.mustReread && !controller.detailError;
     actionStatus.hidden = !controller.actionMessage;
     timelineStatus.hidden = !controller.detailError;
-    if (data?.task.latestRunId && !history.rounds.has(data.task.latestRunId)) {
-      expanded.add(data.task.latestRunId);
-      history.read(data.task.latestRunId);
-    }
     renderHistory();
-    if (open && data && ["claimed", "unknown"].includes(data.task.execution?.state ?? "")) {
-      const key = controller.selectedKey,
-        id = data.task.latestRunId;
-      polling = setTimeout(() => {
-        if (id && root.isConnected && controller.selectedKey === key) {
-          history.read(id, !!history.rounds.get(id)?.page.cursor);
-          update();
-        }
-      }, 2000);
-    }
+    scheduleHistory();
     timelineStatus.textContent = controller.detailError
       ? (messages[controller.detailError] ?? controller.detailError)
       : "";
@@ -1154,11 +1206,17 @@ export function mountBusinessTasksView(
         } else if (event.kind === "started" && event.runId !== null) {
           const id = event.runId;
           const session = button("查看执行会话 →", () => {
+            sessionScroll = options.scrollHost?.scrollTop ?? 0;
+            sessionRun = id;
             expanded.add(id);
-            diagnosis.open = true;
+            historyRows.clear();
+            historyList = undefined;
+            history.select(`${controller.selectedKey}/${id}`);
+            detailPage.hidden = true;
+            executionHistory.hidden = false;
+            if (options.scrollHost) options.scrollHost.scrollTop = 0;
             history.read(id);
             renderHistory();
-            executionHistory.scrollIntoView?.({ block: "nearest" });
           });
           session.className = "business-session-entry";
           session.disabled = !controller.detailFresh || controller.actionBusy || controller.mustReread;
@@ -1267,6 +1325,16 @@ export function mountBusinessTasksView(
     root,
     init() {
       if (!controller.items.length && !controller.busy) controller.refresh();
+      update();
+    },
+    setActive(active: boolean) {
+      sessionActive = active;
+      clearTimeout(polling);
+      if (!active) history.select(null);
+      else if (sessionRun !== null) {
+        history.select(`${controller.selectedKey}/${sessionRun}`);
+        history.read(sessionRun);
+      }
       update();
     },
     update,

@@ -374,6 +374,7 @@ window.addEventListener("beforeunload", () => {
 // knows what it was set up as, and only then may the launch record stand in for it.
 document.addEventListener("visibilitychange", () => {
   today.setActive(currentPage === "today" && shell === "workspace" && !document.hidden);
+  tasksPage.setActive(currentPage === "tasks" && currentRole() !== "worker" && !document.hidden);
   businessTasks.setActive(currentPage === "tasks" && currentRole() !== "worker" && !document.hidden);
 });
 window.addEventListener("focus", () => businessTasks.verifyForeground());
@@ -522,6 +523,7 @@ function render(id: string, focus = true) {
   if (currentPage === "tasks" && id !== "tasks") todayDetailReturn = null;
   currentPage = id;
   today.setActive(id === "today" && shell === "workspace" && !document.hidden);
+  tasksPage.setActive(id === "tasks" && currentRole() !== "worker" && !document.hidden);
   businessTasks.setActive(id === "tasks" && currentRole() !== "worker" && !document.hidden);
   main.setAttribute("aria-labelledby", "page-title");
   const page = isDispatchTask

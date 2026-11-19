@@ -152,6 +152,7 @@ async function withView(
   shown: unknown = item,
   runDetail?: unknown,
   options: {
+    historyRead?: (request: unknown) => Promise<unknown>;
     taskAction?: (input: unknown) => Promise<unknown>;
     paged?: boolean;
     scrollHost?: HTMLElement;
@@ -216,6 +217,7 @@ async function withView(
       () => view?.update(),
     );
     view = mountBusinessTasksView(controller, {
+      history: { agentHistory: options.historyRead as never },
       scrollHost: options.scrollHost,
       backFromDetail: options.backFromDetail,
       backLabel: options.backLabel,
@@ -968,6 +970,7 @@ test("legacy navigation returns to business list without showing old detail", as
     assert.match(root.textContent, /旧执行不在业务任务列表/);
   });
 });
+// Prevent eager history reads and an inline long conversation before the session subpage is opened.
 test("task detail keeps the original requirement in the header without duplicated content tabs", async () => {
   await withView(async (controller, root) => {
     controller.open("task:1");
@@ -984,7 +987,7 @@ test("task detail keeps the original requirement in the header without duplicate
     assert.equal(all(root).find((x) => x.id === "business-header-description")!.textContent, "原始详情");
     const history = all(root).find((x) => x.className === "agent-execution-history")!;
     assert.ok(root.textContent.includes("原始资料超过展示长度，当前仅显示部分。"));
-    assert.equal(history.hidden, false);
+    assert.equal(history.hidden, true);
     assert.equal(history.textContent.includes("需确认"), false);
     assert.ok(history.textContent.includes("可能包含多轮"));
     assert.equal(
@@ -995,8 +998,77 @@ test("task detail keeps the original requirement in the header without duplicate
     await flush();
     controller.open("task:1");
     await flush();
-    assert.equal(history.hidden, false);
+    assert.equal(history.hidden, true);
   });
+});
+
+// Prevent a started-card entrance from reading the latest run instead of its own identity,
+// losing mounted drafts/scroll, or letting a late response resurrect a departed session.
+test("session entrance preserves detail nodes and scroll and rejects late departed results", async () => {
+  const requests: unknown[] = [];
+  let resolve!: (value: unknown) => void;
+  const scrollHost = { scrollTop: 0 } as HTMLElement;
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      await flush();
+      const detail = all(root).find((node) => node.className === "tasks-detail-page")!;
+      const input = all(root).find((node) => node.tag === "textarea")!;
+      input.value = "未提交草稿";
+      scrollHost.scrollTop = 245;
+      const entry = all(root).find((node) => node.className === "business-session-entry")!;
+      assert.equal(requests.length, 0);
+      entry.fire();
+      assert.deepEqual(requests, [{ runId: 9 }]);
+      assert.equal(detail.hidden, true);
+      assert.equal(scrollHost.scrollTop, 0);
+      all(root)
+        .find((node) => node.tag === "button" && node.textContent === "← 返回任务详情")!
+        .fire();
+      assert.equal(detail.hidden, false);
+      assert.equal(scrollHost.scrollTop, 245);
+      assert.equal(input.value, "未提交草稿");
+      resolve({
+        runId: 9,
+        attempt: 1,
+        launch: 0,
+        launches: 1,
+        page: {
+          status: "available",
+          scope: "session",
+          items: [{ id: "late", kind: "message", at: null, text: "迟到文字", truncated: false }],
+          cursor: null,
+          hasMore: false,
+        },
+      });
+      await flush();
+      assert.equal(root.textContent.includes("迟到文字"), false);
+    },
+    item,
+    undefined,
+    {
+      scrollHost,
+      timeline: [
+        {
+          seq: 10,
+          kind: "started",
+          at: null,
+          text: "开始",
+          runId: 9,
+          eventId: null,
+          cardId: null,
+          feedbackId: null,
+          truncated: false,
+        },
+      ],
+      historyRead: async (request) => {
+        requests.push(request);
+        return new Promise((done) => {
+          resolve = done;
+        });
+      },
+    },
+  );
 });
 
 test("header retains missing-history warnings without inventing empty requirement text", async () => {
