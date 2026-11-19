@@ -472,6 +472,62 @@ export function pageBusinessTaskTimeline(view: View, given: unknown, input: unkn
       const run = { id: item.runId, task_id: kind === "task" ? Number(id) : null };
       display.trigger = { request: parseRequest(requestOfRun(read, run)), triggers: triggersOfRun(read, run) };
     }
+    if (kind === "task") {
+      const reviews = all(
+        view,
+        `SELECT json_extract(ch.value,'$.key') AS id, json_type(ch.value,'$.row') AS rowType,
+        substr(json_extract(ch.value,'$.row.key'),1,201) AS key,
+        substr(json_extract(ch.value,'$.row.at'),1,100) AS at,
+        substr(json_extract(ch.value,'$.row.about'),1,1001) AS about,
+        json_extract(ch.value,'$.row.event_id') AS eventId
+        FROM facts f,json_each(f.fact,'$.changes') ch WHERE f.seq=? AND json_extract(ch.value,'$.table')='timers'
+        AND NOT EXISTS(SELECT 1 FROM json_each(f.fact,'$.changes') n WHERE CAST(n.key AS INTEGER)>CAST(ch.key AS INTEGER) AND json_extract(n.value,'$.table')='timers' AND json_extract(n.value,'$.key')=json_extract(ch.value,'$.key'))
+        AND (json_extract(ch.value,'$.row.task_id')=? OR (json_type(ch.value,'$.row')='null' AND EXISTS(SELECT 1 FROM projection_refs pr JOIN facts pf ON pf.seq=pr.seq,json_each(pf.fact,'$.changes') pc WHERE pr.collection='timers' AND pr.key=json_extract(ch.value,'$.key') AND pr.seq<f.seq AND json_extract(pc.value,'$.table')='timers' AND json_extract(pc.value,'$.key')=pr.key AND json_extract(pc.value,'$.row.task_id')=?))) LIMIT 21`,
+        [item.seq, Number(id), Number(id)],
+      );
+      display.reviews = { items: [], truncated: reviews.length > 20 };
+      for (const review of reviews.slice(0, 20)) {
+        // Deleted projections are not cancellation evidence: consult the indexed last fact instead.
+        const latest = get(
+          view,
+          `SELECT json_type(ch.value,'$.row') AS rowType, json_extract(ch.value,'$.row.task_id') AS taskId, json_extract(ch.value,'$.row.event_id') AS eventId FROM projection_refs pr JOIN facts f ON f.seq=pr.seq,json_each(f.fact,'$.changes') ch WHERE pr.collection='timers' AND pr.key=? AND json_extract(ch.value,'$.table')='timers' AND json_extract(ch.value,'$.key')=pr.key ORDER BY pr.seq DESC, CAST(ch.key AS INTEGER) DESC LIMIT 1`,
+          [String(review.id)],
+        );
+        const current = get(
+          view,
+          `SELECT json_extract(data,'$.event_id') AS eventId FROM projections WHERE collection='timers' AND key=? AND json_extract(data,'$.task_id')=?`,
+          [String(review.id), Number(id)],
+        );
+        let historical = review;
+        if (review.rowType === "null")
+          historical =
+            get(
+              view,
+              `SELECT substr(json_extract(ch.value,'$.row.key'),1,201) AS key, substr(json_extract(ch.value,'$.row.at'),1,100) AS at, substr(json_extract(ch.value,'$.row.about'),1,1001) AS about FROM projection_refs pr JOIN facts f ON f.seq=pr.seq,json_each(f.fact,'$.changes') ch WHERE pr.collection='timers' AND pr.key=? AND pr.seq<? AND json_extract(ch.value,'$.table')='timers' AND json_extract(ch.value,'$.key')=pr.key AND json_extract(ch.value,'$.row.task_id')=? ORDER BY pr.seq DESC, CAST(ch.key AS INTEGER) DESC LIMIT 1`,
+              [String(review.id), item.seq, Number(id)],
+            ) ?? review;
+        display.reviews.items.push({
+          id: Number(review.id),
+          key: cut(historical.key, 200),
+          at:
+            typeof historical.at === "string" && Number.isFinite(Date.parse(historical.at))
+              ? new Date(historical.at).toISOString()
+              : null,
+          about: cut(historical.about, 1000),
+          action: review.rowType === "null" ? "cancelled" : review.eventId != null ? "triggered" : "scheduled",
+          state: current
+            ? current.eventId == null
+              ? "pending"
+              : "triggered"
+            : latest?.rowType === "null"
+              ? "cancelled"
+              : "unknown",
+          truncated:
+            [...String(historical.key ?? "")].length > 200 || [...String(historical.about ?? "")].length > 1000,
+        });
+      }
+      item.truncated ||= display.reviews.truncated || display.reviews.items.some((x) => x.truncated);
+    }
     item.display = display;
     item.truncated ||=
       details.length > 20 ||

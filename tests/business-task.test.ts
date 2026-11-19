@@ -4,6 +4,66 @@ import { test } from "node:test";
 import { empty } from "../kernel/evolve.ts";
 import { listBusinessTasks, readBusinessTaskDetail, pageBusinessTaskTimeline } from "../host/business-task-query.ts";
 import { parseBusinessTaskList } from "../host/business-task-contract.ts";
+
+// Prevent hidden receipt reviews, lost cancellation history and cross-task timer borrowing.
+test("review facts remain one node with bounded history and authoritative current state", () => {
+  const view = fixture();
+  try {
+    const timer = { id: 7, task_id: 1, key: "check", at, about: "<img onerror=bad>核实检查", event_id: null };
+    const fact = (seq: number, changes: object[]) => {
+      view.db.prepare("INSERT INTO facts VALUES(?,?)").run(seq, JSON.stringify({ at: 0, type: "finish", changes }));
+      view.db.prepare("INSERT INTO projection_refs VALUES('tasks','1',?)").run(seq);
+      view.db.prepare("INSERT INTO projection_refs VALUES('timers','7',?)").run(seq);
+    };
+    fact(50, [
+      { table: "runs", key: "3", row: { id: 3, task_id: 1, state: "done" } },
+      { table: "timers", key: "7", row: timer },
+      { table: "timers", key: "8", row: { ...timer, id: 8, key: "other" } },
+      { table: "timers", key: "9", row: { ...timer, id: 9, task_id: 2 } },
+    ]);
+    view.db.prepare("INSERT INTO projections VALUES('timers','7',?)").run(JSON.stringify({ ...timer, event_id: 141 }));
+    let items = pageBusinessTaskTimeline(view, "task:1").items;
+    assert.equal(items.length, 1);
+    assert.equal(items[0].display?.reviews?.items.length, 2);
+    assert.equal(items[0].display?.reviews?.items[0].state, "triggered");
+    assert.equal(items[0].display?.reviews?.items[1].state, "unknown");
+    assert.equal(items[0].display?.reviews?.items[0].about, timer.about);
+    view.db.prepare("DELETE FROM projections WHERE collection='timers'").run();
+    fact(51, [{ table: "timers", key: "7", row: null }]);
+    items = pageBusinessTaskTimeline(view, "task:1").items;
+    assert.equal(items.length, 2);
+    assert.equal(items[0].display?.reviews?.items[0].action, "cancelled");
+    assert.equal(items[0].display?.reviews?.items[0].about, timer.about);
+    assert.equal(items[1].display?.reviews?.items[0].state, "cancelled");
+    fact(
+      52,
+      Array.from({ length: 22 }, (_, i) => ({
+        table: "timers",
+        key: String(100 + i),
+        row: { ...timer, id: 100 + i, about: "字".repeat(2001) },
+      })),
+    );
+    const bounded = pageBusinessTaskTimeline(view, "task:1").items[0];
+    assert.equal(bounded.display?.reviews?.items.length, 20);
+    assert.equal(bounded.display?.reviews?.truncated, true);
+    assert.equal(bounded.display?.reviews?.items[0].about.length, 1000);
+    assert.equal(bounded.truncated, true);
+    const changed = { ...timer, at: "2026-12-01T00:00:00Z", about: "改期后检查" };
+    fact(53, [{ table: "timers", key: "7", row: changed }]);
+    view.db.prepare("INSERT INTO projections VALUES('timers','7',?)").run(JSON.stringify(changed));
+    const history = pageBusinessTaskTimeline(view, "task:1").items;
+    assert.equal(history[0].display?.reviews?.items[0].at, "2026-12-01T00:00:00.000Z");
+    assert.equal(history.at(-1)?.display?.reviews?.items[0].at, at);
+    assert.equal(history.at(-1)?.display?.reviews?.items[0].state, "pending");
+    fact(54, [{ table: "timers", key: "7", row: { ...changed, event_id: 141 } }]);
+    view.db
+      .prepare("UPDATE projections SET data=? WHERE collection='timers' AND key='7'")
+      .run(JSON.stringify({ ...changed, event_id: 141 }));
+    assert.equal(pageBusinessTaskTimeline(view, "task:1").items[0].display?.reviews?.items[0].action, "triggered");
+  } finally {
+    view.close();
+  }
+});
 const at = "2026-11-08T00:00:00.000Z";
 function fixture() {
   const view = empty();

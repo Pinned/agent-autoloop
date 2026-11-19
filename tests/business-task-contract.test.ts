@@ -10,6 +10,51 @@ import {
   businessTaskKey,
   LIST_MAX_BYTES,
 } from "../host/business-task-contract.ts";
+test("review DTO rejects unknown states, extra fields and oversized quantities", () => {
+  const review = {
+    id: 1,
+    key: "check",
+    at: null,
+    about: "核实",
+    action: "scheduled",
+    state: "pending",
+    truncated: false,
+  };
+  const parse = (items: unknown[]) =>
+    parseBusinessTimeline({
+      items: [
+        {
+          seq: 1,
+          kind: "finish",
+          at: null,
+          runId: 1,
+          eventId: null,
+          cardId: null,
+          feedbackId: null,
+          text: "",
+          truncated: false,
+          display: {
+            events: [],
+            runs: [],
+            cards: [],
+            completion: null,
+            feedback: [],
+            reviews: { items, truncated: false },
+          },
+        },
+      ],
+      hasMore: false,
+      nextBefore: null,
+    });
+  assert.equal(parse([review]).items[0].display?.reviews?.items[0].state, "pending");
+  for (const v of [
+    { ...review, state: "completed" },
+    { ...review, extra: true },
+    { ...review, about: "字".repeat(1001) },
+  ])
+    assert.throws(() => parse([v]));
+  assert.throws(() => parse(Array(21).fill(review)));
+});
 test("strict pure inputs reject accessors, prototypes, symbols, extras and oversized values", () => {
   let read = false;
   const getter = Object.defineProperty({}, "limit", {

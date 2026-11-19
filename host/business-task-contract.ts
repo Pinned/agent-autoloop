@@ -49,6 +49,18 @@ export type BusinessTaskItem = {
   execution?: { state: RunState; stopping: boolean };
 };
 export type BusinessTimelineDisplay = {
+  reviews?: {
+    items: {
+      id: number;
+      key: string;
+      at: string | null;
+      about: string;
+      action: "scheduled" | "triggered" | "cancelled";
+      state: "pending" | "triggered" | "cancelled" | "unknown";
+      truncated: boolean;
+    }[];
+    truncated: boolean;
+  };
   trigger?: { request: NonNullable<DesktopTodayRun["request"]>; triggers: NonNullable<DesktopTodayRun["triggers"]> };
   events: {
     id: number;
@@ -308,9 +320,31 @@ export function parseBusinessTaskList(v: unknown): BusinessTaskList {
   return result;
 }
 function parseTimelineDisplay(v: unknown): BusinessTimelineDisplay {
-  const d = record(v, ["events", "runs", "cards", "completion", "feedback"], false, ["trigger"]);
+  const d = record(v, ["events", "runs", "cards", "completion", "feedback"], false, ["trigger", "reviews"]);
   const nullableText = (v: unknown, max: number) => (v === null ? null : text(v, max));
   return {
+    ...("reviews" in d
+      ? {
+          reviews: (() => {
+            const r = record(d.reviews, ["items", "truncated"]);
+            return {
+              truncated: bool(r.truncated),
+              items: array(r.items, 20).map((v) => {
+                const x = record(v, ["id", "key", "at", "about", "action", "state", "truncated"]);
+                return {
+                  id: runId(x.id),
+                  key: text(x.key, 200),
+                  at: stamp(x.at),
+                  about: text(x.about, 1000),
+                  action: one(x.action, ["scheduled", "triggered", "cancelled"]),
+                  state: one(x.state, ["pending", "triggered", "cancelled", "unknown"]),
+                  truncated: bool(x.truncated),
+                };
+              }),
+            };
+          })(),
+        }
+      : {}),
     ...("trigger" in d
       ? {
           trigger: (() => {
