@@ -85,6 +85,7 @@ function fixture(state: unknown = { kind: "ready", snapshot: snapshot() }, withT
     workers = 0,
     tasks = 0;
   const opened: number[] = [];
+  const questions: (number | undefined)[] = [];
   const control = {
     state,
     busy: false,
@@ -98,9 +99,21 @@ function fixture(state: unknown = { kind: "ready", snapshot: snapshot() }, withT
       control as unknown as Parameters<typeof mountTodayView>[1],
       () => workers++,
       withTasks ? () => tasks++ : undefined,
-      (id) => opened.push(id),
+      (id, cardId) => {
+        opened.push(id);
+        questions.push(cardId);
+      },
     );
-    return { root, control, view, opened, refreshes: () => refreshes, workers: () => workers, tasks: () => tasks };
+    return {
+      root,
+      control,
+      view,
+      opened,
+      questions,
+      refreshes: () => refreshes,
+      workers: () => workers,
+      tasks: () => tasks,
+    };
   } finally {
     if (previous) Object.defineProperty(globalThis, "document", previous);
     else Reflect.deleteProperty(globalThis, "document");
@@ -119,6 +132,27 @@ function update(f: ReturnType<typeof fixture>) {
     else Reflect.deleteProperty(globalThis, "document");
   }
 }
+
+test("decision cards open their confirmed business task or explain missing identity", () => {
+  const f = fixture({
+    kind: "ready",
+    snapshot: snapshot({
+      cards: [
+        { id: 66, kind: "ask", title: "任务45执行118", text: "问题", by: null, taskId: 42 },
+        { id: 67, kind: "ask", title: "旧问题", text: "问题", by: null },
+      ],
+    }),
+  });
+  const rows = byClass(f.root, "today-decision");
+  const entry = all(rows[0]).find((node) => node.tagName === "button");
+  assert.equal(entry?.textContent, "前往任务回答");
+  entry!.click();
+  assert.deepEqual(f.opened, [42]);
+  assert.deepEqual(f.questions, [66]);
+  assert.ok(!all(rows[1]).some((node) => node.tagName === "button"));
+  assert.match(rows[1].textContent, /未提供业务任务身份/);
+  assert.ok(!all(rows[0]).some((node) => node.tagName === "textarea"));
+});
 
 test("active navigation uses only explicit task identity and protects non-navigation gestures", () => {
   const f = fixture({

@@ -581,11 +581,12 @@ function render(id: string, focus = true) {
         todayDetailReturn = null;
         render("tasks");
       },
-      (taskId) => {
+      (taskId, cardId) => {
         if (businessTasks.actionBusy || businessTasks.mustReread) return;
         todayDetailReturn = { scrollTop: main.scrollTop };
         businessTasks.open(`task:${taskId}`);
         render("tasks");
+        if (cardId) tasksPage.locateQuestion(`task:${taskId}`, cardId);
       },
     );
     todayView.update();

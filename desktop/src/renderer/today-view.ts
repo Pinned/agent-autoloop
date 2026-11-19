@@ -61,7 +61,7 @@ export function mountTodayView(
   control: Controller,
   openWorkers: () => void,
   openTasks?: () => void,
-  openBusinessTask?: (taskId: number) => void,
+  openBusinessTask?: (taskId: number, cardId?: number) => void,
 ) {
   const section = element("section", "", "today-view");
   section.setAttribute("aria-label", "今天进展");
@@ -139,8 +139,14 @@ export function mountTodayView(
     article.append(head, element("p", card.text, "today-card-text"));
     const foot = element("div", "", "today-card-foot");
     foot.append(element("span", card.by ? `来自 ${card.by}` : `卡片 #${card.id}`, "muted"));
-    const link = taskLink();
-    if (link) foot.append(link);
+    if (openBusinessTask && Number.isSafeInteger(card.taskId) && card.taskId! > 0) {
+      const link = element("button", "前往任务回答", "today-task-link");
+      link.type = "button";
+      link.addEventListener("click", () => openBusinessTask(card.taskId!, card.id));
+      foot.append(link);
+    } else {
+      foot.append(element("span", "中台未提供业务任务身份，请升级中台或在原通道处理；不能猜测关联任务。", "muted"));
+    }
     article.append(foot);
     return article;
   }

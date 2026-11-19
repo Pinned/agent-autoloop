@@ -640,6 +640,50 @@ export function mountBusinessTasksView(
   const decisionForms = new Map<string, HTMLElement>();
   let decisionTask = "";
   let answerFormId = 0;
+  let pendingQuestion: { taskKey: string; cardId: number; cursors: Set<number | null> } | null = null;
+  function locateQuestion() {
+    if (!pendingQuestion || controller.selectedKey !== pendingQuestion.taskKey || controller.detailBusy) return;
+    const question = controller.detail?.task.decisions.items.find((card) => card.id === pendingQuestion!.cardId);
+    const control =
+      controller.detailFresh &&
+      !controller.detailError &&
+      !controller.mustReread &&
+      question?.state === "open" &&
+      question.kind === "ask"
+        ? root.querySelector<HTMLButtonElement>(`button[data-card-id="${pendingQuestion.cardId}"]`)
+        : null;
+    if (control) {
+      const form = control.closest<HTMLElement>(".business-decision") ?? control;
+      if (form.hidden) return;
+      form.scrollIntoView?.({ block: "center" });
+      control.focus();
+      pendingQuestion = null;
+    } else if (controller.detailFresh) {
+      const historical = controller.detail?.timeline.items.find(
+        (item) =>
+          item.cardId === pendingQuestion!.cardId ||
+          item.display?.cards.some((card) => card.id === pendingQuestion!.cardId),
+      );
+      const recorded = historical && root.querySelector<HTMLElement>(`[data-question-id="${pendingQuestion.cardId}"]`);
+      const cursor = controller.detail?.timeline.nextBefore ?? null;
+      if (
+        !recorded &&
+        controller.detail?.timeline.hasMore &&
+        !controller.detailError &&
+        !controller.mustReread &&
+        !pendingQuestion.cursors.has(cursor) &&
+        pendingQuestion.cursors.size < 50
+      ) {
+        pendingQuestion.cursors.add(cursor);
+        controller.moreTimeline();
+        return;
+      }
+      decisionOverview.hidden = false;
+      decisionOverview.textContent = "对应问题已回答、已关闭或未完整展示，请核对任务记录；不能重新授予回答。";
+      (recorded ?? decisionOverview).scrollIntoView?.({ block: "center" });
+      pendingQuestion = null;
+    }
+  }
   function answerForm(
     taskKey: string,
     card: Pick<NonNullable<typeof controller.detail>["task"]["decisions"]["items"][number], "id" | "title" | "options">,
@@ -1229,6 +1273,8 @@ export function mountBusinessTasksView(
       timeline.replaceChildren();
       for (const event of data.timeline.items) {
         const row = el("li");
+        if (event.cardId) row.dataset.questionId = String(event.cardId);
+        else if (event.display?.cards.length === 1) row.dataset.questionId = String(event.display.cards[0].id);
         const record = el("article", "", "business-record-card");
         const heading = el("div", "", "business-record-heading");
         const display = event.display;
@@ -1328,6 +1374,7 @@ export function mountBusinessTasksView(
         for (const original of proposalCards) {
           const card = original;
           const question = el("section", "", "business-record-question");
+          question.dataset.questionId = String(card.id);
           question.append(
             el("span", `${event.kind === "answer" ? "问题" : "待确认方案 · 问题"} #${card.id}`, "business-card-label"),
             el("h4", original.title),
@@ -1398,6 +1445,7 @@ export function mountBusinessTasksView(
       if (!data.timeline.items.length) timeline.append(el("li", "没有可关联的历史记录，不补造处理或验收结论。"));
     }
     timeline.hidden = diagnosis.hidden = false;
+    locateQuestion();
     timelineMore.hidden = !data.timeline.hasMore;
     timelineMore.disabled = controller.detailBusy;
     diagnosisText.textContent = run
@@ -1406,6 +1454,10 @@ export function mountBusinessTasksView(
   }
   return {
     root,
+    locateQuestion(taskKey: string, cardId: number) {
+      pendingQuestion = { taskKey, cardId, cursors: new Set() };
+      locateQuestion();
+    },
     init() {
       if (!controller.items.length && !controller.busy) controller.refresh();
       update();
