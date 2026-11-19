@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import {
   emptyHistory,
+  HISTORY_READ_BYTES,
   readHistoryFile,
   type HistoryItem,
   type HistoryRequest,
@@ -158,7 +159,7 @@ export function readClaudeHistory(request: HistoryRequest): HistoryPage {
       if (result.length >= limit) break;
     }
     // Do not advance through an incomplete line. A row larger than the read budget is explicitly unavailable.
-    if (position === 0 && file.bytes.length === 1024 * 1024 && file.bytes.indexOf(10) < 0)
+    if (position === 0 && file.bytes.length === HISTORY_READ_BYTES && file.bytes.indexOf(10) < 0)
       return emptyHistory("unavailable");
     const next: Cursor = {
       identity: head.identity,
@@ -179,8 +180,8 @@ export function readClaudeHistory(request: HistoryRequest): HistoryPage {
       cursor: JSON.stringify(next),
       hasMore:
         block > 0 ||
-        (position < file.bytes.length &&
-          (file.bytes.indexOf(10, position) >= 0 || start + file.bytes.length < file.size)),
+        start + file.bytes.length < file.size ||
+        (position < file.bytes.length && file.bytes.indexOf(10, position) >= 0),
     };
   } catch (error) {
     return emptyHistory((error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "unavailable");

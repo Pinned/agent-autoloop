@@ -99,12 +99,65 @@ test("bounded pages retain long messages, suppress duplicate rows, and detect re
     chmodSync(file, 0);
     if (process.getuid?.() !== 0) assert.equal(readClaudeHistory(request).status, "unavailable");
     chmodSync(file, 0o600);
-    writeFileSync(file, "x".repeat(1024 * 1024 + 1));
+    writeFileSync(file, "x".repeat(10 * 1024 * 1024 + 1));
     assert.equal(readClaudeHistory(request).status, "unavailable");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
+// Large legal tool results must survive the read window and pagination; the window includes the newline.
+for (const bytes of [1324190, 10 * 1024 * 1024, 10 * 1024 * 1024 + 1]) {
+  test(`tool result JSONL window boundary: ${bytes} bytes`, () => {
+    const root = mkdtempSync(path.join(tmpdir(), "history-budget-"));
+    try {
+      mkdirSync(path.join(root, "projects/-work"), { recursive: true });
+      const file = path.join(root, `projects/-work/${session}.jsonl`);
+      const row = (text: string) =>
+        JSON.stringify({
+          type: "user",
+          uuid: "large-result",
+          sessionId: session,
+          message: { content: [{ type: "tool_result", tool_use_id: "t", content: text }] },
+        }) + "\n";
+      const text = "x".repeat(bytes - Buffer.byteLength(row("")));
+      writeFileSync(
+        file,
+        row(text) + JSON.stringify({ type: "assistant", sessionId: session, message: { content: "end" } }) + "\n",
+      );
+      const request = { root, cwd: "/work", session, limit: 50 };
+      let page = readClaudeHistory(request);
+      if (bytes > 10 * 1024 * 1024) {
+        assert.equal(page.status, "unavailable");
+        return;
+      }
+      let length = 0;
+      const ids = new Set<string>();
+      let ended = false;
+      for (let pages = 0; ; pages++) {
+        assert.ok(pages < 100);
+        assert.equal(page.status, "available");
+        for (const item of page.items) {
+          assert.ok(!ids.has(item.id));
+          ids.add(item.id);
+          if (item.kind === "tool-result") length += item.text.length;
+          else ended ||= item.text === "end";
+        }
+        if (!page.hasMore) break;
+        page = readClaudeHistory({ ...request, cursor: page.cursor! });
+      }
+      assert.equal(length, text.length);
+      assert.equal(ended, true);
+      writeFileSync(file, row(text).slice(0, -1));
+      const partial = readClaudeHistory(request);
+      assert.equal(partial.status, "available");
+      assert.equal(partial.items.length, 0);
+      appendFileSync(file, "\n");
+      assert.equal(readClaudeHistory({ ...request, cursor: partial.cursor! }).status, "available");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
 test("history reads complete public blocks only and continues without duplicates", () => {
   const root = mkdtempSync(path.join(tmpdir(), "history-"));
   try {

@@ -114,8 +114,9 @@ export function saveHistoryAssociation(home: string, association: HistoryAssocia
     }
   }
 }
+export const HISTORY_READ_BYTES = 10 * 1024 * 1024;
 /** The caller supplies the trusted root; no component below it may be a symlink. */
-export function readHistoryFile(root: string, relative: string, offset = 0, max = 1024 * 1024) {
+export function readHistoryFile(root: string, relative: string, offset = 0, max = HISTORY_READ_BYTES) {
   if (!path.isAbsolute(root) || lstatSync(root).isSymbolicLink() || path.isAbsolute(relative))
     throw new Error("unsafe");
   const base = realpathSync(root),
