@@ -12,6 +12,43 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { readDesktopCliHistoryConfig } from "../../host/desktop-cli-detect.ts";
+// Automatic pagination must not silently stop at the former 200-record retention limit.
+test("history controller automatically drains bounded pages beyond 200 records", async () => {
+  let calls = 0;
+  const controller = createAgentHistoryController(
+    {
+      agentHistory: async () => {
+        const page = calls++;
+        return {
+          runId: 1,
+          attempt: 1,
+          launch: 0,
+          launches: 1,
+          page: {
+            status: "available",
+            scope: "session",
+            items: Array.from({ length: 20 }, (_, index) => ({
+              id: `${page}-${index}`,
+              kind: "message",
+              at: null,
+              text: "记录",
+              truncated: false,
+            })),
+            cursor: "11111111-1111-4111-8111-111111111111",
+            hasMore: page < 10,
+          },
+        };
+      },
+    },
+    () => {},
+  );
+  controller.select("task:1");
+  controller.read(1);
+  for (let index = 0; index < 30; index++) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls, 11);
+  assert.equal(controller.rounds.get(1)?.page.items.length, 220);
+  assert.equal(controller.rounds.get(1)?.page.hasMore, false);
+});
 test("history source binds metadata to connection, hides cursor paths, and survives entry deletion", async () => {
   const home = realpathSync(mkdtempSync(path.join(tmpdir(), "history-source-")));
   const session = "11111111-1111-4111-8111-111111111111";

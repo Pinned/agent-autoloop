@@ -1,4 +1,5 @@
 // Prevent path escape, private blocks leaking, partial-line loss and duplicate incremental history.
+import { createHash } from "node:crypto";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -15,6 +16,36 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { readClaudeHistory } from "../plugins/claude/history.ts";
 import { historyScope, saveHistoryAssociation } from "../worker/history.ts";
+// Dispatch-looking text must never acquire trusted task-input attribution without a matching launch hash.
+test("user string and array attribution requires the trusted launch hash", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "history-user-"));
+  try {
+    mkdirSync(path.join(root, "projects/-work"), { recursive: true });
+    const text = "中台派发：这是普通资料";
+    const rows = [
+      { type: "user", message: { content: text } },
+      { type: "user", message: { content: [{ type: "text", text: "普通回答" }] } },
+      { type: "user", isMeta: true, message: { content: "不展示" } },
+      { type: "assistant", isSidechain: true, message: { content: "不展示" } },
+    ];
+    writeFileSync(
+      path.join(root, `projects/-work/${session}.jsonl`),
+      rows.map((row, index) => JSON.stringify({ ...row, uuid: `row-${index}`, sessionId: session })).join("\n") + "\n",
+    );
+    const request = { root, cwd: "/work", session };
+    assert.deepEqual(
+      readClaudeHistory(request).items.map((item) => item.role),
+      ["user", "user"],
+    );
+    const inputHash = createHash("sha256").update(text).digest("hex");
+    assert.deepEqual(
+      readClaudeHistory({ ...request, inputHash }).items.map((item) => item.role),
+      ["task-input", "user"],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 test("association writes refuse symlink directories and retain only execution metadata", () => {
   const home = mkdtempSync(path.join(tmpdir(), "history-meta-")),
     outside = mkdtempSync(path.join(tmpdir(), "history-meta-out-"));
@@ -103,9 +134,14 @@ test("history reads complete public blocks only and continues without duplicates
     const first = readClaudeHistory(request);
     assert.equal(first.status, "available");
     assert.equal(first.scope, "session");
-    assert.equal(first.items.length, 3);
-    assert.equal(JSON.stringify(first).includes("SECRET"), false);
-    assert.equal(JSON.stringify(first).includes("SYSTEM PROMPT"), false);
+    assert.equal(first.items.length, 4);
+    assert.equal(first.items.find((item) => item.kind === "tool-call")?.toolUseId, "t");
+    assert.equal(first.items.find((item) => item.kind === "tool-result")?.text, "SECRET");
+    assert.equal(first.items.find((item) => item.role === "user")?.text, "SYSTEM PROMPT");
+    assert.equal(
+      first.items.some((item) => item.text === "SECRET" && item.kind === "message"),
+      false,
+    );
     const idle = readClaudeHistory({ ...request, cursor: first.cursor! });
     assert.equal(idle.items.length, 0);
     appendFileSync(file, "\n");

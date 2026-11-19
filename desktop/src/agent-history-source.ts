@@ -80,7 +80,9 @@ export function createAgentHistorySource(options: {
         const launch = association.launches[result.launch];
         if (
           !launch ||
-          Object.keys(launch).sort().join(",") !== "cwd,session" ||
+          Object.keys(launch).some((key) => !["cwd", "session", "inputHash"].includes(key)) ||
+          (launch.inputHash !== undefined &&
+            (typeof launch.inputHash !== "string" || !/^[a-f0-9]{64}$/.test(launch.inputHash))) ||
           typeof launch.cwd !== "string" ||
           launch.cwd.length > 4096 ||
           typeof launch.session !== "string"
@@ -111,6 +113,7 @@ export function createAgentHistorySource(options: {
           root: local.claudeRoot,
           cwd: launch.cwd,
           session: launch.session,
+          inputHash: launch.inputHash,
           ...(cursor && { cursor }),
         });
         if (result.page.cursor) {

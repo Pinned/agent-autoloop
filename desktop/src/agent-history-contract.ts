@@ -74,7 +74,15 @@ export function parseAgentHistoryResponse(v: unknown, request: AgentHistoryInput
   for (const item of p.items) {
     if (
       !plain(item) ||
-      Object.keys(item).sort().join(",") !== "at,id,kind,text,truncated" ||
+      Object.keys(item).some(
+        (key) => !["at", "id", "kind", "text", "truncated", "role", "toolUseId", "name", "error", "part"].includes(key),
+      ) ||
+      !["at", "id", "kind", "text", "truncated"].every((key) => key in item) ||
+      (item.role !== undefined && !["assistant", "user", "task-input"].includes(item.role as string)) ||
+      (item.toolUseId !== undefined && (typeof item.toolUseId !== "string" || item.toolUseId.length > 200)) ||
+      (item.name !== undefined && (typeof item.name !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(item.name))) ||
+      (item.error !== undefined && typeof item.error !== "boolean") ||
+      (item.part !== undefined && !integer(item.part, 0)) ||
       typeof item.id !== "string" ||
       item.id.length > 100 ||
       !["message", "tool-call", "tool-result"].includes(item.kind as string) ||

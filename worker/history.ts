@@ -21,6 +21,11 @@ export type HistoryItem = {
   at: string | null;
   text: string;
   truncated: boolean;
+  role?: "assistant" | "user" | "task-input";
+  toolUseId?: string;
+  name?: string;
+  error?: boolean;
+  part?: number;
 };
 export type HistoryPage = {
   status: "available" | "missing" | "unavailable" | "changed" | "unsupported";
@@ -29,7 +34,14 @@ export type HistoryPage = {
   cursor: string | null;
   hasMore: boolean;
 };
-export type HistoryRequest = { root: string; cwd: string; session: string; cursor?: string; limit?: number };
+export type HistoryRequest = {
+  root: string;
+  cwd: string;
+  session: string;
+  cursor?: string;
+  limit?: number;
+  inputHash?: string;
+};
 export type HistoryCapability = {
   reference(turn: import("./agents.ts").Turn): { cwd: string; session: string } | null;
   read(request: HistoryRequest): HistoryPage;
@@ -42,7 +54,7 @@ export type HistoryAssociation = {
   task: number | null;
   agent: string;
   use: string;
-  launches: { cwd: string; session: string }[];
+  launches: { cwd: string; session: string; inputHash?: string }[];
 };
 export const emptyHistory = (status: HistoryPage["status"]): HistoryPage => ({
   status,

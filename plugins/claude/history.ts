@@ -1,4 +1,4 @@
-// Only primary public assistant text and tool lifecycle metadata are displayable. Tool payloads are private by default.
+// Local presentation retains real payloads; structural record flags exclude internal and sidechain records.
 import { createHash } from "node:crypto";
 import {
   emptyHistory,
@@ -21,56 +21,58 @@ type Cursor = {
   session: string;
   cwd: string;
 };
-function publicText(text: unknown): string | null {
-  if (typeof text !== "string") return null;
-  // These markers identify private envelopes or credentials, not public progress notes.
-  if (
-    /system-reminder|<thinking|BEGIN .*PRIVATE KEY|\b(?:api[_-]?key|authorization|password|secret|access[_-]?token)\s*[:=]|\b(?:sk-ant-|sk-proj-|ghp_|github_pat_)/i.test(
-      text,
-    )
-  )
-    return null;
-  return text;
-}
-function items(row: any, offset: number): HistoryItem[] {
+function items(row: any, offset: number, inputHash?: string): HistoryItem[] {
   if (!row || row.isSidechain === true || row.isMeta === true || !["assistant", "user"].includes(row.type)) return [];
-  const blocks = row.message?.content;
+  const content = row.message?.content;
+  const blocks = typeof content === "string" ? [{ type: "text", text: content }] : content;
   if (!Array.isArray(blocks)) return [];
   const at = typeof row.timestamp === "string" && Number.isFinite(Date.parse(row.timestamp)) ? row.timestamp : null;
+  const textContent = blocks
+    .filter((block: any) => block?.type === "text")
+    .map((block: any) => block.text)
+    .join("");
+  const role =
+    row.type === "assistant"
+      ? "assistant"
+      : inputHash && hash(new TextEncoder().encode(textContent)) === inputHash
+        ? "task-input"
+        : "user";
   return blocks.flatMap((block: any, index: number): HistoryItem[] => {
     const id = `${typeof row.uuid === "string" && /^[A-Za-z0-9-]{1,64}$/.test(row.uuid) ? row.uuid : offset}:${index}`;
-    if (row.type === "assistant" && block?.type === "text") {
-      const text = publicText(block.text);
-      if (text === null) return [];
-      const chunks: HistoryItem[] = [];
-      for (let start = 0; start < text.length || start === 0; start += 4000)
-        chunks.push({
-          id: `${id}:${start}`,
-          kind: "message",
-          at,
-          text: text.slice(start, start + 4000),
-          truncated: start + 4000 < text.length,
-        });
-      return chunks;
-    }
-    if (
+    let item: Omit<HistoryItem, "id" | "text" | "truncated">;
+    let text: string;
+    if (block?.type === "text" && typeof block.text === "string") {
+      item = { kind: "message", at, role };
+      text = block.text;
+    } else if (
       row.type === "assistant" &&
       block?.type === "tool_use" &&
       typeof block.name === "string" &&
-      /^[A-Za-z0-9_.:-]{1,128}$/.test(block.name)
-    )
-      return [{ id, kind: "tool-call", at, text: `调用工具：${block.name}（参数不公开）`, truncated: false }];
-    if (row.type === "user" && block?.type === "tool_result")
-      return [
-        {
-          id,
-          kind: "tool-result",
-          at,
-          text: `${block.is_error === true ? "工具返回错误" : "工具返回结果"}（原始输出可能含私密资料，未公开）`,
-          truncated: false,
-        },
-      ];
-    return [];
+      /^[A-Za-z0-9_.:-]{1,128}$/.test(block.name) &&
+      typeof block.id === "string" &&
+      block.id.length <= 200
+    ) {
+      item = { kind: "tool-call", at, name: block.name, toolUseId: block.id };
+      text = JSON.stringify(block.input ?? null, null, 2);
+    } else if (
+      row.type === "user" &&
+      block?.type === "tool_result" &&
+      typeof block.tool_use_id === "string" &&
+      block.tool_use_id.length <= 200
+    ) {
+      item = { kind: "tool-result", at, toolUseId: block.tool_use_id, error: block.is_error === true };
+      text = typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? null, null, 2);
+    } else return [];
+    const chunks: HistoryItem[] = [];
+    for (let start = 0; start < text.length || start === 0; start += 4000)
+      chunks.push({
+        ...item,
+        id: `${id}:${start}`,
+        text: text.slice(start, start + 4000),
+        part: start / 4000,
+        truncated: start + 4000 < text.length,
+      });
+    return chunks;
   });
 }
 export function readClaudeHistory(request: HistoryRequest): HistoryPage {
@@ -134,9 +136,9 @@ export function readClaudeHistory(request: HistoryRequest): HistoryPage {
       try {
         row = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(file.bytes.subarray(position, end)));
       } catch {
-        /* Malformed complete rows are not displayable. */
+        return emptyHistory("unavailable");
       }
-      const publicItems = row?.sessionId === request.session ? items(row, offset) : [];
+      const publicItems = row?.sessionId === request.session ? items(row, offset, request.inputHash) : [];
       for (; block < publicItems.length; block++) {
         if (result.length >= limit) break;
         const item = publicItems[block];
@@ -164,8 +166,8 @@ export function readClaudeHistory(request: HistoryRequest): HistoryPage {
       size: head.size,
       modified: head.modified,
       seen,
-      prefixSize: Math.min(head.size, 4096),
-      prefix: hash(head.bytes.subarray(0, Math.min(head.size, 4096))),
+      prefixSize,
+      prefix,
       block,
       session: request.session,
       cwd: request.cwd,
@@ -176,7 +178,9 @@ export function readClaudeHistory(request: HistoryRequest): HistoryPage {
       items: result,
       cursor: JSON.stringify(next),
       hasMore:
-        block > 0 || (offset < file.size && position < file.bytes.length && file.bytes.indexOf(10, position) >= 0),
+        block > 0 ||
+        (position < file.bytes.length &&
+          (file.bytes.indexOf(10, position) >= 0 || start + file.bytes.length < file.size)),
     };
   } catch (error) {
     return emptyHistory((error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "unavailable");

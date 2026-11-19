@@ -3,7 +3,7 @@
 // find it still going, or finished. A job is saved before anything slow happens; a result is saved before it's handed
 // in and stays until the hub has taken it.
 import { execFileSync, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -312,7 +312,7 @@ export function createWorker({
         use: entry.job.agent.use,
         launches: [
           ...(previous?.scope === historyScope && Array.isArray(previous.launches) ? previous.launches : []),
-          launch,
+          { ...launch, inputHash: createHash("sha256").update(turn.prompt).digest("hex") },
         ].slice(-8),
       };
       saveHistoryAssociation(HOME, association);

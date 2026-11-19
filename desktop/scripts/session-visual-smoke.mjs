@@ -1,0 +1,31 @@
+// Prevent global desktop styles from turning the session prototype into oversized outlined controls.
+// Use the real renderer and Chromium cascade, with local fake data and no host bridge.
+import { build } from 'esbuild';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import electron from 'electron';
+const root = resolve(import.meta.dirname, '../..');
+const home = mkdtempSync(join(tmpdir(), 'session-visual-'));
+const output = process.env.SESSION_VISUAL_OUTPUT || join(home, 'evidence');
+const fixture = `
+import { createRendererBusinessTasks } from '${root}/desktop/src/renderer/business-tasks-controller.ts';
+import { mountBusinessTasksView } from '${root}/desktop/src/renderer/business-tasks-view.ts';
+const task = {key:'task:37',kind:'task',id:37,rule:'r',source:'s',origin:{eventId:1,title:'原始任务',detail:'原始详情',availability:'recorded',truncated:false},state:'completed',latestRunId:109,latestProgress:'',finalResult:null,decisions:{items:[],hasMore:false},createdAt:null,updatedAt:null,legacyNotice:null};
+let view;
+const controller = createRendererBusinessTasks({businessTasksRead:async request=>({ok:true,data:request.operation==='list'?{scope:'business',rules:['r'],items:[task],hasMore:false,nextBefore:null}:{task,timeline:{items:[{seq:1,kind:'started',at:null,text:'开始',runId:109,eventId:null,cardId:null,feedbackId:null,truncated:false,display:{events:[],runs:[{id:109,state:'done',summary:'完成',error:'',truncated:false}],cards:[],completion:null,feedback:[]}}],hasMore:false,nextBefore:null},actions:{cancelTask:false,completeTask:false,completionBlocker:null}}}),taskDetail:async()=>({ok:false}),taskAction:async()=>({ok:false})},()=>view?.update());
+view=mountBusinessTasksView(controller,{history:{agentHistory:async()=>({runId:109,attempt:1,launch:0,launches:1,page:{status:'available',scope:'session',items:[{id:'a',kind:'message',role:'assistant',at:null,text:'已核对原始需求，正在整理执行记录。',truncated:false},{id:'b',kind:'tool-call',name:'Read',toolUseId:'read-1',at:null,text:'本地只读资料',truncated:false},{id:'c',kind:'message',role:'user',at:null,text:'请保留真实记录，不改动数据源。',truncated:false}],cursor:null,hasMore:false}})}});
+document.querySelector('main').append(view.root);view.init();
+window.openSession=async()=>{controller.open('task:37');await new Promise(r=>setTimeout(r,100));document.querySelector('.business-session-entry').click();await new Promise(r=>setTimeout(r,100));};
+`;
+try {
+  await build({stdin:{contents:fixture,resolveDir:root},bundle:true,format:'iife',platform:'browser',outfile:join(home,'fixture.js')});
+  writeFileSync(join(home,'index.html'),`<!doctype html><html data-shell="workspace"><meta charset="utf-8"><link rel="stylesheet" href="${root}/desktop/src/renderer/style.css"><body><main><section id="tasks"></section></main><script src="fixture.js"></script></body></html>`);
+  writeFileSync(join(home,'driver.cjs'), `const {app,BrowserWindow}=require('electron');const fs=require('node:fs');const assert=require('node:assert/strict');app.setPath('userData',${JSON.stringify(join(home,'user-data'))});app.whenReady().then(async()=>{try{fs.mkdirSync(${JSON.stringify(output)},{recursive:true});const w=new BrowserWindow({width:1280,height:900,show:false,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});await w.loadFile(${JSON.stringify(join(home,'index.html'))});await w.webContents.executeJavaScript('openSession()');const evidence=await w.webContents.executeJavaScript(
+    ${JSON.stringify(`(()=>{const s=q=>{const e=document.querySelector(q);if(!e)return null;const c=getComputedStyle(e),r=e.getBoundingClientRect();return {width:r.width,height:r.height,x:r.x,y:r.y,font:c.fontSize,border:c.borderTopWidth,background:c.backgroundColor,padding:c.padding,margin:c.margin,display:c.display}};return {zoom:devicePixelRatio,back:s('.session-title-row button'),heading:s('.session-title-row h2'),state:s('.session-state'),identity:s('.session-identity'),meta:s('.session-meta'),filters:s('.session-filters'),filter:s('.session-filters button'),card:s('.session-card'),body:s('.session-body'),page:s('.agent-execution-history')};})()`)}
+  );fs.writeFileSync(${JSON.stringify(join(output,'computed.json'))},JSON.stringify(evidence,null,2));await fs.promises.writeFile(${JSON.stringify(join(output,'session.png'))},(await w.webContents.capturePage()).toPNG());assert.equal(evidence.back.width,44);assert.equal(evidence.back.height,44);assert.equal(evidence.back.border,'0px');assert.equal(evidence.heading.font,'24px');assert.equal(evidence.state.background,'rgb(237, 247, 240)');assert.equal(evidence.filter.border,'0px');assert.equal(evidence.filter.height,44);assert.equal(evidence.filters.padding,'3px');assert.equal(evidence.identity.x,evidence.heading.x);assert.equal(evidence.body.x,evidence.heading.x);assert.equal(evidence.page.background,'rgb(255, 255, 255)');await w.webContents.executeJavaScript("document.querySelectorAll('.session-filters button')[1].click()");assert.equal(await w.webContents.executeJavaScript("document.querySelectorAll('.session-record:not([hidden])').length"),1);await w.webContents.executeJavaScript("document.querySelector('.session-title-row button').click()");assert.equal(await w.webContents.executeJavaScript("document.querySelector('.tasks-detail-page').hidden"),false);console.log('Session visual checks passed: '+${JSON.stringify(output)});app.exit(0);}catch(e){console.error(e);app.exit(1);}});`);
+  const result = spawnSync(electron,[join(home,'driver.cjs')],{env:{...process.env,HOME:home,AGENT_AUTOLOOP_HOME:home,ELECTRON_RUN_AS_NODE:undefined},encoding:'utf8'});
+  process.stdout.write(result.stdout || '');process.stderr.write(result.stderr || '');
+  if(result.status!==0)process.exitCode=1;
+} finally { if(process.env.SESSION_VISUAL_OUTPUT)rmSync(home,{recursive:true,force:true}); }

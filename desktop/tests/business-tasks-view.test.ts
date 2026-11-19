@@ -174,7 +174,15 @@ async function withView(
   const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
   Object.defineProperty(globalThis, "document", {
     configurable: true,
-    value: { createElement: (tag: string) => new Element(tag) },
+    value: {
+      createElement: (tag: string) => new Element(tag),
+      createElementNS: (_namespace: string, tag: string) => new Element(tag),
+      createTextNode: (text: string) => {
+        const node = new Element("#text");
+        node.textContent = text;
+        return node;
+      },
+    },
   });
   try {
     let view: ReturnType<typeof mountBusinessTasksView>;
@@ -998,7 +1006,7 @@ test("task detail keeps the original requirement in the header without duplicate
     assert.ok(root.textContent.includes("原始资料超过展示长度，当前仅显示部分。"));
     assert.equal(history.hidden, true);
     assert.equal(history.textContent.includes("需确认"), false);
-    assert.ok(history.textContent.includes("可能包含多轮"));
+    assert.equal(history.textContent.includes("会话范围与能力说明"), false);
     assert.equal(
       all(root).some((x) => x.textContent === "交付结果"),
       false,
@@ -1032,7 +1040,7 @@ test("session entrance preserves detail nodes and scroll and rejects late depart
       assert.equal(detail.hidden, true);
       assert.equal(scrollHost.scrollTop, 0);
       all(root)
-        .find((node) => node.tag === "button" && node.textContent === "← 返回任务详情")!
+        .find((node) => node.tag === "button" && node.className === "session-back")!
         .fire();
       assert.equal(detail.hidden, false);
       assert.equal(scrollHost.scrollTop, 245);
@@ -1114,27 +1122,45 @@ test("session pagination appends stable nodes and lifecycle stops polling", asyn
         all(root)
           .find((node) => node.className === "business-session-entry")!
           .fire();
-        pending.shift()!(page([message("a", "tool-call")], true));
+        pending.shift()!(
+          page([{ ...message("a", "tool-call"), toolUseId: "tool-a", name: "Read", text: "参数".repeat(500) }], true),
+        );
         await flush();
         const list = all(root).find((node) => node.className === "agent-history-timeline")!;
         const row = list.children[0];
-        const tool = all(row).find((node) => node.tag === "details")!;
-        tool.open = true;
-        scrollHost.scrollTop = 120;
-        assert.equal(timers.size, 0, "older pages require an explicit load");
-        all(root)
-          .find((node) => node.tag === "button" && node.textContent === "加载后续记录")!
+        const tool = all(row).find((node) => node.tag === "code")!;
+        assert.ok(tool);
+        all(row)
+          .find((node) => node.textContent === "展开全文")!
           .fire();
+        assert.equal(tool.textContent, "参数".repeat(500));
+        scrollHost.scrollTop = 120;
+        assert.equal(timers.size, 0, "automatic history pages must not overlap polling");
         assert.equal(requests[1].cursor, "11111111-1111-1111-1111-111111111111");
-        pending.shift()!(page([message("b")]));
+        pending.shift()!(
+          page([message("b"), { ...message("result", "tool-result"), toolUseId: "tool-a", text: "真实结果" }]),
+        );
         await flush();
         assert.equal(
           all(root).find((node) => node.className === "agent-history-timeline"),
           list,
         );
         assert.equal(list.children[0], row);
-        assert.equal(tool.open, true);
+        assert.equal(
+          all(row).find((node) => node.tag === "code"),
+          tool,
+        );
         assert.equal(list.children.length, 2);
+        assert.ok(row.textContent.includes("真实结果"));
+        all(root)
+          .find((node) => node.tag === "button" && node.textContent === "仅 Agent 消息")!
+          .fire();
+        assert.equal(row.hidden, true);
+        assert.equal(list.children[1].hidden, false);
+        all(root)
+          .find((node) => node.tag === "button" && node.textContent === "全部记录")!
+          .fire();
+        assert.equal(row.hidden, false);
         assert.equal(scrollHost.scrollTop, 120);
         assert.equal(timers.size, 1);
         const poll = [...timers.values()][0];
@@ -1154,7 +1180,7 @@ test("session pagination appends stable nodes and lifecycle stops polling", asyn
         view.setActive(true);
         assert.equal(requests.length, before, "already active must not reread from the beginning");
         all(root)
-          .find((node) => node.tag === "button" && node.textContent === "← 返回任务详情")!
+          .find((node) => node.tag === "button" && node.className === "session-back")!
           .fire();
         assert.equal(timers.size, 0);
       },

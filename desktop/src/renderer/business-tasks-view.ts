@@ -321,17 +321,52 @@ export function mountBusinessTasksView(
     detailPage.hidden = false;
     if (options.scrollHost) options.scrollHost.scrollTop = sessionScroll;
   });
-  sessionBack.className = "task-back-button";
+  sessionBack.className = "session-back";
+  sessionBack.setAttribute("aria-label", "返回任务详情");
+  sessionBack.replaceChildren();
+  const backIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  backIcon.setAttribute("viewBox", "0 0 24 24");
+  backIcon.setAttribute("aria-hidden", "true");
+  const backPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  backPath.setAttribute("d", "m14 6-6 6 6 6M8 12h12");
+  backIcon.append(backPath);
+  sessionBack.append(backIcon);
   const sessionHeading = el("h2", "执行会话");
-  const sessionIdentity = el("p", "", "muted");
-  const sessionBody = el("section");
+  const sessionIdentity = el("p", "", "session-identity");
+  const sessionMeta = el("div", "", "session-meta");
+  const sessionHeaderAligned = el("div", "", "session-aligned");
+  sessionHeaderAligned.append(sessionIdentity, sessionMeta);
+  let agentOnly = false;
+  const filters = el("div", "", "session-filters");
+  const allRecords = button("全部记录", () => {
+    agentOnly = false;
+    renderHistory();
+  });
+  const agentRecords = button("仅 Agent 消息", () => {
+    agentOnly = true;
+    renderHistory();
+  });
+  filters.append(allRecords, agentRecords);
+  filters.setAttribute("role", "group");
+  filters.setAttribute("aria-label", "记录筛选");
+  const sessionBody = el("section", "", "session-body session-aligned");
   const sessionNotes = el("section");
   const sessionControls = el("section");
   const sessionMessages = el("section");
-  sessionBody.append(sessionNotes, sessionControls, sessionMessages);
-  executionHistory.append(sessionBack, sessionHeading, sessionIdentity, sessionBody);
+  const sessionToolbar = el("div", "", "session-toolbar");
+  sessionToolbar.append(filters);
+  const sessionSectionHead = el("div", "", "session-section-head");
+  sessionSectionHead.append(el("h3", "会话记录"));
+  sessionBody.append(sessionToolbar, sessionNotes, sessionControls, sessionSectionHead, sessionMessages);
+  const sessionHeader = el("header", "", "session-header");
+  const sessionTitleRow = el("div", "", "session-title-row");
+  const sessionState = el("span", "", "session-state");
+  sessionTitleRow.append(sessionBack, sessionHeading, sessionState);
+  sessionHeader.append(sessionTitleRow, sessionHeaderAligned);
+  executionHistory.append(sessionHeader, sessionBody);
   const expanded = new Set<number>();
   const historyRows = new Map<string, HTMLElement>();
+  const payloads = new Map<string, { text: string; code: HTMLElement; expand: HTMLButtonElement; full: boolean }>();
   let renderedIdentity = "";
   let historyList: HTMLOListElement | undefined;
   let polling: ReturnType<typeof setTimeout> | undefined;
@@ -358,16 +393,9 @@ export function mountBusinessTasksView(
     }, 2000);
   }
   function renderHistory() {
-    const limitation = el("details", "", "agent-history-scope");
-    limitation.append(
-      el("summary", "会话范围与能力说明"),
-      el(
-        "p",
-        "关联会话可能包含多轮，不代表准确轮边界。仅显示公开消息与工具名、返回状态，不公开工具参数和原始输出。实时落盘未实机验证；挂接 CLI、远端 worker 和其他 Agent 暂不支持。",
-        "muted",
-      ),
-    );
-    sessionNotes.replaceChildren(el("p", "已保存的关联会话历史，可能包含多轮。", "agent-history-note"), limitation);
+    allRecords.setAttribute("aria-pressed", String(!agentOnly));
+    agentRecords.setAttribute("aria-pressed", String(agentOnly));
+    sessionNotes.replaceChildren();
     sessionControls.replaceChildren();
     const data = controller.detail;
     if (!data) return;
@@ -379,7 +407,10 @@ export function mountBusinessTasksView(
     const currentRun = controller.run?.run;
     const agent = currentRun?.id === sessionRun ? currentRun.agent : "Agent 名称未记录";
     const state = knownRun?.state ?? (currentRun?.id === sessionRun ? currentRun.state : null);
-    sessionIdentity.textContent = `${agent} · 执行 #${sessionRun} · ${roundLabels[state ?? ""] ?? "轮次状态未记录"}`;
+    sessionState.textContent = roundLabels[state ?? ""] ?? "轮次状态未记录";
+    sessionState.dataset.state = state ?? "unknown";
+    sessionIdentity.textContent = `${agent} · 执行 #${sessionRun}`;
+    sessionMeta.replaceChildren(el("span", `任务 #${data.task.id}`));
     for (const id of ids) {
       const round = el("section", "", "agent-history-round");
       const result = history.rounds.get(id);
@@ -398,12 +429,9 @@ export function mountBusinessTasksView(
         };
         if (result.page.status !== "available") round.append(el("p", messages[result.page.status], "muted"));
         else {
-          round.append(
-            el(
-              "p",
-              `第 ${result.attempt} 次执行 · 启动 ${result.launch + 1}/${result.launches} · 会话范围，不代表准确轮边界`,
-              "muted",
-            ),
+          sessionMeta.append(
+            el("span", `第 ${result.attempt} 次执行`),
+            el("span", `启动 ${result.launch + 1} / ${result.launches}`),
           );
           if (result.launches > 1) {
             const launch = el("select");
@@ -429,37 +457,95 @@ export function mountBusinessTasksView(
           ) {
             renderedIdentity = identity;
             historyRows.clear();
+            payloads.clear();
             historyList = undefined;
           }
           const list = historyList ?? (historyList = el("ol", "", "agent-history-timeline"));
+          const calls = new Map<string, HTMLElement>();
+          for (const item of result.page.items) {
+            if (item.kind === "tool-call" && item.toolUseId && (item.part ?? 0) === 0)
+              calls.set(item.toolUseId, historyRows.get(item.id)!);
+          }
           for (const item of result.page.items) {
             if (historyRows.has(item.id)) continue;
-            const row = el("li");
+            const base = item.part !== undefined ? item.id.replace(/:[0-9]+$/, "") : item.id;
+            const existing = payloads.get(base);
+            if (existing && (item.part ?? 0) > 0) {
+              historyRows.set(item.id, historyRows.get(`${base}:0`)!);
+              existing.text += item.text;
+              if (existing.full) existing.code.append(document.createTextNode(item.text));
+              else existing.expand.hidden = existing.text.length <= 600 && !item.truncated;
+              continue;
+            }
+            const row = el("li", "", item.kind === "message" ? "session-record" : "session-record session-activity");
+            const card = el("article", "", item.kind === "message" ? "session-card" : "session-card session-tool-card");
             historyRows.set(item.id, row);
-            row.append(el("time", item.at ? new Date(item.at).toLocaleString("zh-CN") : "时间未记录", "muted"));
-            if (item.kind !== "message" || item.text.length > 600) {
-              const long = el("details");
-              long.append(el("summary", item.text.slice(0, 160) + "…（展开）"), el("pre", item.text));
-              row.append(long);
-            } else row.append(el("pre", item.text));
-            if (item.truncated) row.append(el("p", "此消息仅显示有界片段。", "muted"));
-            list.append(row);
+            row.dataset.agent = String(item.kind === "message" && (item.role ?? "assistant") === "assistant");
+            const title =
+              item.kind === "tool-call"
+                ? (item.name ?? "工具名称未记录")
+                : item.kind === "tool-result"
+                  ? "未关联的工具结果"
+                  : item.role === "task-input"
+                    ? "任务输入"
+                    : item.role === "user"
+                      ? "用户"
+                      : "Agent";
+            if (item.kind === "message" && item.role === "user") card.className += " session-user-card";
+            const head = el("header", "", "session-card-head");
+            if (item.kind === "message") head.append(el("span", title === "Agent" ? "A" : "U", "session-avatar"));
+            head.append(
+              el("strong", title),
+              el("time", item.at ? new Date(item.at).toLocaleTimeString("zh-CN") : "时间未记录", "muted"),
+            );
+            card.append(head);
+            if (item.toolUseId) card.append(el("p", item.toolUseId, "session-tool-reference"));
+            const payload = el("div", "", "session-payload");
+            const code = el("code", item.text.slice(0, 600));
+            const pre = el("pre");
+            pre.append(code);
+            payload.append(pre);
+            const state = { text: item.text, code, expand: undefined as unknown as HTMLButtonElement, full: false };
+            const expand = button("展开全文", () => {
+              if (state.full) return;
+              code.append(document.createTextNode(state.text.slice(600)));
+              state.full = true;
+              expand.hidden = true;
+            });
+            state.expand = expand;
+            expand.hidden = item.text.length <= 600 && !item.truncated;
+            expand.className = "session-payload-expand";
+            payload.append(expand);
+            payloads.set(base, state);
+            if (item.kind !== "message")
+              card.append(
+                el(
+                  "p",
+                  item.kind === "tool-call" ? "参数" : item.error ? "结果 · 错误" : "结果",
+                  "session-payload-label",
+                ),
+              );
+            card.append(payload);
+            if (item.kind === "tool-result" && item.toolUseId && calls.get(item.toolUseId)) {
+              const target = calls.get(item.toolUseId)!;
+              head.hidden = true;
+              target.firstElementChild!.append(card);
+            } else {
+              row.append(card);
+              list.append(row);
+            }
+            if (item.kind === "tool-call" && item.toolUseId && (item.part ?? 0) === 0) calls.set(item.toolUseId, row);
           }
+          for (const row of historyRows.values()) row.hidden = agentOnly && row.dataset.agent !== "true";
           if (sessionMessages.firstElementChild !== list) sessionMessages.replaceChildren(list);
           if (!result.page.items.length)
             round.append(el("p", "尚无可公开的已保存过程记录，不用业务摘要补造。", "muted"));
         }
       }
-      const refresh = button("从头读取会话记录", () => history.read(id));
-      refresh.disabled = history.busy.has(id);
-      round.append(refresh);
-      if (result?.page.cursor) {
-        const more = button(result.page.hasMore ? "加载后续记录" : "读取新追加记录", () => history.read(id, true));
-        more.disabled = history.busy.has(id) || result.page.items.length >= 200 || history.capped.has(id);
-        round.append(more);
-        if (result.page.items.length >= 200 || history.capped.has(id))
-          round.append(el("p", "本页已达条数或任务内容保留上限，已读取的内容仍保留。", "muted"));
-      }
+      if (history.capped.has(id))
+        round.append(
+          el("p", "会话超过页面容量，尚未读取完整。已读记录保留，请在本机原始会话文件查看剩余记录。", "error"),
+        );
       sessionControls.append(round);
     }
   }
@@ -1210,6 +1296,7 @@ export function mountBusinessTasksView(
             sessionRun = id;
             expanded.add(id);
             historyRows.clear();
+            payloads.clear();
             historyList = undefined;
             history.select(`${controller.selectedKey}/${id}`);
             detailPage.hidden = true;

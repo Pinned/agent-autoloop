@@ -11,7 +11,7 @@ export function createAgentHistoryController(
   const busy = new Set<number>();
   const capped = new Set<number>();
   const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
-  return {
+  const controller = {
     rounds,
     busy,
     capped,
@@ -36,7 +36,7 @@ export function createAgentHistoryController(
         return;
       const previous = rounds.get(runId);
       if (more && !previous?.page.cursor) return;
-      if (more && (previous!.page.items.length >= 200 || capped.has(runId))) return;
+      if (more && capped.has(runId)) return;
       if (!more) capped.delete(runId);
       const request = {
         runId,
@@ -56,9 +56,12 @@ export function createAgentHistoryController(
           if (more && previous && next.page.status === "available") {
             next.page.items = [
               ...new Map([...previous.page.items, ...next.page.items].map((item) => [item.id, item])).values(),
-            ].slice(0, 200);
+            ];
           }
-          if (bytes([...rounds.values()].filter((x) => x.runId !== runId)) + bytes(next) > 1024 * 1024) {
+          if (
+            next.page.items.length > 20000 ||
+            bytes([...rounds.values()].filter((x) => x.runId !== runId)) + bytes(next) > 32 * 1024 * 1024
+          ) {
             capped.add(runId);
             if (previous) {
               rounds.set(runId, previous);
@@ -78,6 +81,7 @@ export function createAgentHistoryController(
           });
         }
         changed();
+        if (own === generation && rounds.get(runId)?.page.hasMore && !capped.has(runId)) controller.read(runId, true);
       };
       try {
         void Promise.resolve(bridge.agentHistory(request)).then(finish, () => finish(undefined));
@@ -86,4 +90,5 @@ export function createAgentHistoryController(
       }
     },
   };
+  return controller;
 }

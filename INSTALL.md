@@ -12,6 +12,8 @@
 
 本人确认完成使用 `agent-autoloop complete-task <任务编号> <本人验收原因>`，需升级中台与 CLI。只记录本人验收，不启动 Agent；有未结束执行、卡片、复查或占用时拒绝。原执行报告不改写，不把本人验收说成自动测试通过；业务查询可选 completion 字段需严格 DTO 客户端同步升级。见[协议](docs/protocol.md#本人确认完成)。
 
+桌面执行会话页展示可信本机原始工具参数、结果与普通 user 文字，可能含私密资料，不上传到远端。自动有界分页，超过页面容量明确未读完整；旧关联缺启动 inputHash 不猜任务输入，严格历史 DTO 客户端需同步升级。详见 docs/desktop.md。
+
 ## 安装
 
 支持 macOS、Linux，暂不支持 Windows。需要 Node.js 24 或更新、Git、curl，以及一个已经登录的命令行 Agent。
