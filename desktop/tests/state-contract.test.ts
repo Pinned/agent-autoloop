@@ -59,6 +59,19 @@ const hubState = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+// Prevent card navigation from discarding confirmed identity or accepting malformed identity.
+test("card task identity survives the strict projection while old hubs stay readable", () => {
+  const source = hubState();
+  const card = { ...source.cards[0], id: 66, taskId: 42 };
+  const snapshot = projectDesktopTodaySnapshot(hubState({ cards: [card] }));
+  assert.equal(snapshot.cards[0].taskId, 42);
+  assert.equal(parseDesktopTodayResponse(desktopTodayOf({ kind: "ready", snapshot })).state.kind, "ready");
+  assert.equal(projectDesktopTodaySnapshot(source).cards[0].taskId, undefined);
+  assert.equal(projectDesktopTodaySnapshot(hubState({ cards: [{ ...card, taskId: null }] })).cards[0].taskId, null);
+  for (const taskId of [0, -1, 1.5, "42", Number.MAX_SAFE_INTEGER + 1])
+    assert.throws(() => projectDesktopTodaySnapshot(hubState({ cards: [{ ...card, taskId }] })));
+});
+
 // Guards original request metadata across the owner snapshot and strict IPC boundary.
 test("request preview survives projection without exposing extra fields", () => {
   const request = { taskId: 42, title: "原需求", detail: "原详情", availability: "recorded", truncated: false };

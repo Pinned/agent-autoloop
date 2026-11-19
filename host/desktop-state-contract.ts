@@ -50,6 +50,7 @@ export type DesktopTodayCard = {
   title: string;
   text: string;
   by: string | null;
+  taskId?: number | null;
 };
 export type DesktopTodayTotals = {
   running: number;
@@ -133,7 +134,11 @@ function protocolText(value: unknown, maximum: number): string {
   return value;
 }
 function parseCard(value: unknown): DesktopTodayCard {
-  const item = record(value, ["id", "kind", "title", "text", "by"]);
+  const raw = displayRecord(value);
+  const optional = Object.hasOwn(raw, "taskId") ? ["taskId"] : [];
+  const item = record(value, ["id", "kind", "title", "text", "by", ...optional]);
+  const taskId = optional.length ? (item.taskId === null ? null : count(item.taskId)) : undefined;
+  if (taskId === 0) invalid();
   const id = count(item.id);
   if (id < 1) invalid();
   return {
@@ -142,6 +147,7 @@ function parseCard(value: unknown): DesktopTodayCard {
     title: protocolText(item.title, 200),
     text: protocolText(item.text, 4000),
     by: item.by === null ? null : text(item.by, 200),
+    ...(optional.length ? { taskId } : {}),
   };
 }
 
@@ -301,6 +307,7 @@ export function projectDesktopTodaySnapshot(value: unknown): DesktopTodaySnapsho
           title: field(view, "title"),
           text: field(view, "text"),
           by: field(view, "by"),
+          ...(Object.hasOwn(view, "taskId") ? { taskId: field(view, "taskId") } : {}),
         }),
       );
     }
