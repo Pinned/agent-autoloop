@@ -470,7 +470,10 @@ export function mountBusinessTasksView(
               continue;
             }
             const row = el("li", "", item.kind === "message" ? "session-record" : "session-record session-activity");
-            const card = el("article", "", item.kind === "message" ? "session-card" : "session-card session-tool-card");
+            const target = item.kind === "tool-result" && item.toolUseId ? calls.get(item.toolUseId) : undefined;
+            const card =
+              (target?.firstElementChild as HTMLElement | undefined) ??
+              el("article", "", item.kind === "message" ? "session-card" : "session-card session-tool-card");
             historyRows.set(item.id, row);
             row.dataset.agent = String(item.kind === "message" && (item.role ?? "assistant") === "assistant");
             const title =
@@ -490,8 +493,10 @@ export function mountBusinessTasksView(
               el("strong", title),
               el("time", item.at ? new Date(item.at).toLocaleTimeString("zh-CN") : "时间未记录", "muted"),
             );
-            card.append(head);
-            if (item.toolUseId) card.append(el("p", item.toolUseId, "session-tool-reference"));
+            if (!target) {
+              card.append(head);
+              if (item.toolUseId) card.append(el("p", item.toolUseId, "session-tool-reference"));
+            }
             const payload = el("div", "", "session-payload");
             const code = el("code", item.text.slice(0, 600));
             const pre = el("pre");
@@ -513,15 +518,15 @@ export function mountBusinessTasksView(
               card.append(
                 el(
                   "p",
-                  item.kind === "tool-call" ? "参数" : item.error ? "结果 · 错误" : "结果",
+                  item.kind === "tool-call"
+                    ? "调用参数"
+                    : `${item.error ? "返回错误" : "调用结果"} · ${item.at ? new Date(item.at).toLocaleTimeString("zh-CN") : "时间未记录"}`,
                   "session-payload-label",
                 ),
               );
             card.append(payload);
-            if (item.kind === "tool-result" && item.toolUseId && calls.get(item.toolUseId)) {
-              const target = calls.get(item.toolUseId)!;
-              head.hidden = true;
-              target.firstElementChild!.append(card);
+            if (target) {
+              historyRows.set(item.id, target);
             } else {
               row.append(card);
               list.append(row);

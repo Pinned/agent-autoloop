@@ -2704,7 +2704,8 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
 .agent-execution-history .session-avatar { display: grid; place-items: center; width: 23px; height: 23px; border-radius: 6px; background: #eff3f8; color: #5470a1; font-size: 11px; }
 .agent-execution-history .session-user-card { background: #fafbfc; }
 .agent-execution-history .session-user-card .session-avatar { background: #eaeef2; color: #596777; }
-.agent-execution-history .session-tool-card .session-payload { background: #f3f5f8; border-color: #e5eaf1; }
+.agent-execution-history .session-tool-card .session-payload { margin-top: 0; background: #f3f5f8; border-color: #e5eaf1; }
+.agent-execution-history .session-tool-card .session-payload-label { margin: 12px 0 6px; }
 .agent-execution-history .session-tool-card pre { color: #43536a; }
 .agent-execution-history .session-payload-expand { min-height: 36px; padding: 7px 14px; font-size: 12px; color: #5470a1; border-color: #e0e5ed; }
 .agent-execution-history .session-card-head { gap: 9px; font-size: 13px; color: #39475a; }

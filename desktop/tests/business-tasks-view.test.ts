@@ -1152,6 +1152,11 @@ test("session pagination appends stable nodes and lifecycle stops polling", asyn
         );
         assert.equal(list.children.length, 2);
         assert.ok(row.textContent.includes("真实结果"));
+        // Late results must be sibling payloads, not nested cards duplicating call identity.
+        assert.equal(all(row).filter((node) => node.tag === "article").length, 1);
+        assert.equal(row.textContent.split("tool-a").length - 1, 1);
+        assert.equal(all(row).filter((node) => node.className === "session-payload").length, 2);
+        assert.ok(row.textContent.includes("调用结果 · 时间未记录"));
         all(root)
           .find((node) => node.tag === "button" && node.textContent === "仅 Agent 消息")!
           .fire();
