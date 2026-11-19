@@ -28,6 +28,7 @@ const bridge = Object.freeze<DesktopBridge>({
   taskDetail: (request) => ipcRenderer.invoke("desktop:tasks:detail", request),
   taskEntries: () => ipcRenderer.invoke("desktop:task:entries"),
   taskCreate: (input) => ipcRenderer.invoke("desktop:task:create", { version: 3, input }),
+  taskDraftNamespace: () => ipcRenderer.invoke("desktop:tasks:draft-namespace"),
   taskAction: (input) => ipcRenderer.invoke("desktop:tasks:action", input),
   rulesCasGet: () => ipcRenderer.invoke("desktop:rules:cas:get"),
   rulesCasPut: (input) => ipcRenderer.invoke("desktop:rules:cas:put", input),

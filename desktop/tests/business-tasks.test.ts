@@ -311,6 +311,73 @@ test("confirmed owner completion rereads detail and the active-filter list; term
   assert.equal(writes, 1);
 });
 
+test("drafts survive renderer recreation with bounded fake storage", () => {
+  let saved = "";
+  const storage = {
+    getItem: () => saved,
+    setItem: (_key: string, value: string) => {
+      saved = value;
+    },
+  };
+  const bridge = { businessTasksRead: async () => undefined as never };
+  const first = createRendererBusinessTasks(bridge, () => {}, storage);
+  first.drafts.set("task:1/answer/4", "补充要求");
+  const second = createRendererBusinessTasks(bridge, () => {}, storage);
+  assert.equal(second.drafts.get("task:1/answer/4"), "补充要求");
+  for (let i = 0; i < 1100; i++) second.drafts.set(`task:1/answer/${i}`, "x".repeat(4000));
+  assert.ok(saved.length <= 128 * 1024);
+  first.dispose();
+  second.dispose();
+});
+
+test("trusted connection namespaces isolate drafts and reload requires explicit verification", async () => {
+  const cache = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => cache.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      cache.set(key, value);
+    },
+  };
+  let namespace = "a".repeat(64);
+  const bridge = {
+    taskDraftNamespace: async () => namespace,
+    businessTasksRead: async () =>
+      ({
+        ok: true,
+        data: { task: task("queued"), timeline: { items: [], hasMore: false, nextBefore: null } },
+      }) as never,
+  };
+  const first = createRendererBusinessTasks(bridge, () => {}, storage);
+  first.open("task:1");
+  await flush();
+  first.drafts.set("task:1/answer/4", "中台一");
+  first.drafts.set("task:1/uncertain", "yes");
+  for (let i = 0; i < 1100; i++) first.drafts.set(`task:1/answer/${i + 10}`, "x");
+  assert.equal(first.drafts.get("task:1/uncertain"), "yes", "draft eviction cannot erase a write barrier");
+  first.drafts.set("task:1/answer/4", "中台一");
+  const reloaded = createRendererBusinessTasks(bridge, () => {}, storage);
+  reloaded.open("task:1");
+  await flush();
+  await flush();
+  assert.equal(reloaded.drafts.get("task:1/answer/4"), "中台一");
+  assert.equal(reloaded.detailError, "");
+  assert.equal(reloaded.drafts.get("task:1/uncertain"), "yes");
+  assert.equal(reloaded.mustReread, true);
+  reloaded.verifyForeground();
+  await flush();
+  assert.equal(reloaded.mustReread, true);
+  reloaded.refreshDetail();
+  await flush();
+  await flush();
+  assert.equal(reloaded.mustReread, false);
+  namespace = "b".repeat(64);
+  const other = createRendererBusinessTasks(bridge, () => {}, storage);
+  other.open("task:1");
+  await flush();
+  assert.equal(other.drafts.get("task:1/answer/4"), undefined);
+  for (const controller of [first, reloaded, other]) controller.dispose();
+});
+
 test("uncertain answer cannot be sent twice until fresh detail is read", async () => {
   const card = {
     id: 4,
@@ -349,6 +416,8 @@ test("uncertain answer cannot be sent twice until fresh detail is read", async (
   await flush();
   assert.equal(writes, 1);
   assert.equal(controller.mustReread, true);
+  controller.back();
+  assert.equal(controller.selectedKey, "task:1");
   controller.submitAction(answer);
   assert.equal(writes, 1);
   controller.refreshDetail();

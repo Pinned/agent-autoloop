@@ -496,14 +496,81 @@ export function mountBusinessTasksView(
   const decisionMore = el("p", "还有未展示的开放提问，请在执行诊断或原通道查看；不能把这一页当作全部。", "muted");
   const decisionForms = new Map<string, HTMLElement>();
   let decisionTask = "";
+  function answerForm(
+    taskKey: string,
+    card: Pick<NonNullable<typeof controller.detail>["task"]["decisions"]["items"][number], "id" | "title" | "options">,
+    form: HTMLElement,
+  ) {
+    const text = draftArea(`${taskKey}/answer/${card.id}`, `${card.title}：文字回答`);
+    text.placeholder = "补充说明或其他要求";
+    const choices = el("fieldset", "", "business-answer-options");
+    choices.append(el("legend", "选择选项，或直接填写文字回答"));
+    const choiceKey = `${taskKey}/choice/${card.id}`;
+    const syncChoice = () => {
+      for (const entry of root.querySelectorAll<HTMLInputElement>("input"))
+        if (entry.name === `answer-${taskKey}-${card.id}`)
+          entry.checked = entry.value === controller.drafts.get(choiceKey);
+    };
+    for (const [value, option] of [
+      ...card.options.map((option, index) => [String(index), option]),
+      ["", "只用文字回答"],
+      ["other", "其他想法（请填写说明）"],
+    ]) {
+      const label = el("label", "", "business-answer-option");
+      const entry = el("input");
+      entry.type = "radio";
+      entry.name = `answer-${taskKey}-${card.id}`;
+      entry.value = value;
+      entry.checked = controller.drafts.get(choiceKey) === value;
+      entry.addEventListener("change", () => {
+        controller.drafts.set(choiceKey, value);
+        syncChoice();
+      });
+      label.append(entry, el("span", option));
+      choices.append(label);
+    }
+    const validation = el("p", "", "rules-status");
+    validation.setAttribute("role", "status");
+    const send = button("提交回答", () => {
+      const selected = controller.drafts.get(choiceKey) ?? "";
+      const answerText = controller.drafts.get(`${taskKey}/answer/${card.id}`) ?? text.value;
+      const note = answerText.trim();
+      if ((!selected || selected === "other") && !note) {
+        validation.textContent = selected === "other" ? "请说明你的其他想法。" : "请选择选项或填写回答。";
+        text.focus();
+        return;
+      }
+      validation.textContent = "";
+      controller.submitAction({
+        version: 1,
+        action: "answer",
+        cardId: card.id,
+        input:
+          selected && selected !== "other"
+            ? { choice: Number(selected), ...(note ? { text: answerText } : {}) }
+            : { text: answerText },
+      });
+    });
+    send.dataset.cardId = String(card.id);
+    controls.push(send);
+    send.disabled =
+      !controller.detailFresh ||
+      controller.actionBusy ||
+      controller.mustReread ||
+      controller.detailBusy ||
+      !!controller.detailError;
+    form.append(choices, text, send, validation);
+  }
   function draftArea(key: string, label: string) {
     const area = el("textarea");
     area.value = controller.drafts.get(key) ?? "";
     area.maxLength = 4000;
     area.setAttribute("aria-label", label);
+    area.dataset.draftKey = key;
     area.addEventListener("input", () => {
       controller.drafts.set(key, area.value);
-      if (controller.drafts.size > 1000) controller.drafts.delete(controller.drafts.keys().next().value!);
+      for (const peer of root.querySelectorAll<HTMLTextAreaElement>("textarea"))
+        if (peer !== area && peer.dataset.draftKey === key) peer.value = area.value;
     });
     return area;
   }
@@ -730,7 +797,7 @@ export function mountBusinessTasksView(
     timelineStatus.textContent = controller.detailError
       ? (messages[controller.detailError] ?? controller.detailError)
       : "";
-    back.disabled = controller.actionBusy;
+    back.disabled = controller.actionBusy || controller.mustReread;
     back.setAttribute("aria-label", options.backLabel?.() ?? "返回任务列表");
     readDetail.disabled = controller.detailBusy || controller.actionBusy;
     if (!data) {
@@ -794,52 +861,7 @@ export function mountBusinessTasksView(
         decisionForms.set(identity, form);
         form.append(el("h4", card.title), el("p", card.text));
         if (card.truncated) form.append(el("p", "此问题当前仅显示部分，不代表原文已完整展示。", "muted"));
-        const text = draftArea(`${task.key}/answer/${card.id}`, `${card.title}：文字回答`);
-        text.placeholder = "填写回答或补充要求";
-        const choices = el("fieldset", "", "business-answer-options");
-        choices.append(el("legend", "选择选项，或直接填写文字回答"));
-        let selectedChoice = controller.drafts.get(`${task.key}/choice/${card.id}`) ?? "";
-        for (const [value, option] of [
-          ...card.options.map((option, index) => [String(index), option]),
-          ["other", "其他想法（请填写说明）"],
-        ]) {
-          const label = el("label", "", "business-answer-option");
-          const entry = el("input");
-          entry.type = "radio";
-          entry.name = `answer-${task.id}-${card.id}`;
-          entry.value = value;
-          entry.checked = selectedChoice === value;
-          entry.addEventListener("change", () => {
-            selectedChoice = value;
-            controller.drafts.set(`${task.key}/choice/${card.id}`, value);
-          });
-          label.append(entry, el("span", option));
-          choices.append(label);
-        }
-        const validation = el("p", "", "rules-status");
-        validation.setAttribute("role", "status");
-        const send = button("提交回答", () => {
-          const selected = selectedChoice;
-          const note = text.value.trim();
-          if ((!selected || selected === "other") && !note) {
-            validation.textContent = selected === "other" ? "请说明你的其他想法。" : "请选择选项或填写回答。";
-            text.focus();
-            return;
-          }
-          validation.textContent = "";
-          controller.submitAction({
-            version: 1,
-            action: "answer",
-            cardId: card.id,
-            input:
-              selected && selected !== "other"
-                ? { choice: Number(selected), ...(note ? { text: text.value } : {}) }
-                : { text: text.value },
-          });
-        });
-        send.dataset.cardId = String(card.id);
-        controls.push(send);
-        form.append(choices, text, send, validation);
+        answerForm(task.key, card, form);
         decisions.append(form);
       }
       decisionEmpty.hidden = task.decisions.items.length > 0;
@@ -1168,61 +1190,33 @@ export function mountBusinessTasksView(
             el("p", original.text),
           );
           record.append(question);
-          if (original.options.length && event.kind !== "answer") {
-            const choices = el("div", "", "business-proposal-actions");
-            original.options.forEach((option, index) => {
-              const selected =
-                card.choice === index ||
-                (card.choice === null &&
-                  card.answer === option &&
-                  card.options.filter((value) => value === card.answer).length === 1);
-              const choice = button(option, () =>
-                controller.submitAction({
-                  version: 1,
-                  action: "answer",
-                  cardId: card.id,
-                  input: { choice: index },
-                }),
-              );
-              choice.setAttribute("aria-pressed", String(selected));
-              if (selected) {
-                choice.className = "is-selected";
-                choice.replaceChildren(
-                  el("span", "✓", "selection-check"),
-                  el("span", option),
-                  el("span", "已选择", "selection-badge"),
-                );
-              } else if (card.state !== "open") choice.className = "is-unselected";
-              choice.disabled =
-                card.kind !== "ask" ||
-                card.state !== "open" ||
-                ["cancelling", "cancelled"].includes(task.state) ||
-                !controller.detailFresh ||
-                controller.actionBusy ||
-                controller.mustReread ||
-                controller.detailBusy ||
-                !!controller.detailError;
-              choices.append(choice);
-            });
-            record.append(choices);
-          }
-          if (event.kind === "answer") {
-            const answer = el("section", "", "business-record-answer");
-            answer.append(
-              el("span", "已记录的回答", "business-card-label"),
-              el(
-                "p",
-                card.answer ?? (card.choice !== null ? card.options[card.choice] : undefined) ?? "回答内容未记录",
-              ),
-            );
-            record.append(answer);
-          } else if (!card.options.length && card.kind === "ask" && card.state === "open") {
-            const text = draftArea(`${task.key}/answer/${card.id}`, `${card.title}：文字回答`);
-            const send = button("提交回答", () =>
-              controller.submitAction({ version: 1, action: "answer", cardId: card.id, input: { text: text.value } }),
-            );
-            send.disabled = cancelDisabled || taskCancelled;
-            record.append(text, send);
+          if (card.kind === "ask" && card.state === "open" && event.kind !== "answer") {
+            const form = el("section", "", "business-proposal-actions");
+            answerForm(task.key, card, form);
+            record.append(form);
+          } else {
+            if (event.kind !== "answer") {
+              const choices = el("div", "", "business-proposal-actions");
+              original.options.forEach((option, index) => {
+                const choice = button(option, () => {});
+                const selected = card.choice === index;
+                choice.className = selected ? "is-selected" : "is-unselected";
+                if (selected) choice.append(el("span", "已选择", "selection-badge"));
+                choice.setAttribute("aria-pressed", String(selected));
+                choice.disabled = true;
+                choices.append(choice);
+              });
+              record.append(choices);
+            }
+            if (card.choice !== null || card.answer !== null || event.kind === "answer") {
+              const answer = el("section", "", "business-record-answer");
+              answer.append(el("span", "已记录的回答", "business-card-label"));
+              if (card.choice !== null)
+                answer.append(el("p", `已选选项：${card.options[card.choice] ?? "选项原文未记录"}`));
+              if (card.answer !== null) answer.append(el("p", card.answer));
+              if (card.choice === null && card.answer === null) answer.append(el("p", "回答内容未记录"));
+              record.append(answer);
+            }
           }
           if (original.truncated) question.append(el("p", "此问题仅显示部分。", "muted"));
         }

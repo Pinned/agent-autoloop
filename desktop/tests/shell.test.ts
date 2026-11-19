@@ -83,6 +83,7 @@ test("IPC exposes only themes, window actions, the six fixed setup operations, t
     "desktop:task:entries",
     "desktop:tasks:action",
     "desktop:tasks:detail",
+    "desktop:tasks:draft-namespace",
     "desktop:tasks:get",
     "desktop:tasks:list",
     "desktop:theme:get",

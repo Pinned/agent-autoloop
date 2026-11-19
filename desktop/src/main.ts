@@ -36,7 +36,14 @@ import {
 import { loadTheme, saveTheme } from "./preferences.ts";
 import { createSupervisor } from "./supervisor.ts";
 import { createRuntimeControl, SAFE_STOP_ERROR, type RuntimeControlState } from "./runtime-control.ts";
-import { createTasksSource, createTodaySource, createWorkersSource, readRuntimeConfig } from "./state-source.ts";
+import { createHash } from "node:crypto";
+import {
+  createTasksSource,
+  createTodaySource,
+  createWorkersSource,
+  readRuntimeConfig,
+  parseHubEndpoint,
+} from "./state-source.ts";
 import { createBootControl } from "./boot-control.ts";
 import { detectDesktopCli, desktopCliHome, readDesktopCliEndpoint } from "../../host/desktop-cli-detect.ts";
 import { createTaskSource } from "./task-source.ts";
@@ -893,6 +900,19 @@ if (ownsAppLock)
         }),
       );
       // Answer/close/stop/correct one round through the hub's own doors; the input is checked before any request.
+      ipcMain.handle(channels.taskDraftNamespace, (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        if (args.length !== 0) throw new Error("invalid-request");
+        try {
+          const endpoint = parseHubEndpoint(readConfig(runtimeHome));
+          if (typeof endpoint === "string") return null;
+          return createHash("sha256")
+            .update(JSON.stringify([endpoint.origin, endpoint.owner]))
+            .digest("hex");
+        } catch {
+          return null;
+        }
+      });
       ipcMain.handle(channels.taskAction, taskAction);
       ipcMain.handle(channels.rulesCasGet, (event, ...args: unknown[]) => rulesCas.get(event, args));
       ipcMain.handle(channels.rulesCasPut, (event, ...args: unknown[]) => rulesCas.put(event, args));
@@ -1013,7 +1033,7 @@ if (ownsAppLock)
             result.runtimeEventSeen !== false ||
             result.navigateSeen !== false ||
             result.bridge.join(",") !==
-              "agentHistory,businessTasksRead,completeSetup,copyLaunchCommand,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,pickWorkingDir,rulesCasGet,rulesCasPut,runtimeGet,runtimeReconnect,runtimeStart,runtimeStop,runtimeUseEmbedded,setTheme,settingsGet,settingsPut,setupConnect,setupStatus,taskAction,taskCreate,taskDetail,taskEntries,taskList,tasksGet,todayState,window,workersGet,workersLocal" ||
+              "agentHistory,businessTasksRead,completeSetup,copyLaunchCommand,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,pickWorkingDir,rulesCasGet,rulesCasPut,runtimeGet,runtimeReconnect,runtimeStart,runtimeStop,runtimeUseEmbedded,setTheme,settingsGet,settingsPut,setupConnect,setupStatus,taskAction,taskCreate,taskDetail,taskDraftNamespace,taskEntries,taskList,tasksGet,todayState,window,workersGet,workersLocal" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||

@@ -335,9 +335,16 @@ const rulesPage = mountRulesCasView(rules, {
   pickWorkingDir: () => window.desktop.pickWorkingDir(),
 });
 // The tasks page is app-level too: page switches only re-attach the list and re-read page one.
-const businessTasks = createRendererBusinessTasks(window.desktop, () => {
-  if (currentPage === "tasks") tasksPage?.update();
-});
+const businessTasks = createRendererBusinessTasks(
+  window.desktop,
+  () => {
+    if (currentPage === "tasks") tasksPage?.update();
+  },
+  {
+    getItem: (key) => window.localStorage.getItem(key),
+    setItem: (key, value) => window.localStorage.setItem(key, value),
+  },
+);
 let todayDetailReturn: { scrollTop: number } | null = null;
 const tasksPage = mountBusinessTasksView(businessTasks, {
   backLabel: () => (todayDetailReturn ? "返回今天" : "返回任务列表"),

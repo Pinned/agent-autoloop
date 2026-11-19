@@ -152,6 +152,7 @@ async function withView(
   shown: unknown = item,
   runDetail?: unknown,
   options: {
+    taskAction?: (input: unknown) => Promise<unknown>;
     paged?: boolean;
     scrollHost?: HTMLElement;
     actionAuthority?: "missing" | "execution" | "cards" | "timers" | "hold";
@@ -210,7 +211,7 @@ async function withView(
           } as never;
         },
         taskDetail: async () => ({ version: 1, ok: true, data: runDetail }) as never,
-        taskAction: () => new Promise(() => {}),
+        taskAction: (options.taskAction as never) ?? (() => new Promise(() => {})),
       },
       () => view?.update(),
     );
@@ -490,8 +491,7 @@ test("proposal controls are outside prose and answer retains matching option tex
       const timeline = all(root).find((node) => node.className === "business-timeline")!;
       const proposal = all(timeline.children[1]).find((node) => node.className === "business-record-question")!;
       assert.equal(all(proposal).filter((node) => node.tag === "button").length, 0);
-      const selected = all(timeline.children[1]).find((node) => node.className === "is-selected")!;
-      assert.ok(selected.textContent.includes("实施"));
+      assert.equal(all(timeline.children[1]).filter((node) => node.className === "is-selected").length, 0);
       const answer = all(timeline.children[0]).find((node) => node.className === "business-record-answer")!;
       assert.ok(answer.textContent.includes("已记录的回答"));
       assert.ok(answer.textContent.includes("实施"));
@@ -1254,6 +1254,83 @@ test("live questions validate empty/custom input and keep other cards independen
     },
     { ...item, decisions: { items: [card, { ...card, id: 5 }], hasMore: false } },
   );
+});
+
+test("both live entrances select without sending and submit choice with supplement", async () => {
+  for (const timelineEntry of [false, true]) {
+    const writes: unknown[] = [];
+    await withView(
+      async (controller, root) => {
+        controller.open("task:1");
+        await flush();
+        const area = all(root).find(
+          (node) => node.className === (timelineEntry ? "business-timeline" : "business-decisions"),
+        )!;
+        const radio = all(area).find((node) => node.tag === "input" && node.value === "0")!;
+        radio.listeners.get("change")?.();
+        assert.equal(writes.length, 0);
+        const text = all(area).find((node) => node.tag === "textarea")!;
+        text.value = "补充具体要求";
+        text.listeners.get("input")?.();
+        const opposite = all(root).find(
+          (node) => node.className === (timelineEntry ? "business-decisions" : "business-timeline"),
+        )!;
+        const oppositeText = all(opposite).find((node) => node.tag === "textarea")!;
+        assert.equal(oppositeText.value, "补充具体要求", "same-card input stays synchronized across entrances");
+        all(opposite)
+          .find((node) => node.textContent === "提交回答")!
+          .fire();
+        assert.deepEqual(writes, [
+          { version: 1, action: "answer", cardId: 4, input: { choice: 0, text: "补充具体要求" } },
+        ]);
+      },
+      { ...item, decisions: { items: [card], hasMore: false } },
+      undefined,
+      {
+        taskAction: async (input) => {
+          writes.push(input);
+          return new Promise(() => {});
+        },
+        timeline: true
+          ? [
+              {
+                seq: 1,
+                kind: "finish",
+                at: null,
+                runId: 2,
+                eventId: null,
+                cardId: 4,
+                feedbackId: null,
+                text: "",
+                truncated: false,
+                display: {
+                  events: [],
+                  runs: [],
+                  cards: [
+                    {
+                      id: card.id,
+                      kind: card.kind,
+                      state: card.state,
+                      title: card.title,
+                      text: card.text,
+                      options: card.options,
+                      choice: null,
+                      answer: null,
+                      result: null,
+                      truncated: false,
+                      runId: 2,
+                      by: null,
+                    },
+                  ],
+                  completion: null,
+                  feedback: [],
+                },
+              },
+            ]
+          : [],
+      },
+    );
+  }
 });
 
 test("a newly arriving decision leaves an existing answer input mounted", async () => {

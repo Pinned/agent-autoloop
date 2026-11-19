@@ -64,6 +64,7 @@ export const channels = Object.freeze({
   taskDetail: "desktop:tasks:detail",
   taskEntries: "desktop:task:entries",
   taskCreate: "desktop:task:create",
+  taskDraftNamespace: "desktop:tasks:draft-namespace",
   taskAction: "desktop:tasks:action",
   rulesCasGet: "desktop:rules:cas:get",
   rulesCasPut: "desktop:rules:cas:put",
@@ -80,6 +81,7 @@ export interface ThemeState {
   effective: "light" | "dark";
 }
 export interface DesktopBridge {
+  taskDraftNamespace?(): Promise<string | null>;
   agentHistory(
     request: import("./agent-history-contract.ts").AgentHistoryInput,
   ): Promise<import("./agent-history-contract.ts").AgentHistoryResponse>;

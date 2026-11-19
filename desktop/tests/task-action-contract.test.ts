@@ -34,6 +34,7 @@ test("five actions normalize into detached recursively frozen copies", () => {
   for (const value of [
     answer(),
     answer({ choice: 0 }),
+    answer({ choice: 0, text: " 补充要求 " }),
     answer({ text: " 想法 😀 " }),
     { version: 1, action: "resolve", cardId: 7, input: { reason: " 已核实 " } },
     run(),
@@ -107,7 +108,7 @@ test("version, target IDs, mutually exclusive inputs and owner-only fields fail 
     { ...answer(), by: "x" },
     { ...answer(), ref: "x" },
     { ...run(), token: "x" },
-    answer({ choice: 0, text: "x" }),
+    answer({ choice: 0, text: " " }),
     answer({ channel: "x" }),
     answer({ by: "x" }),
     answer({ ref: "x" }),

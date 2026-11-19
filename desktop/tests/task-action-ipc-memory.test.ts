@@ -97,7 +97,7 @@ test("sender first, strict arity and draft parsing happen before any request or 
   for (const bad of [
     { version: 2, action: "answer", cardId: 7, input: { choice: 0 } },
     { version: 1, action: "cancel", cardId: 7, input: {} },
-    { version: 1, action: "answer", cardId: 7, input: { choice: 0, text: "x" } },
+    { version: 1, action: "answer", cardId: 7, input: { choice: 0, text: " " } },
     { version: 1, action: "memo", runId: 9, input: { text: "  " } },
     { version: 1, action: "resolve", cardId: 7, input: { reason: "x".repeat(1001) } },
   ])

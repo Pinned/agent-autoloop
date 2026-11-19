@@ -21,8 +21,56 @@ import {
 import type { TaskHistoryResponse } from "../../../host/desktop-task-history-contract.ts";
 type RunDetail = Extract<TaskHistoryResponse<"detail">, { ok: true }>["data"];
 type Bridge = Pick<DesktopBridge, "businessTasksRead"> &
-  Partial<Pick<DesktopBridge, "taskAction" | "taskList" | "taskDetail" | "onRuntimeEvent">>;
-export function createRendererBusinessTasks(bridge: Bridge, changed: () => void) {
+  Partial<Pick<DesktopBridge, "taskAction" | "taskList" | "taskDetail" | "onRuntimeEvent" | "taskDraftNamespace">>;
+type DraftStorage = Pick<Storage, "getItem" | "setItem">;
+function persistentDrafts(storage?: DraftStorage) {
+  const key = "business-task-drafts-v1";
+  const drafts = new Map<string, string>();
+  const save = () => {
+    while (drafts.size > 1000 || JSON.stringify([...drafts]).length > 128 * 1024) {
+      const oldest = [...drafts.keys()].find((key) => !key.endsWith("/uncertain"));
+      if (oldest === undefined) break;
+      Map.prototype.delete.call(drafts, oldest);
+    }
+    try {
+      storage?.setItem(key, JSON.stringify([...drafts]));
+    } catch {
+      /* Keep the in-memory draft if storage is unavailable. */
+    }
+  };
+  try {
+    const raw = storage?.getItem(key);
+    if (raw && raw.length <= 128 * 1024) {
+      const entries: unknown = JSON.parse(raw);
+      if (Array.isArray(entries))
+        for (const entry of entries)
+          if (
+            Array.isArray(entry) &&
+            entry.length === 2 &&
+            entry.every((value) => typeof value === "string") &&
+            entry[0].length <= 200 &&
+            entry[1].length <= 8000
+          )
+            drafts.set(entry[0], entry[1]);
+    }
+  } catch {
+    /* Malformed cache does not affect authoritative task reads. */
+  }
+  drafts.set = (key, value) => {
+    if (key.length > 200 || value.length > 8000) return drafts;
+    Map.prototype.delete.call(drafts, key);
+    Map.prototype.set.call(drafts, key, value);
+    save();
+    return drafts;
+  };
+  drafts.delete = (key) => {
+    const removed = Map.prototype.delete.call(drafts, key);
+    save();
+    return removed;
+  };
+  return drafts;
+}
+export function createRendererBusinessTasks(bridge: Bridge, changed: () => void, storage?: DraftStorage) {
   let items: BusinessTaskItem[] = [],
     page: BusinessTaskList | null = null,
     detail: BusinessTaskDetail | null = null;
@@ -43,7 +91,59 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
     detailFresh = false,
     runReady = false;
   let actionToken: object | null = null;
-  const drafts = new Map<string, string>();
+  let namespace = "";
+  let namespaceReady = !bridge.taskDraftNamespace;
+  const scopedStorage: DraftStorage | undefined =
+    storage && bridge.taskDraftNamespace
+      ? {
+          getItem: (key) => {
+            if (!namespace) return null;
+            const raw = storage.getItem(`${key}/connections`);
+            if (!raw || raw.length > 512 * 1024) return null;
+            const entries: unknown = JSON.parse(raw);
+            if (!Array.isArray(entries)) return null;
+            const match = entries.find(
+              (entry) => Array.isArray(entry) && entry[0] === namespace && typeof entry[1] === "string",
+            );
+            return match?.[1] ?? null;
+          },
+          setItem: (key, value) => {
+            if (!namespace) return;
+            let entries: [string, string][] = [];
+            try {
+              const raw = storage.getItem(`${key}/connections`);
+              const parsed: unknown = raw && raw.length <= 512 * 1024 ? JSON.parse(raw) : [];
+              if (Array.isArray(parsed))
+                entries = parsed.filter(
+                  (entry) =>
+                    Array.isArray(entry) &&
+                    entry.length === 2 &&
+                    typeof entry[0] === "string" &&
+                    /^[a-f0-9]{64}$/.test(entry[0]) &&
+                    typeof entry[1] === "string" &&
+                    entry[1].length <= 128 * 1024 &&
+                    entry[0] !== namespace,
+                );
+            } catch {
+              /* Invalid cache cannot select another connection. */
+            }
+            entries.push([namespace, value]);
+            while (entries.length > 4 || JSON.stringify(entries).length > 512 * 1024) entries.shift();
+            storage.setItem(`${key}/connections`, JSON.stringify(entries));
+          },
+        }
+      : storage;
+  let drafts = persistentDrafts(scopedStorage);
+  const syncNamespace = async () => {
+    if (!bridge.taskDraftNamespace) return;
+    const raw = await bridge.taskDraftNamespace();
+    const next = typeof raw === "string" && /^[a-f0-9]{64}$/.test(raw) ? raw : "";
+    if (next !== namespace || !namespaceReady) {
+      namespace = next;
+      drafts = persistentDrafts(scopedStorage);
+      namespaceReady = true;
+    }
+  };
   const notify = () => changed();
   let compatibility = false;
   let ruleNames: string[] = [];
@@ -52,6 +152,7 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
   let businessScope = false;
   let ruleCapability: boolean | undefined;
   async function readBusiness(request: BusinessRequest, current: () => boolean) {
+    if (bridge.taskDraftNamespace) await syncNamespace();
     const raw = await bridge.businessTasksRead(request);
     const checked = parseBusinessResponse(raw, request);
     if (
@@ -163,7 +264,9 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
           else detail = { ...detail!, timeline: { ...timeline, items: merged } };
         } else {
           detail = response.data as BusinessTaskDetail;
-          if (!preserveUncertain) mustReread = false;
+          if (!preserveUncertain && detailFresh) drafts.delete(`${selectedKey}/uncertain`);
+          mustReread = drafts.get(`${selectedKey}/uncertain`) === "yes";
+          if (!preserveUncertain && detailFresh) mustReread = false;
           if (actionMessage === "已提交，正在核对任务的最新状态。") actionMessage = "已核对最新任务状态。";
           detailFresh = true;
           readRun(detail.task.latestRunId, generation);
@@ -256,6 +359,7 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
     const key = selectedKey,
       token = {};
     actionToken = token;
+    drafts.set(`${selectedKey}/uncertain`, "yes");
     actionBusy = true;
     actionMessage = "正在提交，请勿重复发送。";
     notify();
@@ -288,6 +392,7 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
       }
       notify();
       if (confirmed) {
+        drafts.delete(`${key}/uncertain`);
         readDetail();
         if (request.action === "completeTask") readList();
       }
@@ -394,7 +499,9 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
     get detailFresh() {
       return allowed && detailFresh;
     },
-    drafts,
+    get drafts() {
+      return drafts;
+    },
     submitAction,
     get pageNumber() {
       return pageIndex + 1;
@@ -459,7 +566,7 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void)
       schedule();
     },
     back() {
-      if (actionBusy) return;
+      if (actionBusy || mustReread) return;
       ++detailGeneration;
       selectedKey = null;
       detail = null;

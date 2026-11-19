@@ -7,7 +7,7 @@ export const DESKTOP_TASK_ACTION_RESULT_MAX_BYTES = 1024;
 export type DesktopTaskAction =
   "answer" | "resolve" | "cancel" | "cancelTask" | "completeTask" | "pauseTask" | "resumeTask" | "memo" | "feedback";
 export type DesktopTaskFeedbackKind = "交付满意" | "需要改善" | "内容错误";
-export type DesktopTaskAnswerInput = { choice: number } | { text: string } | Record<string, never>;
+export type DesktopTaskAnswerInput = { choice: number; text?: string } | { text: string } | Record<string, never>;
 export type DesktopTaskActionInput =
   | { version: 1; action: "answer"; cardId: number; input: DesktopTaskAnswerInput }
   | { version: 1; action: "resolve"; cardId: number; input: { reason: string } }
@@ -146,12 +146,10 @@ export function parseDesktopTaskActionInput(value: unknown): DesktopTaskActionIn
   let input: DesktopTaskActionInput["input"];
   if (action === "answer") {
     raw = record(item.input, [], ["choice", "text"]);
-    if (Object.keys(raw).length > 1) invalid();
-    input = Object.hasOwn(raw, "choice")
-      ? { choice: integer(raw.choice, 0) }
-      : Object.hasOwn(raw, "text")
-        ? { text: text(raw.text) }
-        : {};
+    input = {
+      ...(Object.hasOwn(raw, "choice") ? { choice: integer(raw.choice, 0) } : {}),
+      ...(Object.hasOwn(raw, "text") ? { text: text(raw.text) } : {}),
+    } as DesktopTaskAnswerInput;
   } else if (action === "resolve" || action === "cancelTask" || action === "completeTask" || action === "pauseTask") {
     raw = record(item.input, ["reason"]);
     input = { reason: text(raw.reason, true) };

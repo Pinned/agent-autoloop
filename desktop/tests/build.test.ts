@@ -112,7 +112,7 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
   assert.match(main, /远程队列不会取消/);
   assert.match(main, /离线持久待同步/);
   assert.doesNotMatch(main, /restartPolicy|controller\.restart/);
-  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 31);
+  assert.equal((main.match(/ipcMain\.handle\(/g) ?? []).length, 32);
   // Each handler is checked inside its own block: a cross-handler match would let a missing
   // sender check hide behind the next handler that has one. A long handler may wrap its
   // arguments onto their own lines, so the split tolerates whitespace after the open paren.
@@ -122,6 +122,12 @@ test("native runtime is opt-in, isolated and not connected to the renderer", () 
     assert.ok(block, `handler ${name} is missing`);
     return block;
   };
+  const draftNamespace = blockOf("taskDraftNamespace");
+  assert.match(draftNamespace, /assertSender\(event, window\.webContents, page\)/);
+  assert.match(draftNamespace, /args\.length !== 0/);
+  assert.match(draftNamespace, /createHash\("sha256"\)/);
+  assert.match(draftNamespace, /endpoint\.origin, endpoint\.owner/);
+  assert.doesNotMatch(draftNamespace, /return endpoint/);
   for (const name of [
     "launchCommandCopy",
     "cwdPick",
@@ -260,6 +266,7 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
     "taskAction",
     "taskCreate",
     "taskDetail",
+    "taskDraftNamespace",
     "taskEntries",
     "taskList",
     "tasksGet",
@@ -268,6 +275,8 @@ test("built preload exposes exactly the fixed theme, window, setup and runtime m
     "workersGet",
     "workersLocal",
   ]);
+  const smokeMethods = read("../src/main.ts").match(/result\.bridge\.join\(","\) !==\s*"([^"]+)"/)?.[1];
+  assert.equal(smokeMethods, methods.join(","), "native smoke checks the same exact fixed bridge");
   assert.match(source, /agentHistory: \(request\) => ipcRenderer\.invoke\("desktop:agent-history:read", request\)/);
   assert.match(read("../dist/preload.cjs"), /desktop:agent-history:read/);
   assert.doesNotMatch(source, /invoke\((?:channel|name|value)/);
@@ -613,10 +622,7 @@ test("fixed renderer has restrictive CSP and no simulated business or network co
   assert.match(html, /script-src 'self'/);
   assert.doesNotMatch(html, /https?:|unsafe-inline|unsafe-eval/);
   const renderer = read("../dist/renderer/app.js");
-  assert.doesNotMatch(
-    renderer,
-    /\bfetch\(|WebSocket|localStorage|sessionStorage|ipcRenderer|demo-state|setInterval|Notification/,
-  );
+  assert.doesNotMatch(renderer, /\bfetch\(|WebSocket|sessionStorage|ipcRenderer|demo-state|setInterval|Notification/);
   assert.match(renderer, /今天/);
   assert.match(renderer, /任务/);
   assert.match(renderer, /规则/);
