@@ -1371,6 +1371,37 @@ export function mountBusinessTasksView(
             }
           else if (event.text && !display?.cards.length) record.append(el("p", event.text));
         }
+        if (display?.reviews?.items.length) {
+          const section = el("section", "", "business-record-explanation");
+          section.append(el("span", "复查安排", "business-card-label"));
+          for (const review of display.reviews.items) {
+            const label =
+              review.action === "cancelled" ? "当时取消" : review.action === "triggered" ? "当时触发" : "当时安排";
+            const state =
+              review.state === "pending"
+                ? review.at && Date.parse(review.at) <= Date.now()
+                  ? "到点待执行（按本机时间，尚未记录触发）"
+                  : "待复查"
+                : review.state === "triggered"
+                  ? "已触发，核实结果见后续真实记录"
+                  : review.state === "cancelled"
+                    ? "已取消"
+                    : "当前状态未记录";
+            section.append(el("p", `${label}：${historyTime(review.at)} · ${state}`));
+            if ([...review.about].length > 160) {
+              const long = el("details");
+              long.append(
+                el("summary", [...review.about].slice(0, 160).join("") + "…（展开）"),
+                el("pre", review.about),
+              );
+              section.append(long);
+            } else section.append(el("p", review.about || "复查内容未记录"));
+            if (review.truncated) section.append(el("p", "此复查内容仅显示部分。", "muted"));
+          }
+          if (display.reviews.truncated) section.append(el("p", "复查数量超限，仅显示前20项。", "muted"));
+          record.append(section);
+        } else if (!display?.reviews && ["finish", "result"].includes(event.kind))
+          record.append(el("p", "当前记录未提供复查信息。", "muted"));
         for (const original of proposalCards) {
           const card = original;
           const question = el("section", "", "business-record-question");
