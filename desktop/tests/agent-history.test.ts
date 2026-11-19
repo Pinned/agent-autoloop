@@ -166,6 +166,38 @@ test("history source binds metadata to connection, hides cursor paths, and survi
     rmSync(home, { recursive: true, force: true });
   }
 });
+// Switching launch records must start empty rather than showing the previous launch during a delayed read.
+test("launch selection clears old content and reports failed reads", async () => {
+  const pending: ((value: unknown) => void)[] = [];
+  const controller = createAgentHistoryController(
+    { agentHistory: (() => new Promise((resolve) => pending.push(resolve))) as never },
+    () => {},
+  );
+  controller.select("task:1");
+  controller.read(1);
+  pending.shift()!({
+    runId: 1,
+    attempt: 1,
+    launch: 0,
+    launches: 2,
+    page: {
+      status: "available",
+      scope: "session",
+      items: [{ id: "old", kind: "message", at: null, text: "旧启动", truncated: false }],
+      cursor: null,
+      hasMore: false,
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(controller.rounds.get(1)?.page.items.length, 1);
+  controller.read(1, false, { attempt: 1, launch: 1 });
+  assert.equal(controller.rounds.has(1), false);
+  assert.equal(controller.busy.has(1), true);
+  pending.shift()!(undefined);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(controller.rounds.get(1)?.page.status, "unavailable");
+});
+
 test("switching task discards late history responses", async () => {
   let finish!: (value: any) => void;
   const controller = createAgentHistoryController(

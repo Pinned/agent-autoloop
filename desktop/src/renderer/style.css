@@ -2699,8 +2699,6 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
 .agent-execution-history .session-filters { display: flex; gap: 4px; margin: 0; padding: 3px; background: #f4f6f9; border: 1px solid #e9edf3; border-radius: 9px; }
 .agent-execution-history .session-filters button { min-height: 44px; border: 0; border-radius: 7px; background: transparent; color: #657183; padding: 7px 14px; font-size: 13px; }
 .agent-execution-history .session-filters button[aria-pressed="true"] { background: #fff; color: #354760; box-shadow: 0 1px 4px #26354b12; font-weight: 600; }
-.agent-execution-history .session-section-head { margin-bottom: 16px; }
-.agent-execution-history .session-section-head h3 { margin: 0; font-size: 14px; font-weight: 600; }
 .agent-execution-history .agent-history-timeline { margin: 0; padding: 0; }
 .agent-execution-history .agent-history-round { border: 0; margin: 0; padding: 0; }
 .agent-execution-history .session-card { background: #fff; border-color: #e5eaf1; margin: 0; }

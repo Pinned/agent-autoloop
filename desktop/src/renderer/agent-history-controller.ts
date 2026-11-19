@@ -46,6 +46,7 @@ export function createAgentHistoryController(
           : {}),
       };
       const own = generation;
+      if (selection) rounds.delete(runId);
       busy.add(runId);
       changed();
       const finish = (raw: unknown) => {

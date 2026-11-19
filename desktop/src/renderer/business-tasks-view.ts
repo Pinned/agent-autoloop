@@ -347,9 +347,7 @@ export function mountBusinessTasksView(
   const sessionMessages = el("section");
   const sessionToolbar = el("div", "", "session-toolbar");
   sessionToolbar.append(filters);
-  const sessionSectionHead = el("div", "", "session-section-head");
-  sessionSectionHead.append(el("h3", "会话记录"));
-  sessionBody.append(sessionToolbar, sessionNotes, sessionControls, sessionSectionHead, sessionMessages);
+  sessionBody.append(sessionToolbar, sessionNotes, sessionControls, sessionMessages);
   const sessionHeader = el("header", "", "session-header tasks-detail-head");
   const sessionTitleRow = el("div", "", "session-title-row business-detail-heading");
   const sessionState = el("span", "", "session-state");
@@ -408,7 +406,8 @@ export function mountBusinessTasksView(
       const result = history.rounds.get(id);
       if (!result && history.rounds.size + history.busy.size >= 20)
         round.append(el("p", "本任务已达 20 个会话的读取上限，请重新进入任务后选择需要的旧轮。", "muted"));
-      if (history.busy.has(id)) round.append(el("p", "正在读取已保存记录…", "muted"));
+      if (!result) sessionMessages.replaceChildren();
+      if (history.busy.has(id) && !result?.page.items.length) round.append(el("p", "正在读取已保存记录…", "muted"));
       if (!options.history?.agentHistory)
         round.append(el("p", "此连接暂不支持会话读取；已记录资料与结果仍可查看。", "muted"));
       if (result) {

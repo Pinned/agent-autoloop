@@ -1122,6 +1122,11 @@ test("session pagination appends stable nodes and lifecycle stops polling", asyn
         all(root)
           .find((node) => node.className === "business-session-entry")!
           .fire();
+        assert.ok(root.textContent.includes("正在读取已保存记录…"));
+        assert.equal(
+          all(root).some((node) => node.className === "session-section-head"),
+          false,
+        );
         pending.shift()!(
           page([{ ...message("a", "tool-call"), toolUseId: "tool-a", name: "Read", text: "参数".repeat(500) }], true),
         );
@@ -1135,6 +1140,7 @@ test("session pagination appends stable nodes and lifecycle stops polling", asyn
           .fire();
         assert.equal(tool.textContent, "参数".repeat(500));
         scrollHost.scrollTop = 120;
+        assert.equal(root.textContent.includes("正在读取已保存记录…"), false);
         assert.equal(timers.size, 0, "automatic history pages must not overlap polling");
         assert.equal(requests[1].cursor, "11111111-1111-1111-1111-111111111111");
         pending.shift()!(
@@ -1172,6 +1178,14 @@ test("session pagination appends stable nodes and lifecycle stops polling", asyn
         timers.clear();
         poll();
         assert.equal(requests.length, 3);
+        assert.equal(root.textContent.includes("正在读取已保存记录…"), false);
+        assert.equal(
+          all(root).find((node) => node.className === "agent-history-timeline"),
+          list,
+        );
+        assert.equal(list.children[0], row);
+        assert.equal(tool.textContent, "参数".repeat(500));
+        assert.equal(scrollHost.scrollTop, 120);
         view.setActive(false);
         assert.equal(timers.size, 0);
         pending.shift()!(page([message("late")]));
@@ -1184,6 +1198,12 @@ test("session pagination appends stable nodes and lifecycle stops polling", asyn
         const before = requests.length;
         view.setActive(true);
         assert.equal(requests.length, before, "already active must not reread from the beginning");
+        const failedPoll = [...timers.values()][0];
+        timers.clear();
+        failedPoll();
+        pending.shift()!(undefined);
+        await flush();
+        assert.ok(root.textContent.includes("本机历史不可读"), "silent refresh must still expose real failures");
         all(root)
           .find((node) => node.tag === "button" && node.className.split(" ").includes("session-back"))!
           .fire();
