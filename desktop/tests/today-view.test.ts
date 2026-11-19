@@ -253,6 +253,27 @@ test("four independent headline tiles use exact ask/running/doneToday and real U
   assert.match(visibleText(f.root), /USD/);
 });
 
+test("queued headline uses authoritative round totals, not the bounded preview, and clears failed data", () => {
+  for (const queued of [0, 2, 40]) {
+    const f = fixture({
+      kind: "ready",
+      snapshot: snapshot({
+        totals: { running: 3, queued, retrying: 1, unknown: 0, done: 10, doneToday: 4, attention: 99 },
+        activeRuns: [],
+        activeTruncated: true,
+      }),
+    });
+    const tiles = byClass(f.root, "today-stat");
+    assert.equal(tiles.length, 4);
+    assert.equal(byId(f.root, "today-stat-running").textContent, "3");
+    assert.match(tiles[1].textContent, /运行中的轮次/);
+    assert.equal(byId(f.root, "today-stat-queued").textContent, `排队中 ${queued}`);
+    f.control.state = { kind: "error", message: "读取失败" };
+    update(f);
+    assert.equal(byId(f.root, "today-stat-queued").textContent, "排队中 —");
+  }
+});
+
 test("cost value keeps a fixed single line without widening the stats grid", () => {
   const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
   const rule = css.match(/#today-stat-spendingToday\s*\{([^}]+)\}/)?.[1] ?? "";

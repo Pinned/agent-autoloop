@@ -70,7 +70,7 @@ export function mountTodayView(
   const hints: Record<string, HTMLElement> = {};
   for (const [field, label, hint] of [
     ["askTotal", "待你决策", "需要你的输入"],
-    ["running", "正在推进", "运行中的任务"],
+    ["running", "正在推进", "运行中的轮次"],
     ["doneToday", "今日完成", "今天完成的轮次（不代表最终交付）"],
     ["spendingToday", "今日费用", "USD · 已上报费用"],
   ]) {
@@ -79,6 +79,12 @@ export function mountTodayView(
     value.id = `today-stat-${field}`;
     const description = element("div", hint, "today-stat-hint");
     tile.append(element("div", label, "today-stat-label"), value, description);
+    if (field === "running") {
+      const queued = element("div", "排队中 —", "today-stat-hint");
+      queued.id = "today-stat-queued";
+      tile.append(queued);
+      values.queued = queued;
+    }
     stats.append(tile);
     values[field] = value;
     hints[field] = description;
@@ -252,6 +258,7 @@ export function mountTodayView(
     content.replaceChildren();
     stats.hidden = state.kind !== "ready";
     for (const value of Object.values(values)) value.textContent = "—";
+    values.queued.textContent = "排队中 —";
     values.spendingToday.setAttribute("title", "");
     if (state.kind === "loading") {
       status.textContent = "正在读取今天数据。";
@@ -269,6 +276,7 @@ export function mountTodayView(
     status.textContent = `${control.busy ? "正在刷新 · " : ""}数据时间：${snapshot.now}（${snapshot.timezone}）`;
     values.askTotal.textContent = String(snapshot.askTotal);
     values.running.textContent = String(snapshot.totals.running);
+    values.queued.textContent = `排队中 ${snapshot.totals.queued}`;
     values.doneToday.textContent = String(snapshot.totals.doneToday);
     const { rounds, cost, missingCost } = snapshot.spendingToday;
     const reported = rounds > 0 && missingCost < rounds;

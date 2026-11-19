@@ -282,6 +282,15 @@ test("spending is today's accounting, not historical totals or the visible run c
   assert.equal(snapshot.activeTruncated, false);
 });
 
+test("missing queued counts in old hub or IPC responses fail closed rather than becoming zero", () => {
+  const oldHub = hubState();
+  Reflect.deleteProperty(oldHub.totals, "queued");
+  assert.throws(() => projectDesktopTodaySnapshot(oldHub), /invalid-request/);
+  const oldSnapshot = projectDesktopTodaySnapshot(hubState());
+  Reflect.deleteProperty(oldSnapshot.totals, "queued");
+  assert.throws(() => parseDesktopTodayResponse(ready(oldSnapshot)), /invalid-request/);
+});
+
 test("active runs form a bounded sample, never full counts; terminal states never enter it", () => {
   const runs = [
     run(1, "queued"),
@@ -298,6 +307,7 @@ test("active runs form a bounded sample, never full counts; terminal states neve
   );
   assert.equal(snapshot.activeTruncated, true);
   assert.equal(snapshot.totals.running, 1);
+  assert.equal(snapshot.totals.queued, 2);
   assert.deepEqual(Object.keys(snapshot.activeRuns[0]), ["id", "rule", "agent", "state", "summary"]);
   assert.deepEqual(parseDesktopTodayResponse(ready(snapshot)).state, { kind: "ready", snapshot });
 });
