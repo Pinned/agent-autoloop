@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { readFileSync } from "node:fs";
 import { mountTodayView } from "../src/renderer/today-view.ts";
 
+// Prevent manual refresh controls or snapshot timestamps reappearing while automatic updates remain visible.
 // Prevent active rows opening run ids as task ids, swallowing controls/selections, or losing the return page.
 // Prevent original task requests being replaced by rule names or execution reports.
 // Prevent long cost values from wrapping, losing the full bill, or changing accounting data.
@@ -377,11 +378,11 @@ test("loading, errors, stopped service and worker-only mode are not empty succes
   }
 });
 
-test("refresh and global task navigation are actual callbacks, not fake per-card actions", () => {
+test("global task navigation remains an actual callback without manual refresh actions", () => {
   const f = fixture();
   const buttons = all(f.root).filter((node) => node.tagName === "button");
-  buttons.find((button) => button.textContent === "刷新")!.click();
-  assert.equal(f.refreshes(), 1);
+  assert.ok(!buttons.some((button) => /刷新/.test(button.textContent)));
+  assert.equal(f.refreshes(), 0);
   const taskButtons = buttons.filter((button) => button.textContent === "查看任务列表");
   assert.ok(taskButtons.length > 0);
   taskButtons[0].click();
@@ -391,16 +392,21 @@ test("refresh and global task navigation are actual callbacks, not fake per-card
   assert.ok(!all(legacy.root).some((node) => node.tagName === "button" && node.textContent === "查看任务列表"));
 });
 
-test("refresh-in-flight has explicit snapshot time and disables refresh without claiming live", () => {
+test("automatic snapshot updates omit refresh controls and time without leaving an empty status row", () => {
   const f = fixture();
-  f.control.busy = true;
+  for (const busy of [false, true]) {
+    f.control.busy = busy;
+    f.control.state = { kind: "ready", snapshot: snapshot({ totals: { running: 7, queued: 2, doneToday: 3 } }) };
+    update(f);
+    assert.doesNotMatch(visibleText(f.root), /刷新|数据时间|2026-01-02|Asia\/Shanghai/);
+    assert.ok(!all(f.root).some((node) => node.tagName === "button" && /刷新/.test(node.textContent)));
+    assert.equal(byId(f.root, "today-stat-running").textContent, "7");
+    assert.equal(all(f.root).find((node) => node.className === "today-status-row")!.hidden, true);
+  }
+  f.control.state = { kind: "unavailable", message: "服务未启动" };
   update(f);
-  assert.match(byId(f.root, "today-status").textContent, /正在刷新/);
-  assert.match(byId(f.root, "today-status").textContent, /2026-01-02/);
-  const button = all(f.root).find((node) => node.tagName === "button" && node.textContent === "刷新中…")!;
-  assert.equal(button.disabled, true);
-  button.click();
-  assert.equal(f.refreshes(), 0);
+  assert.equal(all(f.root).find((node) => node.className === "today-status-row")!.hidden, false);
+  assert.match(visibleText(f.root), /服务未启动/);
 });
 
 test("genuine ready empty data displays empty states and external text stays literal", () => {

@@ -95,13 +95,10 @@ export function mountTodayView(
   status.setAttribute("role", "status");
   status.setAttribute("aria-live", "polite");
   const actions = element("div", "", "today-actions");
-  const refresh = element("button", "刷新", "today-refresh");
-  refresh.type = "button";
-  refresh.addEventListener("click", () => control.refresh());
   const goWorkers = element("button", "前往执行机页");
   goWorkers.type = "button";
   goWorkers.addEventListener("click", openWorkers);
-  actions.append(refresh, goWorkers);
+  actions.append(goWorkers);
   statusRow.append(status, actions);
   const error = element("p", "", "today-error");
   error.setAttribute("role", "alert");
@@ -249,8 +246,7 @@ export function mountTodayView(
 
   function update() {
     const state = control.state;
-    refresh.disabled = control.busy;
-    refresh.textContent = control.busy ? "刷新中…" : "刷新";
+    statusRow.hidden = state.kind === "ready";
     goWorkers.hidden = state.kind !== "unavailable";
     error.hidden = !control.error;
     error.textContent = control.error;
@@ -273,7 +269,7 @@ export function mountTodayView(
       return;
     }
     const snapshot = state.snapshot;
-    status.textContent = `${control.busy ? "正在刷新 · " : ""}数据时间：${snapshot.now}（${snapshot.timezone}）`;
+    status.textContent = "";
     values.askTotal.textContent = String(snapshot.askTotal);
     values.running.textContent = String(snapshot.totals.running);
     values.queued.textContent = `排队中 ${snapshot.totals.queued}`;
