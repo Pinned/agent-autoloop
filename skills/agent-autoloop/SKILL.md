@@ -97,6 +97,10 @@ Claude 主任务要委托 Codex 操作网页时，从 `examples/recipes/browser-
 
 同一个飞书应用的卡片点击只能有一个监听，只在一台电脑上跑。
 
+联合回答使用既有 choice/text，不改事实接口：`agent-autoloop answer 56 2 --text "先在测试环境核实"`，也支持只选项或纯文字。Desktop 业务详情主操作与时间线选项只选中，输入「补充说明或其他要求」，再独立提交；空不许，客户端「其他想法」需字，不按实际选项文字猜必填。草稿按任务/卡片保留，结果不确定先显式重读核实，不盲目重交。
+
+飞书新交互约定是官方 2.0 form，action_value/form_value 是分别解析的 JSON 字符串，choice/text 连同 by/ref 一起转交 hub.answer；组件及回调示例见[协议](../../docs/protocol.md#通道把卡片送到你面前)。旧 `{card,choice}` 回调继续支持，旧消息不主动重发、不改既有回答，更新部署后新卡或正常更新才用新表单。本次新表单及旧回调兼容已通过假 CLI 验证，尚未真机验收；旧按钮的真机验收不算新表单验收。不要为此擅自升级重启、另开在线应用监听或发真实消息。
+
 **只会发文字的（钉钉、企微的群机器人，Slack、Discord 的 Webhook）**：用 `plugins/webhook/channel.ts`，`config.json` 的通道项写 `"use": "webhook"`、`"platform": "dingtalk"` 和 `"url": "已有的 Webhook 地址"`；平台也可选 `wecom`、`slack`、`discord`。`rules.json` 里写 `"links": true`，卡片链接本身就能回答；`config.json` 的 `hub.publicUrl` 要配成手机或电脑能打开的地址。
 
 **有按钮的新通道**：在 `~/.agent-autoloop/plugins/<名字>/channel.ts` 写一个，照 `plugins/feishu/channel.ts`：循环领卡片、发或改、报告；收到点击转给 `hub.answer`。协议在 `docs/protocol.md`，用别的语言写也行，只要会发 HTTP。

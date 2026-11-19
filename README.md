@@ -166,7 +166,9 @@ Electron 桌面版「指挥部」支持中台或纯执行机、关窗驻留和�
 | **通道**：去哪找你拍板        | [桌面通知](plugins/desktop/channel.ts)（默认开启）、[飞书](plugins/feishu/channel.ts)、[钉钉 / 企微 / Slack / Discord](plugins/webhook/templates.ts)                                               | [说明](skills/agent-autoloop/SKILL.md#接一个通道)     |
 | **交付**：把 CI/CD 也做成插件 | [`delivery`](plugins/delivery/delivery.ts)                                                                                                                                                         | [说明](skills/agent-autoloop/SKILL.md#交付流水线)     |
 
-**实测情况：** Claude Code、Codex 和 ACP（官方 Codex ACP 适配器）跑通了多轮问答和跨进程会话续接；飞书跑通了发送、按钮回调和卡片更新；四种 Webhook 模板只在本地模拟服务上验证过。这些文字通道靠回答链接拍板，要把 `hub.publicUrl` 配成手机或电脑能打开的地址。
+**实测情况：** Claude Code、Codex 和 ACP（官方 Codex ACP 适配器）跑通了多轮问答和跨进程会话续接；飞书旧按钮实现跑通了发送、按钮回调和卡片更新。本次 2.0 联合回答表单只通过假 CLI 验证，没有真机验收，详见[协议](docs/protocol.md#通道把卡片送到你面前)。四种 Webhook 模板只在本地模拟服务上验证过。这些文字通道靠回答链接拍板，要把 `hub.publicUrl` 配成手机或电脑能打开的地址。
+
+Desktop 业务详情的主操作和时间线开放问题采用同一回答交互：选择只选中，填写「补充说明或其他要求」后独立提交；允许选项加文字、只选项或纯文字，空不许，「其他想法」需字，不按选项标题猜必填。草稿按任务/卡片保存，结果不明须显式核实，不重复提交。CLI 同样可联合回答：`agent-autoloop answer 56 2 --text "先在测试环境核实"`（CLI 序号从 1 开始，接口 choice 从 0 开始）。HTTP/client/worker 沿既有字段保留 choice 与 text，不改事实接口或内核。
 
 **其他命令行 Agent 一行接入。** 设置 `use: "command"` 并传入命令数组，`{prompt}` 作为独立参数传递，不会被当成 shell 代码执行。下面的命令整理自各家官方文档，我们还没有逐个跑过：
 

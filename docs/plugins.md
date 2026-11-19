@@ -66,7 +66,7 @@ Claude 委托 Codex 的完整规则、Skill 和参数调用脚本见[浏览器�
 | `hub.nextCard(50)` | 长轮询领卡片，没卡片返回 `{ card: null }` |
 | `hub.delivered(id, version, ref)` | 报告送达，保存外部消息编号 |
 | `hub.failed(id, version, error)` | 报告发送失败 |
-| `hub.answer(id, { choice, by, ref })` | 转交回答；核对回答人和原消息 |
+| `hub.answer(id, { choice, text, by, ref })` | 转交联合、只选项或纯文字回答；核对回答人和原消息 |
 
 `ref` 为空就发新消息，有值就更新原消息；不能更新时只报告。没报告的卡片一分钟后重派。`signal` 中止时退出，函数异常退出后由外壳重启。
 
@@ -79,6 +79,14 @@ Claude 委托 Codex 的完整规则、Skill 和参数调用脚本见[浏览器�
 能收回调的通道要在规则里设置 `answerers`；只能发文字的通道设置 `links: true`，发送 `card.link`。拿到链接的人能回答这张卡片。
 
 通道和中台共用一个 Node 进程，外部调用应异步等待。内置飞书通道的用户查询、发送和更新均异步调用 CLI，发送期间中台仍能接收事件和心跳。
+
+### 联合回答与飞书表单
+
+choice 为从 0 开始的选项编号，text 为补充说明或纯文字回答，两者可同时提供；不要使用二选一校验或只转交一个字段。比如 `hub.answer(56, { choice: 1, text: "先在测试环境核实", by: "ou_xxx", ref: "om_xxx" })`。worker 将 Job.context.answers 的 choice/text 一起写入资料文件，不把回答文字拼入提示词。
+
+飞书新表单的组件、JSON 字符串回调映射与兼容边界以[协议](protocol.md#通道把卡片送到你面前)为准，官方依据是 [2.0 form 容器](https://open.feishu.cn/document/feishu-cards/card-json-v2-components/containers/form-container)。选中不提交，普通选项文字不决定必填；空回答拒绝，「其他想法」需字。解析 action_value/form_value 后，联合转交 choice/text/by/ref；旧 `{card,choice}` 继续处理。更新部署只让新卡或正常更新使用新表单，不主动重发旧消息，不覆盖原回答。
+
+飞书插件的联合回答与旧回调兼容使用假 CLI 验证；回答权限和幂等另由中台行为测试核实。旧按钮真机验收不证明新表单已真机可用。验证不对已在线应用另开监听、不发真消息。
 
 ## 事件插件
 
