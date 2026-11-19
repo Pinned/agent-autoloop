@@ -2658,6 +2658,8 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
 }
 .agent-history-timeline > li {
   --axis-x: 4.5px;
+  --dot-top: 23px;
+  --dot-size: 9px;
   position: relative;
   padding: 0 0 14px 24px;
   list-style: none;
@@ -2668,9 +2670,11 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
   left: var(--axis-x);
   transform: translateX(-50%);
 }
-.session-record::before { top: 27px; bottom: -7px; width: 1px; background: var(--border); }
-.session-record::after { top: 23px; width: 9px; height: 9px; border: 2px solid var(--muted); border-radius: 50%; background: var(--bg); }
-.session-record:last-child::before { display: none; }
+.session-record::before { top: 0; bottom: 0; width: 1px; background: linear-gradient(to bottom, #e6eaf0 0 var(--dot-top), transparent var(--dot-top) calc(var(--dot-top) + var(--dot-size)), #e6eaf0 calc(var(--dot-top) + var(--dot-size)) 100%); }
+.session-record::after { top: var(--dot-top); width: var(--dot-size); height: var(--dot-size); border: 2px solid var(--muted); border-radius: 50%; background: var(--bg); }
+.session-record:not([hidden]):not(.session-record:not([hidden]) ~ .session-record)::before { top: calc(var(--dot-top) + var(--dot-size)); background: #e6eaf0; }
+.session-record:not([hidden]):not(:has(~ .session-record:not([hidden])))::before { bottom: calc(100% - var(--dot-top)); background: #e6eaf0; }
+.session-record:not([hidden]):not(.session-record:not([hidden]) ~ .session-record):not(:has(~ .session-record:not([hidden])))::before { display: none; }
 .session-card { border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; margin-bottom: 8px; }
 .session-tool-card { background: var(--soft); padding: 14px 16px; font-size: 12px; }
 .session-card-head { display: flex; align-items: center; gap: 12px; }
@@ -2689,7 +2693,7 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
 .agent-execution-history .session-identity { margin: 9px 0 0; color: #4b586a; font-size: 13px; }
 .agent-execution-history .session-meta { display: flex; flex-wrap: wrap; gap: 8px 12px; font-size: 12px; color: #657183; margin-top: 10px; }
 .agent-execution-history .session-meta span + span { border-left: 1px solid #e5eaf1; padding-left: 12px; }
-.agent-execution-history .session-body { padding: 0; border: 0; background: transparent; }
+.agent-execution-history .session-body { padding: 0 40px 0 0; border: 0; background: transparent; min-width: 0; }
 .agent-execution-history .session-body > section { margin: 0; padding: 0; border: 0; background: transparent; }
 .agent-execution-history .session-toolbar { display: flex; align-items: center; gap: 16px; margin: 24px 0 10px; }
 .agent-execution-history .session-filters { display: flex; gap: 4px; margin: 0; padding: 3px; background: #f4f6f9; border: 1px solid #e9edf3; border-radius: 9px; }
@@ -2710,11 +2714,15 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
 .agent-execution-history .session-payload-expand { min-height: 36px; padding: 7px 14px; font-size: 12px; color: #5470a1; border-color: #e0e5ed; }
 .agent-execution-history .session-card-head { gap: 9px; font-size: 13px; color: #39475a; }
 .agent-execution-history .session-card-head time { font-weight: 400; color: #657183; font-variant-numeric: tabular-nums; }
-.agent-execution-history .session-record::before { background: #e6eaf0; }
 .agent-execution-history .session-record::after { border-color: #aeb8c8; background: #fff; }
-.agent-execution-history .session-activity::after { width: 5px; height: 5px; top: 25px; border: 0; background: #b8c0cc; }
+.agent-execution-history .session-activity { --dot-top: 25px; --dot-size: 5px; }
+.agent-execution-history .session-activity::after { border: 0; background: #b8c0cc; }
 .agent-execution-history .session-card:not(.session-tool-card) pre { font-size: 14px; color: #4b586a; }
+@media (max-width: 900px) {
+  .agent-execution-history .session-body { padding-right: 24px; }
+}
 @media (max-width: 650px) {
+  .agent-execution-history .session-body { padding-right: 16px; }
   .agent-execution-history .session-aligned { margin-left: 56px; }
   .agent-execution-history .session-card { padding: 14px; }
 }
