@@ -1267,6 +1267,15 @@ test("both live entrances select without sending and submit choice with suppleme
           (node) => node.className === (timelineEntry ? "business-timeline" : "business-decisions"),
         )!;
         const radio = all(area).find((node) => node.tag === "input" && node.value === "0")!;
+        const oppositeArea = all(root).find(
+          (node) => node.className === (timelineEntry ? "business-decisions" : "business-timeline"),
+        )!;
+        const peerRadio = all(oppositeArea).find((node) => node.tag === "input" && node.value === "0")!;
+        assert.notEqual(
+          (radio as unknown as HTMLInputElement).name,
+          (peerRadio as unknown as HTMLInputElement).name,
+          "native radio groups must not uncheck the other entrance",
+        );
         radio.listeners.get("change")?.();
         assert.equal(writes.length, 0);
         const text = all(area).find((node) => node.tag === "textarea")!;

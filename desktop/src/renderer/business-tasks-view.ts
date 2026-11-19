@@ -496,6 +496,7 @@ export function mountBusinessTasksView(
   const decisionMore = el("p", "还有未展示的开放提问，请在执行诊断或原通道查看；不能把这一页当作全部。", "muted");
   const decisionForms = new Map<string, HTMLElement>();
   let decisionTask = "";
+  let answerFormId = 0;
   function answerForm(
     taskKey: string,
     card: Pick<NonNullable<typeof controller.detail>["task"]["decisions"]["items"][number], "id" | "title" | "options">,
@@ -506,10 +507,11 @@ export function mountBusinessTasksView(
     const choices = el("fieldset", "", "business-answer-options");
     choices.append(el("legend", "选择选项，或直接填写文字回答"));
     const choiceKey = `${taskKey}/choice/${card.id}`;
+    // Native radio grouping is per entrance; shared draft identity synchronizes the same card.
+    const groupName = `answer-${++answerFormId}`;
     const syncChoice = () => {
       for (const entry of root.querySelectorAll<HTMLInputElement>("input"))
-        if (entry.name === `answer-${taskKey}-${card.id}`)
-          entry.checked = entry.value === controller.drafts.get(choiceKey);
+        if (entry.dataset.choiceKey === choiceKey) entry.checked = entry.value === controller.drafts.get(choiceKey);
     };
     for (const [value, option] of [
       ...card.options.map((option, index) => [String(index), option]),
@@ -519,7 +521,8 @@ export function mountBusinessTasksView(
       const label = el("label", "", "business-answer-option");
       const entry = el("input");
       entry.type = "radio";
-      entry.name = `answer-${taskKey}-${card.id}`;
+      entry.name = groupName;
+      entry.dataset.choiceKey = choiceKey;
       entry.value = value;
       entry.checked = controller.drafts.get(choiceKey) === value;
       entry.addEventListener("change", () => {
