@@ -88,6 +88,7 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void,
   let actionBusy = false,
     mustReread = false,
     actionMessage = "",
+    correctionReceipt = 0,
     detailFresh = false,
     runReady = false;
   let actionToken: object | null = null;
@@ -384,6 +385,7 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void,
         )
           throw new Error("mismatched-receipt");
         confirmed = response.ok;
+        if (confirmed && request.action === "memo") correctionReceipt++;
         actionMessage = response.ok
           ? "已提交，正在核对任务的最新状态。"
           : DESKTOP_TASK_ACTION_MESSAGES[response.error.code];
@@ -486,6 +488,9 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void,
     },
     get mustReread() {
       return mustReread;
+    },
+    get correctionReceipt() {
+      return correctionReceipt;
     },
     get actionMessage() {
       return actionMessage;

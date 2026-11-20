@@ -22,6 +22,7 @@ test("operation area keeps progress and live answers above records without manua
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
+import { desktopTaskActionFailure } from "../../host/desktop-task-action-contract.ts";
 import { createRendererBusinessTasks } from "../src/renderer/business-tasks-controller.ts";
 import { mountBusinessTasksView } from "../src/renderer/business-tasks-view.ts";
 // Keep the detail card palette without replacing the shared workspace navigation.
@@ -1405,6 +1406,85 @@ test("paused task correction remains writable after a stopped historical round",
     { run, association: { kind: "unavailable" }, events: page, cards: page, relatedRuns: page },
   );
 });
+
+// Prevent a confirmed correction from leaving an empty modal or hiding the receipt.
+for (const outcome of ["confirmed", "failed", "unknown"] as const)
+  test(`correction dialog and feedback follow the ${outcome} receipt`, async () => {
+    const page = { items: [], hasMore: false, nextCursor: null };
+    const run = {
+      id: 2,
+      rule: "r",
+      agent: "a",
+      state: "cancelled",
+      attempts: 1,
+      createdAt: null,
+      claimedAt: null,
+      finishedAt: null,
+      notBefore: null,
+      summary: "已停止",
+      error: "",
+      stopping: true,
+      usage: null,
+      truncated: false,
+    };
+    let submitted = false;
+    await withView(
+      async (controller, root) => {
+        controller.open("task:1");
+        for (let i = 0; i < 4; i++) await flush();
+        all(root)
+          .find((node) => node.className === "business-correct-toggle")!
+          .fire();
+        const dialog = all(root).find((node) => node.tag === "dialog")!;
+        const draft = all(dialog).find((node) => node.tag === "textarea")!;
+        draft.value = "暂停后更正";
+        draft.listeners.get("input")?.();
+        all(dialog)
+          .find((node) => node.className === "setup-primary")!
+          .fire();
+        assert.equal(controller.actionBusy, true);
+        assert.equal(dialog.open, true);
+        for (let i = 0; i < 8; i++) await flush();
+        if (outcome !== "confirmed") {
+          assert.equal(dialog.open, true);
+          assert.equal(draft.value, "暂停后更正");
+          assert.ok(all(dialog).includes(draft));
+          assert.ok(all(dialog).some((node) => node.textContent === controller.actionMessage && !node.hidden));
+          assert.ok(all(dialog).some((node) => node.textContent === "重新读取此任务" && !node.hidden));
+          assert.equal(all(dialog).find((node) => node.className === "setup-primary")!.disabled, true);
+          assert.equal(controller.mustReread, true);
+          return;
+        }
+        assert.equal(controller.detail?.task.latestRunId, 3, controller.actionMessage);
+        assert.equal(dialog.open, false);
+        const status = all(root).find((node) => node.textContent === "已核对最新任务状态。")!;
+        assert.ok(status && !status.hidden && !all(dialog).includes(status));
+      },
+      item,
+      { run, association: { kind: "unavailable" }, events: page, cards: page, relatedRuns: page },
+      {
+        detailRead: async () => ({
+          ok: true,
+          data: {
+            task: {
+              ...item,
+              state: "paused",
+              decisions: { items: [], hasMore: false },
+              latestRunId: submitted ? 3 : 2,
+            },
+            timeline: { items: [], hasMore: false, nextBefore: null },
+            actions: { cancelTask: true, completeTask: true, completionBlocker: null, correctTask: !submitted },
+          },
+        }),
+        taskAction: async () => {
+          if (outcome === "failed") return desktopTaskActionFailure("invalid");
+          if (outcome === "unknown") throw new Error("connection lost");
+          submitted = true;
+          return { version: 1, ok: true, action: "memo", runId: 2, result: { stopped: false } };
+        },
+      },
+    );
+  });
 
 // The process must reach the first screen before any correction or feedback editor.
 test("unified DOM retains protected current actions and correction drafts", async () => {

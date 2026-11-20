@@ -554,11 +554,24 @@ export function mountBusinessTasksView(
     if (controller.actionBusy || controller.mustReread) return;
     operationDialog.close();
   }
+  function restoreCorrectionFeedback() {
+    if (operationDialog.children[0] === memoControls) {
+      correctionOpen = false;
+      correctionToggle.setAttribute("aria-expanded", "false");
+      current.append(actionStatus, readDetail);
+    }
+  }
+  function dismissDialog() {
+    restoreCorrectionFeedback();
+    operationDialog.close();
+  }
   operationDialog.addEventListener("cancel", (event) => {
     event.preventDefault();
     closeDialog();
   });
   operationDialog.addEventListener("close", () => {
+    if (operationDialog.open) return;
+    restoreCorrectionFeedback();
     correctionOpen = false;
     dialogTrigger?.focus();
   });
@@ -624,8 +637,10 @@ export function mountBusinessTasksView(
   adjustments.append(runActions, roundOperations);
   detailPage.append(detailHead, current, processContent);
   let correctionOpen = false;
+  let correctionReceiptAtOpen = 0;
   const correctionToggle = button("提交更正", () => {
     correctionOpen = true;
+    correctionReceiptAtOpen = controller.correctionReceipt;
     update();
     openDialog(memoControls, correctionToggle);
   });
@@ -1110,7 +1125,11 @@ export function mountBusinessTasksView(
     const run = controller.run?.run;
     runActions.hidden = !run;
     const nextRunKey = `${task.key}/${run?.id}`;
-    if (nextRunKey !== runFormsKey) {
+    const memoDialogOpen = operationDialog.open && operationDialog.children[0] === memoControls;
+    const correctionConfirmed = controller.correctionReceipt !== correctionReceiptAtOpen;
+    const keepCorrection = memoDialogOpen && !correctionConfirmed && (controller.actionBusy || controller.mustReread);
+    if (memoDialogOpen && (correctionConfirmed || (!keepCorrection && nextRunKey !== runFormsKey))) dismissDialog();
+    if (nextRunKey !== runFormsKey && !keepCorrection) {
       runFormsKey = nextRunKey;
       correctionOpen = false;
       runActions.replaceChildren();
@@ -1228,9 +1247,11 @@ export function mountBusinessTasksView(
       !run ||
       run.state === "queued" ||
       (run.stopping && ["claimed", "unknown"].includes(run.state));
+    if (operationDialog.open && correctionOpen && correctionToggle.hidden && !keepCorrection && !controller.detailBusy)
+      dismissDialog();
     correctionToggle.textContent = "更正任务";
     correctionToggle.setAttribute("aria-expanded", String(correctionOpen));
-    memoControls.hidden = correctionToggle.hidden || !correctionOpen;
+    memoControls.hidden = !correctionOpen;
     decisions.hidden = !task.decisions.items.length && !task.decisions.hasMore;
     progress.hidden ||= waitingForAnswer;
     operationTitle.textContent = openQuestions.length ? "待你回答" : "任务操作";
