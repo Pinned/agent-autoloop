@@ -136,6 +136,34 @@ test("retry carries only its own explicitly associated events", () => {
   }
 });
 
+test("an active task without a next step is not silently accepted", () => {
+  const f = fixture();
+  try {
+    f.act("ingest", "app", event("a"));
+    const a = f.act("claimNext", "w1", "a");
+    const result = f.act("finish", a.run, a.token, { outcome: "done", taskStatus: "active" });
+    assert.ok(result.rejected.some((r: any) => r.what === "nextStep"));
+    assert.equal(f.view.get("tasks", a.task.id)?.status, "active");
+  } finally {
+    f.view.close();
+  }
+});
+
+test("unfinished receipts cannot omit their next step by omitting taskStatus or reporting nothing", () => {
+  for (const outcome of ["done", "nothing"]) {
+    const f = fixture();
+    try {
+      f.act("ingest", "app", event("a"));
+      const a = f.act("claimNext", "w1", "a");
+      const result = f.act("finish", a.run, a.token, { outcome });
+      assert.ok(result.rejected.some((r: any) => r.what === "nextStep"));
+      assert.equal(f.view.get("tasks", a.task.id)?.status, "active");
+    } finally {
+      f.view.close();
+    }
+  }
+});
+
 test("task completion is explicit and refused while questions or timers remain", () => {
   const f = fixture();
   try {
@@ -151,6 +179,13 @@ test("task completion is explicit and refused while questions or timers remain",
   } finally {
     f.view.close();
   }
+});
+
+test("next step requires a concrete action and a supported trigger", () => {
+  const nextStep = { action: "核实发布", trigger: "review" };
+  assert.deepEqual(parseResult({ outcome: "done", nextStep }).nextStep, nextStep);
+  assert.throws(() => parseResult({ outcome: "done", nextStep: { ...nextStep, trigger: "whenever" } }));
+  assert.throws(() => parseResult({ outcome: "done", nextStep: { ...nextStep, action: " " } }));
 });
 
 test("identity protocol rejects invalid keys and status", () => {

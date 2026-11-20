@@ -18,6 +18,7 @@ export function addUsage(total: Usage | undefined, more: Usage | undefined): Usa
 }
 export type Result = {
   outcome: "done" | "nothing" | "failed" | "cancelled";
+  nextStep?: { action: string; trigger: "question" | "review" | "execution" };
   taskStatus?: "active" | "completed";
   summary?: string;
   error?: string;
@@ -157,6 +158,7 @@ export function parseResult(input: unknown): Result {
     !only(result, [
       "outcome",
       "taskStatus",
+      "nextStep",
       "summary",
       "error",
       "session",
@@ -175,6 +177,18 @@ export function parseResult(input: unknown): Result {
   }
   if (result.taskStatus !== undefined && !["active", "completed"].includes(result.taskStatus as string))
     throw new InputError("taskStatus 只能是 active 或 completed");
+  const step = result.nextStep as Item | undefined;
+  if (
+    step !== undefined &&
+    (!step ||
+      typeof step !== "object" ||
+      Array.isArray(step) ||
+      !only(step, ["action", "trigger"]) ||
+      !text(step.action, 1000) ||
+      !(step.action as string).trim() ||
+      !["question", "review", "execution"].includes(step.trigger as string))
+  )
+    throw new InputError("nextStep 要写下一步行动和触发方式");
   if (!optional(result.summary, 500) || !optional(result.error, 500) || !optional(result.session, 500)) {
     throw new InputError("summary、error、session 最多 500 字");
   }

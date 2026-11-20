@@ -775,16 +775,27 @@ function finish(draft: Draft, id: number, token: string, given: unknown) {
     });
   } else rejected = applyReceipt(draft, run, result);
   if (run.task_id != null) {
-    const pending =
-      rows(draft.view, "cards", { task_id: run.task_id, kind: "ask", state: ["open", "decided"] }).length ||
-      rows(draft.view, "timers", { task_id: run.task_id, event_id: null }).length ||
-      rows(draft.view, "runs", { task_id: run.task_id, state: ["queued", "claimed", "unknown"] }).length;
+    const questions = rows(draft.view, "cards", { task_id: run.task_id, kind: "ask", state: ["open", "decided"] });
+    const reviews = rows(draft.view, "timers", { task_id: run.task_id, event_id: null });
+    const executions = rows(draft.view, "runs", { task_id: run.task_id, state: ["queued", "claimed", "unknown"] });
+    const pending = questions.length || reviews.length || executions.length;
     const completed =
       result.taskStatus === "completed" &&
       result.outcome === "done" &&
       !pending &&
       !paused(draft, run.task_id) &&
       rows(draft.view, "holds", { task_id: run.task_id }).every((hold) => verifiedHold(draft, hold));
+    const trigger = result.nextStep?.trigger;
+    const supported =
+      trigger === "question"
+        ? questions.some((card) => card.state === "open")
+        : trigger === "review"
+          ? reviews.length
+          : trigger === "execution"
+            ? executions.some((run) => run.state !== "unknown")
+            : questions.some((card) => card.state === "open") ||
+              reviews.length ||
+              executions.some((run) => run.state !== "unknown");
     if (completed)
       for (const hold of rows(draft.view, "holds", { task_id: run.task_id }))
         if (hold.reserved) set(draft, "holds", holdKey(hold), null);
@@ -798,6 +809,14 @@ function finish(draft: Draft, id: number, token: string, given: unknown) {
               ? "本轮没有正常办完，不能标为完成"
               : "任务还有未收尾的提问、复查或执行轮次，不能标为完成",
       });
+    if (
+      (result.outcome === "done" || result.outcome === "nothing") &&
+      rejected.length === 0 &&
+      !completed &&
+      !supported &&
+      !paused(draft, run.task_id)
+    )
+      rejected.push({ what: "nextStep", reason: "未完成·缺少下一步" });
     put(draft, "tasks", run.task_id, {
       status: paused(draft, run.task_id)
         ? rows(draft.view, "runs", { task_id: run.task_id, state: ["claimed", "unknown"] }).length

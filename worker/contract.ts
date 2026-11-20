@@ -8,7 +8,7 @@ import { parseResult, type Result } from "../protocol/validate.ts";
 
 const FAILED = ["没跑成", "FAILED"];
 const NOTHING = ["没事可做", "NOTHING"];
-const RECEIPT_FIELDS = ["ask", "notice", "resolve", "later", "events", "taskStatus"];
+const RECEIPT_FIELDS = ["ask", "notice", "resolve", "later", "events", "taskStatus", "nextStep"];
 
 /** Original requirements remain data even when the current turn only consumes an answer. */
 export function contextFor(job: Job) {
