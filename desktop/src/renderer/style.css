@@ -1499,6 +1499,17 @@ main:has(#task-subpage:not([hidden])) {
   line-height: 1.85;
 }
 .business-record-explanation { margin-top: 16px; }
+.business-reviews { border-top: 1px solid var(--soft); padding-top: 12px; }
+.business-review-item { min-width: 0; }
+.business-review-item + .business-review-item { margin-top: 12px; border-top: 1px solid var(--soft); padding-top: 12px; }
+.business-review-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; }
+.business-review-heading strong { font-weight: 500; }
+.business-review-state { padding: 2px 6px; border-radius: 4px; background: var(--panel2); color: var(--muted); font-size: 11px; }
+.business-tasks-panel .business-record-card .business-review-key { font-size: 11px; overflow-wrap: anywhere; }
+.business-review-details { margin-top: 6px; min-width: 0; }
+.business-review-details summary { cursor: pointer; width: fit-content; }
+.business-review-details summary:focus-visible { outline: 2px solid var(--muted); outline-offset: 2px; }
+.business-review-details pre { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.85; }
 .business-card-label {
   display: block;
   font-size: 11px;

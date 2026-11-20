@@ -1270,6 +1270,11 @@ export function mountBusinessTasksView(
     const rebuildTimeline = timelineSignature !== nextTimelineSignature;
     if (rebuildTimeline) {
       timelineSignature = nextTimelineSignature;
+      const openReviews = new Set(
+        [...timeline.querySelectorAll<HTMLDetailsElement>(".business-review-details[open]")].map(
+          (details) => details.dataset.reviewIdentity,
+        ),
+      );
       timeline.replaceChildren();
       for (const event of data.timeline.items) {
         const row = el("li");
@@ -1369,34 +1374,47 @@ export function mountBusinessTasksView(
               if (result.error) record.append(el("p", result.error, "business-record-error"));
               if (result.truncated) record.append(el("p", "此结果仅显示部分。", "muted"));
             }
-          else if (event.text && !display?.cards.length) record.append(el("p", event.text));
+          else if (event.text && !display?.cards.length && !display?.reviews?.items.length)
+            record.append(el("p", event.text));
         }
         if (display?.reviews?.items.length) {
-          const section = el("section", "", "business-record-explanation");
-          section.append(el("span", "复查安排", "business-card-label"));
+          const section = el("section", "", "business-record-explanation business-reviews");
           for (const review of display.reviews.items) {
+            const item = el("section", "", "business-review-item");
+            const title = el("div", "", "business-review-heading");
             const label =
-              review.action === "cancelled" ? "当时取消" : review.action === "triggered" ? "当时触发" : "当时安排";
+              review.action === "cancelled"
+                ? "已取消复查"
+                : review.action === "triggered"
+                  ? "本次复查已触发"
+                  : "已安排复查";
+            const due = review.state === "pending" && !!review.at && Date.parse(review.at) <= Date.now();
             const state =
               review.state === "pending"
-                ? review.at && Date.parse(review.at) <= Date.now()
-                  ? "到点待执行（按本机时间，尚未记录触发）"
-                  : "待复查"
+                ? "待复查"
                 : review.state === "triggered"
-                  ? "已触发，核实结果见后续真实记录"
+                  ? "已触发"
                   : review.state === "cancelled"
                     ? "已取消"
-                    : "当前状态未记录";
-            section.append(el("p", `${label}：${historyTime(review.at)} · ${state}`));
-            if ([...review.about].length > 160) {
-              const long = el("details");
-              long.append(
-                el("summary", [...review.about].slice(0, 160).join("") + "…（展开）"),
-                el("pre", review.about),
-              );
-              section.append(long);
-            } else section.append(el("p", review.about || "复查内容未记录"));
-            if (review.truncated) section.append(el("p", "此复查内容仅显示部分。", "muted"));
+                    : "状态未记录";
+            title.append(el("strong", label), el("span", state, "business-review-state"));
+            item.append(title, el("p", review.key || "复查标识未记录", "business-review-key"));
+            item.append(el("p", `复查时间：${historyTime(review.at)}`));
+            if (due) item.append(el("p", "按本机时间已到点，尚未记录触发。", "muted"));
+            if (review.state === "unknown") item.append(el("p", "缺少可核对的复查历史。", "muted"));
+            const details = el("details", "", "business-review-details");
+            details.dataset.reviewId = String(review.id);
+            // Keep each historical fact independent, including reschedules of the same timer.
+            details.dataset.reviewIdentity = `${task.key}/${event.seq}/${review.id}`;
+            details.open = openReviews.has(details.dataset.reviewIdentity);
+            const summary = el("summary", details.open ? "收起交接详情" : "查看交接详情");
+            details.append(summary, el("pre", review.about || "交接资料未记录"));
+            details.addEventListener("toggle", () => {
+              summary.textContent = details.open ? "收起交接详情" : "查看交接详情";
+            });
+            item.append(details);
+            if (review.truncated) item.append(el("p", "此复查内容仅显示部分。", "muted"));
+            section.append(item);
           }
           if (display.reviews.truncated) section.append(el("p", "复查数量超限，仅显示前20项。", "muted"));
           record.append(section);

@@ -109,6 +109,8 @@ DESKTOP_HOME="$(mktemp -d)" npm --prefix desktop start
 
 时间线可选 `display.reviews: { items, truncated }` 按同任务的 timer 事实展示当时安排、触发或取消，finish 内在同一记录增加独立复查区，不拆假节点；取消从该 timer 的索引历史读取原安排，当前状态仅核验同 taskId 的投影或明确删除事实，缺历史为 unknown。items 最多20项，每项 `{id,key,at,about,action,state,truncated}`，key/about 最多200/1000码点；action 为 scheduled/triggered/cancelled，state 为 pending/triggered/cancelled/unknown。到点待执行仅是本机时间对 pending 的显示提示，不证明触发；已触发不证明业务核实完成，结果仍看后续事实。历史改期保留当时时间和内容，当前状态单独显示；纯文字、长文展开、数量及文字截断明确。空数组表示本事实未记录复查，旧响应缺字段明确未提供能力，不造数据。SQL 字段及数量有界，单项资料预算最多1200码点，每节点最多24000码点；沿用单节点和详情128 KiB预算的截断/省略与游标推进规则。严格拒绝额外字段的旧客户端需与中台同步升级，新客户端接受缺字段旧响应；不改变调度、日志、写接口，不迁移历史。
 
+复查区使用原事实卡内的轻量分隔线，不再嵌套重型卡片。历史动作标题（已安排复查／本次复查已触发／已取消复查）、当前状态标签与复查时间分开，复查标识如实展示以区分多项；触发事实不重复兼容诊断长文，不把触发称为验收。交接资料无论长短统一默认收起，入口为「查看交接详情」，展开后为「收起交接详情」，原位完整纯文字保留换行并让长路径断行，不用原文片段充当入口标题。普通刷新及时间线增量更新保留同任务、同事实、同复查的展开状态，不串到另一事实或任务。没有可靠执行关联时不造跳转或执行状态，旧响应及截断提示沿用原约定。
+
 领取卡仅在 claim/claimNext 使用可选 `display.trigger`，按事实 runId 复用今天页 request/triggers 的真实关联与摘要规则；显示「本轮触发资料」次级纯文字区，超过 160 码点折叠并可展开。历史回答没有提交控件，started 不显示此区，旧中台缺字段保留原卡。中台与桌面需同步更新以获得新资料字段，固定原始需求及既有预算不变。
 
 `desktop:agent-history:read` 只接受 runId 与可选 attempt、launch、opaque cursor。主进程先通过既有本人查询验证执行存在，沿用发送者核验与可撤销租约；读取 App 自己管理的本机运行目录，或经过安全 CLI 配置检查与本人鉴权的挂接本机目录；远端 worker 不支持。挂接逐次核对固定 loopback 端口、CLI 配置的本机 worker URL 与凭据，沿用祖先目录及配置文件的有界 no-follow 检查；Claude 默认根目录来自系统账号 home，renderer 不能提供目录。读取前后重新核对目录与连接指纹。runs.attempts 是失败重试次数：非 queued 执行的编号为 attempts + 1，queued 只可读取已经失败的 attempts 次执行，不猜旧关联。连接指纹绑定固定 URL、worker 凭据与本机 hub.db 的文件身份，换中台文件不能复用旧关联；仅留在主进程/本机元数据，不交给页面。worker 在新启动时保存 `worker/history/<run>-<attempt>.json`，仅含执行关联、Agent、工作目录和启动会话；该目录不在交给 Agent 的资料目录内，也不随 entry 删除或运行目录的 14 天清理一起删除，不复制 JSONL。旧启动缺关联时不可读，不扫描用户所有会话来猜关联。
