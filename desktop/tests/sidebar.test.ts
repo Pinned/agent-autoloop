@@ -1,6 +1,7 @@
 // Prevent broken sidebar shortcuts, lost subpage parent highlighting, invalid keyboard arrow focus,
 // missing status dot tones, or unsafe collapsed-state persistence across roles and shell modes.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   SIDEBAR_COLLAPSED_KEY,
@@ -155,4 +156,53 @@ test("collapsed sidebar preference persists safely and fails closed on corrupt o
       true,
     ),
   );
+});
+
+test("sidebar markup puts primary dispatch action above navigation, includes collapse toggle and status dot", () => {
+  const html = readFileSync(new URL("../src/renderer/index.html", import.meta.url), "utf8");
+  assert.match(html, /id="sidebar"[^>]*data-sidebar="expanded"/);
+  assert.match(html, /id="sidebar-toggle"[^>]*aria-expanded="true"/);
+  assert.match(html, /class="sidebar-status-dot"/);
+  assert.match(html, /id="runtime-status-text"/);
+  // Primary task creation belongs above the main navigation list, not buried below settings.
+  assert.ok(
+    html.indexOf('id="new-task"') < html.indexOf('id="navigation"'),
+    "dispatch CTA should appear above main navigation",
+  );
+  // Footer status is unified inside the clickable #view-connection status card.
+  const connIndex = html.indexOf('id="view-connection"');
+  const statusIndex = html.indexOf('id="runtime-status"');
+  assert.ok(connIndex !== -1 && statusIndex > connIndex, "runtime status should live inside the status card button");
+});
+
+test("app wires sidebar parent highlight, re-click return-to-root, collapse persistence and shortcuts", () => {
+  const app = readFileSync(new URL("../src/renderer/app.ts", import.meta.url), "utf8");
+  assert.match(app, /resolveNavActivePage\(active\)/);
+  assert.match(app, /resolveNavArrowIndex\(/);
+  assert.match(app, /resolveSidebarShortcut\(/);
+  assert.match(app, /loadSidebarCollapsed\(/);
+  assert.match(app, /saveSidebarCollapsed\(/);
+  assert.match(app, /runtimeStatusTone\(/);
+  // Re-clicking active items returns safely from detail/subpages without bypassing save/write barriers.
+  assert.match(app, /tasksPage\.returnToList\(\)/);
+  assert.match(app, /settingsPage\?\.closeSubpage\(\)/);
+  assert.match(app, /if \(id === "automation" && currentPage === "automation-entry"\)/);
+  // Status updates write to the dedicated text span so the live status dot is never wiped.
+  assert.match(app, /#runtime-status-text/);
+});
+
+test("sidebar styles distinguish hover from active, support collapsed rail and honor forced-colors and reduced-motion", () => {
+  const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
+  assert.match(css, /\.sidebar\[data-sidebar="collapsed"\]/);
+  assert.match(css, /\.sidebar nav button\.active::before/);
+  assert.match(css, /\.sidebar-nav-divider/);
+  assert.match(css, /\.sidebar-status-card/);
+  assert.match(css, /prefers-reduced-motion:\s*reduce/);
+  assert.doesNotMatch(css, /rgba\(/);
+  const forcedColorsBlocks = [...css.matchAll(/@media\s*\(forced-colors:\s*active\)\s*\{([\s\S]*?)\n\}/g)]
+    .map((m) => m[1])
+    .join("\n");
+  assert.match(forcedColorsBlocks, /\.sidebar nav button\.active/);
+  assert.match(forcedColorsBlocks, /\.sidebar-status-card\.active/);
+  assert.match(forcedColorsBlocks, /\.sidebar-status-dot/);
 });

@@ -145,6 +145,7 @@ export function mountSettingsView(
   root: HTMLElement;
   init(): void;
   update(): void;
+  closeSubpage(): boolean;
   dispose(): void;
 } {
   let tab: Tab = "agents";
@@ -474,7 +475,9 @@ export function mountSettingsView(
     };
     entry.addEventListener("input", emit);
     entry.addEventListener("keydown", (event) => {
-      const key = (event as KeyboardEvent).key;
+      const keyboard = event as KeyboardEvent;
+      if (keyboard.metaKey || keyboard.ctrlKey || keyboard.altKey) return;
+      const key = keyboard.key;
       if (key === "Enter" || key === "," || key === "，") {
         event.preventDefault();
         commitInput();
@@ -1120,6 +1123,12 @@ export function mountSettingsView(
       update();
     },
     update,
+    closeSubpage(): boolean {
+      const state = controller.getState();
+      if (!editing || editing.section === "settings" || state.saving || state.needsReview) return false;
+      stopEdit();
+      return true;
+    },
     dispose() {
       editing = null;
     },

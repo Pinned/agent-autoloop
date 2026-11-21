@@ -1849,6 +1849,17 @@ export function mountBusinessTasksView(
       }
       update();
     },
+    returnToList(): boolean {
+      if (controller.selectedKey === null) return false;
+      if (controller.actionBusy || controller.mustReread) return false;
+      if (sessionRun !== null) {
+        sessionRun = null;
+        clearHistoryPoll();
+        history.select(null);
+      }
+      controller.back();
+      return controller.selectedKey === null;
+    },
     update,
     dispose() {
       resize?.disconnect();

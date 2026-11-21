@@ -200,25 +200,43 @@ h2 {
   }
 }
 .sidebar {
-  width: 184px;
+  width: 204px;
   flex-shrink: 0;
-  padding: 22px 12px 14px;
+  padding: 16px 10px 12px;
   background: var(--sidebar);
   border-right: 1px solid var(--soft);
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  transition: width 0.16s ease, padding 0.16s ease;
+}
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px 14px;
 }
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 8px 22px;
-  font-size: 15px;
-  font-weight: 600;
+  gap: 10px;
+  min-width: 0;
+  padding: 0 4px;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0.2px;
+  color: var(--text);
+}
+.brand-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .logo {
-  height: 25px;
-  width: 25px;
+  height: 24px;
+  width: 24px;
   border: 2px solid var(--muted);
   border-radius: 7px;
   position: relative;
@@ -227,13 +245,35 @@ h2 {
 .logo::after {
   content: "";
   position: absolute;
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   background: var(--accent);
   border: 2px solid var(--sidebar);
   border-radius: 3px;
   right: -5px;
   bottom: -4px;
+}
+.sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.sidebar-toggle:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text);
+}
+.sidebar-toggle svg {
+  width: 16px;
+  height: 16px;
 }
 /* The sidebar's own menu. Scoped to the sidebar so a page nav (the settings groups, any future
    one) cannot inherit the column layout meant for the menu — an unscoped `nav` rule once
@@ -241,22 +281,81 @@ h2 {
 .sidebar nav {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+}
+.sidebar-nav-divider {
+  display: block;
+  height: 1px;
+  margin: 8px 8px;
+  background: var(--soft);
 }
 .sidebar nav button {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 10px;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
   background: transparent;
   color: var(--muted);
   border: 0;
+  border-radius: 7px;
+  font-weight: 500;
   text-align: left;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.sidebar nav button:hover:not(:disabled):not(.active) {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  color: var(--text);
 }
 .sidebar nav button.active {
   color: var(--text);
   background: var(--accent-bg);
   font-weight: 600;
+}
+.sidebar nav button.active::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+.sidebar nav button.active svg {
+  color: var(--accent);
+}
+.sidebar nav button svg {
+  width: 17px;
+  height: 17px;
+}
+.sidebar-nav-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-shortcut {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--faint);
+  opacity: 0;
+  flex-shrink: 0;
+  transition: opacity 0.12s ease;
+}
+.new-task-button .sidebar-shortcut {
+  opacity: 0.6;
+}
+.sidebar nav button:hover .sidebar-shortcut,
+.sidebar nav button:focus-visible .sidebar-shortcut,
+.new-task-button:hover .sidebar-shortcut,
+.new-task-button:focus-visible .sidebar-shortcut {
+  opacity: 0.9;
 }
 svg {
   width: 19px;
@@ -270,14 +369,115 @@ svg {
 }
 .sidebar-footer {
   margin-top: auto;
-  padding: 16px 8px 0;
+  padding: 12px 0 0;
   border-top: 1px solid var(--soft);
   font-size: 11px;
   color: var(--muted);
 }
-.sidebar-footer p {
+.sidebar-status-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.sidebar-status-card:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  border-color: var(--soft);
+  color: var(--text);
+}
+.sidebar-status-card.active {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--soft));
+}
+.sidebar-status-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+.sidebar-status-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  padding-left: 14px;
   font-size: 10px;
-  margin-top: 8px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+.sidebar-status-chevron {
+  width: 14px;
+  height: 14px;
+  color: var(--faint);
+  flex-shrink: 0;
+  opacity: 0.7;
+  transition: transform 0.12s ease, opacity 0.12s ease;
+}
+.sidebar-status-card:hover:not(:disabled) .sidebar-status-chevron {
+  opacity: 1;
+  transform: translateX(1px);
+}
+.sidebar[data-sidebar="collapsed"] {
+  width: 60px;
+  padding: 14px 8px 12px;
+}
+.sidebar[data-sidebar="collapsed"] .sidebar-header {
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 0 0 12px;
+}
+.sidebar[data-sidebar="collapsed"] .brand {
+  padding: 0;
+  justify-content: center;
+}
+.sidebar[data-sidebar="collapsed"] .brand-name,
+.sidebar[data-sidebar="collapsed"] .new-task-label,
+.sidebar[data-sidebar="collapsed"] .sidebar-nav-label,
+.sidebar[data-sidebar="collapsed"] .sidebar-shortcut,
+.sidebar[data-sidebar="collapsed"] .sidebar-status-text,
+.sidebar[data-sidebar="collapsed"] .sidebar-status-meta,
+.sidebar[data-sidebar="collapsed"] .sidebar-status-chevron {
+  display: none;
+}
+.sidebar[data-sidebar="collapsed"] .new-task-button {
+  justify-content: center;
+  padding: 9px 0;
+}
+.sidebar[data-sidebar="collapsed"] nav button {
+  justify-content: center;
+  padding: 9px 0;
+}
+.sidebar[data-sidebar="collapsed"] nav button.active::before {
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+}
+.sidebar[data-sidebar="collapsed"] .sidebar-nav-divider {
+  margin: 8px 6px;
+}
+.sidebar[data-sidebar="collapsed"] .sidebar-status-card {
+  justify-content: center;
+  padding: 9px 0;
+}
+.sidebar[data-sidebar="collapsed"] .sidebar-status-body {
+  flex: 0 0 auto;
+  align-items: center;
+}
+.sidebar[data-sidebar="collapsed"] .sidebar-status {
+  justify-content: center;
+}
+.sidebar[data-sidebar="collapsed"] .sidebar-status-dot {
+  width: 9px;
+  height: 9px;
 }
 .connection {
   display: inline-flex;
@@ -901,42 +1101,85 @@ main {
 .sidebar-status {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text);
+}
+.sidebar-status-text {
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 .sidebar-status-dot {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
-  background: var(--muted);
+  background: var(--faint);
 }
+.sidebar-status[data-tone="running"] .sidebar-status-dot,
 .sidebar-status[data-status="running"] .sidebar-status-dot {
   background: var(--green);
 }
-.sidebar-status[data-status="failed"] .sidebar-status-dot,
+.sidebar-status[data-tone="starting"] .sidebar-status-dot {
+  background: var(--blue);
+}
+.sidebar-status[data-tone="warning"] .sidebar-status-dot,
 .sidebar-status[data-status="unknown"] .sidebar-status-dot {
   background: var(--amber);
+}
+.sidebar-status[data-tone="error"] .sidebar-status-dot,
+.sidebar-status[data-status="failed"] .sidebar-status-dot {
+  background: var(--red);
 }
 .page-actions {
   display: flex;
   justify-content: flex-end;
   margin-bottom: 16px;
 }
-.page-actions button,
-.new-task-button {
+.page-actions button {
   border-color: var(--blue);
   background: var(--accent-bg);
   font-weight: 600;
 }
 .new-task-button {
-  margin-top: 10px;
-}
-.new-task-button.active {
-  border-color: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0 0 14px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+  border-radius: 8px;
   background: var(--accent-bg);
   color: var(--text);
   font-weight: 600;
+  text-align: left;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.new-task-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+}
+.new-task-button.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 20%, var(--panel));
+  color: var(--text);
+  font-weight: 600;
+}
+.new-task-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+  stroke-width: 2;
+}
+.new-task-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .tasks-subpage-panel,
 .task-subpage-panel {
@@ -3247,13 +3490,27 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
     padding: 22px;
   }
   .sidebar {
-    width: 164px;
+    width: 176px;
+  }
+  .sidebar[data-sidebar="collapsed"] {
+    width: 60px;
   }
   .brand {
-    gap: 10px;
+    gap: 8px;
   }
   .notice {
     align-items: flex-start;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .sidebar-toggle,
+  .sidebar nav button,
+  .sidebar-shortcut,
+  .new-task-button,
+  .sidebar-status-card,
+  .sidebar-status-chevron {
+    transition: none;
   }
 }
 @media (forced-colors: active) {
@@ -3269,6 +3526,7 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
   }
   .sidebar nav button.active,
   .new-task-button.active,
+  .sidebar-status-card.active,
   .settings-tab.active,
   .settings-segmented button.active,
   .task-detail-tabs button[aria-pressed="true"],

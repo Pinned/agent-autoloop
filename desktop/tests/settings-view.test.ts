@@ -749,3 +749,44 @@ test("connection tab renders structured role badge and scannable key commands wi
   click(find(root, "查看本机配置状态")!);
   assert.equal(setupOpened, 1);
 });
+
+test("sidebar re-click closeSubpage exits an open row editor and respects saving/conflict barriers", async () => {
+  const r = recordingBridge();
+  const f = fixture(() => "hub-worker", r.bridge);
+  await withDocumentAcross(async () => {
+    f.view.init();
+    await flush();
+  });
+  assert.equal(f.view.closeSubpage(), false);
+  click(find(f.root, "＋ 添加 Agent")!);
+  assert.ok(byId(f.root, "settings-editor-title"));
+  withDocument(() => {
+    assert.equal(f.view.closeSubpage(), true);
+  });
+  assert.equal(byId(f.root, "settings-editor-title"), undefined);
+
+  // When a save conflict locks the form for review, sidebar re-click must not bypass the barrier.
+  const conflictBridge: SettingsBridge = {
+    settingsGet: async () => ({ version: 1, ok: true, data: snapshot() }),
+    settingsPut: async () => ({
+      version: 1,
+      ok: false,
+      error: { code: "conflict", message: "配置已被其他入口更新" },
+    }),
+  };
+  const conflict = fixture(() => "hub-worker", conflictBridge);
+  await withDocumentAcross(async () => {
+    conflict.view.init();
+    await flush();
+  });
+  click(find(conflict.root, "编辑")!);
+  assert.ok(byId(conflict.root, "settings-editor-title"));
+  await withDocumentAcross(async () => {
+    find(conflict.root, "保存")!.click();
+    await flush();
+  });
+  withDocument(() => {
+    assert.equal(conflict.view.closeSubpage(), false);
+  });
+  assert.ok(byId(conflict.root, "settings-editor-title"));
+});

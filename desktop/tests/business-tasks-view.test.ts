@@ -2623,3 +2623,39 @@ test("live decision form highlights recommended option, clears validation on inp
     "dark theme must keep original requirement description readable",
   );
 });
+
+test("sidebar re-click returnToList exits detail cleanly and respects in-flight write protection", async () => {
+  await withView(async (controller, _root, view) => {
+    controller.open("task:1");
+    await flush();
+    assert.equal(controller.selectedKey, "task:1");
+    assert.equal(view.returnToList(), true);
+    await flush();
+    assert.equal(controller.selectedKey, null);
+    assert.equal(view.returnToList(), false);
+  });
+
+  // An in-flight write must keep the user inside detail instead of leaving an unconfirmed write.
+  await withView(
+    async (controller, root, view) => {
+      controller.open("task:1");
+      await flush();
+      assert.equal(controller.selectedKey, "task:1");
+      const openCancel = all(root).find((x) => x.tag === "button" && x.textContent === "取消任务")!;
+      openCancel.fire();
+      const input = all(root).find((x) => x.tag === "textarea")!;
+      input.value = "不再需要";
+      input.listeners.get("input")?.();
+      const submit = all(root).find((x) => x.tag === "button" && x.textContent === "确认取消整件任务")!;
+      submit.fire();
+      assert.equal(controller.actionBusy, true);
+      assert.equal(view.returnToList(), false);
+      assert.equal(controller.selectedKey, "task:1");
+    },
+    { ...item, decisions: { items: [], hasMore: false } },
+    undefined,
+    {
+      taskAction: () => new Promise(() => {}),
+    },
+  );
+});

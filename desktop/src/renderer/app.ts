@@ -22,6 +22,15 @@ import { mountSettingsView } from "./settings-view.ts";
 import { mountReconnectView } from "./reconnect-view.ts";
 import { navigationSignature, pagesFor, tasksPageMode, type Page as NavigationPage, type Role } from "./navigation.ts";
 import { projectShell, shellMode, type ShellMode } from "./shell-mode.ts";
+import {
+  loadSidebarCollapsed,
+  resolveNavActivePage,
+  resolveNavArrowIndex,
+  resolveSidebarShortcut,
+  runtimeStatusTone,
+  saveSidebarCollapsed,
+  shortcutLabel,
+} from "./sidebar.ts";
 declare global {
   interface Window {
     desktop: DesktopBridge;
@@ -41,8 +50,31 @@ function icon(id: string) {
   return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${paths[id]}"/></svg>`;
 }
 const main = document.querySelector<HTMLElement>("#main")!;
+const sidebar = document.querySelector<HTMLElement>("#sidebar")!;
+const sidebarToggle = document.querySelector<HTMLButtonElement>("#sidebar-toggle")!;
 const navigation = document.querySelector<HTMLElement>("#navigation")!;
 const newTaskButton = document.querySelector<HTMLButtonElement>("#new-task")!;
+const newTaskShortcut = document.querySelector<HTMLElement>("#new-task-shortcut")!;
+const viewConnectionButton = document.querySelector<HTMLButtonElement>("#view-connection")!;
+const isMac =
+  typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
+let sidebarCollapsed = loadSidebarCollapsed(window.localStorage);
+function syncSidebarCollapsed() {
+  sidebar.dataset.sidebar = sidebarCollapsed ? "collapsed" : "expanded";
+  sidebarToggle.setAttribute("aria-expanded", String(!sidebarCollapsed));
+  const actionLabel = sidebarCollapsed ? "展开侧边栏" : "收起侧边栏";
+  sidebarToggle.setAttribute("aria-label", actionLabel);
+  sidebarToggle.title = `${actionLabel} (${shortcutLabel("\\", isMac)})`;
+}
+function toggleSidebarCollapsed() {
+  sidebarCollapsed = !sidebarCollapsed;
+  saveSidebarCollapsed(window.localStorage, sidebarCollapsed);
+  syncSidebarCollapsed();
+}
+const dispatchShortcut = shortcutLabel("N", isMac);
+newTaskShortcut.textContent = dispatchShortcut;
+newTaskButton.title = `派发任务 (${dispatchShortcut})`;
+syncSidebarCollapsed();
 let currentPage = "today";
 // A page is current only while a business page actually owns #main. The setup view replaces #main,
 // so the menu must not point at a page the user is not looking at; with no workspace there is no
@@ -53,15 +85,46 @@ function pageOwnsMain(): boolean {
 // The page change is only a DOM rebuild; the role decides which pages exist at all.
 function markCurrent() {
   const active = pageOwnsMain() ? currentPage : "";
+  const navActive = resolveNavActivePage(active);
   for (const button of navigation.querySelectorAll<HTMLButtonElement>("button")) {
-    button.classList.toggle("active", button.dataset.page === active);
-    if (button.dataset.page === active) button.setAttribute("aria-current", "page");
+    const isCurrent = button.dataset.page === navActive;
+    button.classList.toggle("active", isCurrent);
+    if (isCurrent) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   }
   const dispatchActive = pageOwnsMain() && currentPage === "dispatch-task";
   newTaskButton.classList.toggle("active", dispatchActive);
   if (dispatchActive) newTaskButton.setAttribute("aria-current", "page");
   else newTaskButton.removeAttribute("aria-current");
+  viewConnectionButton.classList.toggle("active", navActive === "workers");
+}
+// Clicking an active top-level item returns safely from an inner detail/subpage to its list, or
+// scrolls back to top when already at the root — respecting save/write barriers so nothing unsafe
+// is bypassed.
+function navigateFromSidebar(id: string) {
+  if (navigationDisabled || shell !== "workspace") return;
+  if (id === "automation" && currentPage === "automation-entry") {
+    leaveEntryEditor();
+    return;
+  }
+  if (id === "tasks" && currentPage === "tasks" && setupView === undefined && currentRole() !== "worker") {
+    if (businessTasks.selectedKey !== null) {
+      if (tasksPage.returnToList()) todayDetailReturn = null;
+      return;
+    }
+    main.scrollTop = 0;
+    return;
+  }
+  if (id === "settings" && currentPage === "settings" && setupView === undefined) {
+    if (settingsPage?.closeSubpage()) return;
+    main.scrollTop = 0;
+    return;
+  }
+  if (id === currentPage && setupView === undefined) {
+    main.scrollTop = 0;
+    return;
+  }
+  render(id);
 }
 let navigationDisabled = false;
 // Which shell the window may show. The launch record decides; the first frame is "checking", which
@@ -139,13 +202,30 @@ function syncNavigation(role: Role) {
   if (navigation.dataset.signature !== signature) {
     navigation.dataset.signature = signature;
     navigation.innerHTML = pages
-      .map((page) => `<button data-page="${page.id}">${icon(page.icon)}<span>${page.nav}</span></button>`)
+      .map((page, index) => {
+        const divider =
+          index > 0 && page.section !== pages[index - 1].section
+            ? `<span class="sidebar-nav-divider" role="separator" aria-hidden="true"></span>`
+            : "";
+        const hint = shortcutLabel(String(index + 1), isMac);
+        return `${divider}<button type="button" data-page="${page.id}" aria-label="${page.nav}" title="${page.nav} (${hint})">${icon(page.icon)}<span class="sidebar-nav-label">${page.nav}</span><kbd class="sidebar-shortcut" aria-hidden="true">${hint}</kbd></button>`;
+      })
       .join("");
-    for (const button of navigation.querySelectorAll<HTMLButtonElement>("button"))
-      button.addEventListener("click", () => render(button.dataset.page!));
+    const buttons = [...navigation.querySelectorAll<HTMLButtonElement>("button")];
+    for (const [index, button] of buttons.entries()) {
+      button.addEventListener("click", () => navigateFromSidebar(button.dataset.page!));
+      button.addEventListener("keydown", (event) => {
+        const nextIndex = resolveNavArrowIndex(index, event.key, buttons.length);
+        if (nextIndex === null) return;
+        event.preventDefault();
+        buttons[nextIndex].focus();
+      });
+    }
   }
   // Nothing to create locally: a pure worker only receives work from the hub it belongs to.
   newTaskButton.hidden = role === "worker";
+  newTaskButton.disabled = navigationDisabled;
+  viewConnectionButton.disabled = navigationDisabled;
   for (const button of navigation.querySelectorAll<HTMLButtonElement>("button")) button.disabled = navigationDisabled;
   markCurrent();
   // A role change can strand the current page outside its own view. Leave the page only after this
@@ -426,22 +506,38 @@ window.desktop.onNavigate((target) => {
 });
 function updateRuntimeStatus() {
   const status = document.querySelector<HTMLElement>("#runtime-status")!;
+  const statusText = document.querySelector<HTMLElement>("#runtime-status-text")!;
+  const meta = document.querySelector<HTMLElement>("#runtime-meta")!;
   const scope = document.querySelector<HTMLElement>("#runtime-scope")!;
   const role = document.querySelector<HTMLElement>("#runtime-role")!;
   const state = run.state;
   if (state.kind !== "ready") {
     delete status.dataset.status;
-    status.textContent = state.kind === "loading" ? "正在读取本机状态" : state.message;
+    status.dataset.tone = runtimeStatusTone(null);
+    const label = state.kind === "loading" ? "正在读取本机状态" : state.message;
+    statusText.textContent = label;
     role.textContent = "";
+    role.hidden = true;
     scope.textContent = "";
+    scope.hidden = true;
+    meta.hidden = true;
+    viewConnectionButton.title = label;
     return;
   }
-  status.textContent = desktopRuntimeStatusText(state.snapshot);
-  status.dataset.status = state.snapshot.status;
-  role.textContent =
+  const label = desktopRuntimeStatusText(state.snapshot);
+  const roleLabel =
     state.snapshot.role === "hub-worker" ? "中台＋执行机" : state.snapshot.role === "worker" ? "纯执行机" : "";
   // A pure worker's own words: it holds only this machine's work and cannot schedule anything global.
-  scope.textContent = state.snapshot.role === "worker" ? "仅本机 · 不可调度全局" : "";
+  const scopeLabel = state.snapshot.role === "worker" ? "仅本机 · 不可调度全局" : "";
+  statusText.textContent = label;
+  status.dataset.status = state.snapshot.status;
+  status.dataset.tone = runtimeStatusTone(state.snapshot);
+  role.textContent = roleLabel;
+  role.hidden = !roleLabel;
+  scope.textContent = scopeLabel;
+  scope.hidden = !scopeLabel;
+  meta.hidden = !roleLabel && !scopeLabel;
+  viewConnectionButton.title = [label, roleLabel, scopeLabel].filter(Boolean).join(" · ");
 }
 function openSetup() {
   if (!setupView) setupView = mountSetupPage();
@@ -699,7 +795,21 @@ function render(id: string, focus = true) {
   if (focus) main.focus();
 }
 newTaskButton.addEventListener("click", openTaskPage);
-document.querySelector("#view-connection")!.addEventListener("click", () => render("workers"));
+sidebarToggle.addEventListener("click", toggleSidebarCollapsed);
+viewConnectionButton.addEventListener("click", () => navigateFromSidebar("workers"));
+window.addEventListener("keydown", (event) => {
+  const action = resolveSidebarShortcut(event, {
+    shell,
+    role: currentRole(),
+    navigationDisabled,
+    setupOpen: setupView !== undefined,
+  });
+  if (!action) return;
+  event.preventDefault();
+  if (action.kind === "toggle-collapse") toggleSidebarCollapsed();
+  else if (action.kind === "dispatch") openTaskPage();
+  else navigateFromSidebar(action.id);
+});
 // The one way out of the app is a page that has no workspace behind it; the shell itself offers
 // neither quit nor hide, leaving the window's own menu and tray as the machine-level exits.
 function quitApp() {
