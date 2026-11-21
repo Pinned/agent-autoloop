@@ -288,28 +288,27 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void,
   }
   function readRun(id: number | null, generation: number) {
     runReady = false;
-    if (run?.run.id !== id) run = null;
+    if (run?.run.id !== id || !bridge.taskDetail) run = null;
     if (!id || !bridge.taskDetail) return;
     const request = { operation: "detail" as const, runId: id };
+    const finish = (raw: unknown) => {
+      if (!allowed || generation !== detailGeneration || detail?.task.latestRunId !== id) return;
+      run = null;
+      try {
+        const response = parseTaskHistoryResponse(raw, request);
+        if (response.ok) {
+          run = response.data;
+          runReady = true;
+        }
+      } catch {
+        /* No permission inferred from malformed diagnosis. */
+      }
+      notify();
+    };
     try {
-      void Promise.resolve(bridge.taskDetail(request)).then(
-        (raw) => {
-          if (!allowed || generation !== detailGeneration || detail?.task.latestRunId !== id) return;
-          try {
-            const response = parseTaskHistoryResponse(raw, request);
-            if (response.ok) {
-              run = response.data;
-              runReady = true;
-            }
-          } catch {
-            /* No permission inferred from malformed diagnosis. */
-          }
-          notify();
-        },
-        () => {},
-      );
+      void Promise.resolve(bridge.taskDetail(request)).then(finish, () => finish(undefined));
     } catch {
-      /* Read failure cannot grant actions. */
+      finish(undefined);
     }
   }
   function submitAction(raw: DesktopTaskActionInput) {
