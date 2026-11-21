@@ -60,6 +60,7 @@ export function decide(view: View, input: Input, now: number, env: Environment):
   const rules = configuration(view);
   const draft: Draft = { view: view.fork(), seq: view.seq + 1, type, now, at: iso(now), env, rules, changes: [] };
   const value = HANDLERS[type](draft, ...args);
+  if (type === "checkReceipt") return { facts: [], value };
   const due = deadlines(draft.view, now);
   for (const [key, row] of Object.entries(due)) {
     if (JSON.stringify(draft.view.get("due", key)) !== JSON.stringify(row)) put(draft, "due", key, row);
@@ -1083,6 +1084,7 @@ const HANDLERS: Record<string, (draft: Draft, ...args: any[]) => unknown> = {
     put(draft, "runs", id, { session: session ?? run.session, link: link ?? run.link, seen_at: draft.at });
   },
   finish,
+  checkReceipt: finish,
   releaseHold,
   cancelTask,
   pauseTask,

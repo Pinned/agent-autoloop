@@ -75,7 +75,7 @@ type Entry = {
   result?: Result;
 };
 export type DrainSummary = { pending: number };
-export type WorkerHub = Pick<Hub, "work" | "started" | "result">;
+export type WorkerHub = Pick<Hub, "work" | "started" | "result"> & Partial<Pick<Hub, "checkReceipt">>;
 export type WorkerOptions = {
   hub: WorkerHub;
   name: string;
@@ -563,6 +563,40 @@ export function createWorker({
   async function settle(entry: Entry) {
     if (!entry.result || groupAlive(entry)) return;
     try {
+      if (
+        !closing &&
+        hub.checkReceipt &&
+        entry.result.session &&
+        entry.repairs < REPAIRS &&
+        ["done", "nothing"].includes(entry.result.outcome)
+      ) {
+        const adapter = await adapterFor(entry.job.agent.use);
+        if (adapter.link) {
+          const check = await hub.checkReceipt(entry.run, entry.token, entry.result).catch((error) => {
+            if (error instanceof HubError && (error.status === 404 || error.status === 409)) return null;
+            throw error;
+          });
+          if (
+            !closing &&
+            !check?.duplicate &&
+            check?.rejected?.some((item: { what?: string }) => item.what === "nextStep")
+          ) {
+            entry.repairs += 1;
+            entry.resume = entry.result.session;
+            delete entry.result;
+            try {
+              launch(
+                entry,
+                adapter,
+                repairPrompt("中台未找到有效下一步。只补写真实的续办去向，不调用工具、不重做业务、不编造阻塞。"),
+              );
+            } catch (error) {
+              discardReceipt(entry, adapter, String(error));
+            }
+            return;
+          }
+        }
+      }
       const answer = await hub.result(entry.run, entry.token, entry.result);
       for (const item of answer?.rejected ?? []) log(`run ${entry.run}: not applied: ${JSON.stringify(item)}`);
       log(`run ${entry.run}: ${entry.result.outcome}`);

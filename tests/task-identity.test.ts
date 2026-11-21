@@ -149,6 +149,20 @@ test("an active task without a next step is not silently accepted", () => {
   }
 });
 
+test("checking a receipt asks for correction without consuming the run token", () => {
+  const f = fixture();
+  try {
+    f.act("ingest", "app", event("a"));
+    const a = f.act("claimNext", "w1", "a");
+    const check = f.act("checkReceipt", a.run, a.token, { outcome: "nothing" });
+    assert.ok(check.rejected.some((r: any) => r.what === "nextStep"));
+    assert.equal(f.view.get("runs", a.run)?.state, "claimed");
+    assert.deepEqual(f.act("finish", a.run, a.token, { outcome: "done", taskStatus: "completed" }).rejected, []);
+  } finally {
+    f.view.close();
+  }
+});
+
 test("unfinished receipts cannot omit their next step by omitting taskStatus or reporting nothing", () => {
   for (const outcome of ["done", "nothing"]) {
     const f = fixture();

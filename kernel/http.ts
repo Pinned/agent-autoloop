@@ -274,7 +274,8 @@ async function route(call: Call): Promise<Response> {
     const given = await readJson(request);
     return json(act(call, "releaseHold", Number(hold[1]), given?.reason));
   }
-  const [, runPart, action] = /^\/v1\/runs\/([1-9][0-9]*)\/(started|result|cancel|memo|feedback|why)$/.exec(path) ?? [];
+  const [, runPart, action] =
+    /^\/v1\/runs\/([1-9][0-9]*)\/(started|result|check-receipt|cancel|memo|feedback|why)$/.exec(path) ?? [];
   const runId = Number(runPart);
   if (method === "GET" && action === "why") {
     requireKey(call, "owner");
@@ -293,6 +294,8 @@ async function route(call: Call): Promise<Response> {
     act(call, "started", runId, token, await readJson(request));
     return json({ ok: true });
   }
+  if (method === "POST" && action === "check-receipt")
+    return json(act(call, "checkReceipt", runId, token, await readJson(request)));
   if (method === "POST" && action === "result") return json(act(call, "finish", runId, token, await readJson(request)));
   if (method === "GET" && path === "/v1/cards/next") return nextCard(call);
   const card = /^\/v1\/cards\/([1-9][0-9]*)\/(delivered|failed|answer|resolve)$/.exec(path);
