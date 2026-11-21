@@ -3063,7 +3063,10 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
 }
 @media (forced-colors: active) {
   .setup-choice[aria-pressed="true"],
-  .setup-steps [aria-current="step"] {
+  .setup-steps [aria-current="step"],
+  .run-action-primary,
+  .run-action-danger,
+  .workers-local-tag {
     outline: 2px solid Highlight;
   }
 }

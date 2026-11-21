@@ -189,17 +189,30 @@ let todayView: ReturnType<typeof mountTodayView> | undefined;
 let workersView: ReturnType<typeof mountWorkersView> | undefined;
 let localReadingView: ReturnType<typeof mountLocalReadingView> | undefined;
 let localSummaryView: ReturnType<typeof mountLocalSummaryView> | undefined;
+let workersRefreshButton: HTMLButtonElement | undefined;
+function syncWorkersRefreshButton() {
+  if (!workersRefreshButton) return;
+  const busy = workers.busy || localReading.busy;
+  workersRefreshButton.disabled = busy;
+  workersRefreshButton.textContent = busy ? "刷新中…" : "刷新";
+}
 // App-level singletons: page switches never destroy the controllers or their subscriptions.
 const today = createRendererToday(window.desktop, () => {
   if (currentPage === "today") todayView?.update();
 });
 const workers = createRendererWorkers(window.desktop, () => {
-  if (currentPage === "workers") workersView?.update();
+  if (currentPage === "workers") {
+    workersView?.update();
+    syncWorkersRefreshButton();
+  }
 });
 // This machine's own runtime reading; pulled from the supervisor, never pushed on every heartbeat.
 // It is drawn in one place per role: on "workers" for an owner, on "tasks" for a pure worker.
 const localReading = createRendererLocalReading(window.desktop, () => {
-  if (currentPage === "workers") localReadingView?.update();
+  if (currentPage === "workers") {
+    localReadingView?.update();
+    syncWorkersRefreshButton();
+  }
   if (currentPage === "tasks") localSummaryView?.update();
 });
 // The dispatch-task subpage is app-level: one entry list, one submission at a time, with draft caching.
@@ -256,7 +269,12 @@ const run = createRendererRun(
     if (currentPage === "today" && run.state.kind === "ready" && run.state.snapshot.status === "running")
       today.refresh();
     // The same transition is when another machine's heartbeat can first be observed.
-    if (currentPage === "workers" && run.state.kind === "ready" && run.state.snapshot.status === "running")
+    if (
+      currentPage === "workers" &&
+      workersView &&
+      run.state.kind === "ready" &&
+      run.state.snapshot.status === "running"
+    )
       workers.refresh();
     // Only the runtime's own process owns a reading; every runtime transition re-reads it. The
     // reading is drawn once per role: on "workers" for an owner, on "tasks" for a pure worker.
@@ -519,6 +537,7 @@ function render(id: string, focus = true) {
   workersView = undefined;
   localReadingView = undefined;
   localSummaryView = undefined;
+  workersRefreshButton = undefined;
   renderedFlavor = isDispatchTask ? "dispatch-task" : isAutomationEntry ? "automation" : pageFlavor(role, id);
   if (currentPage === "tasks" && id !== "tasks") todayDetailReturn = null;
   currentPage = id;
@@ -637,20 +656,33 @@ function render(id: string, focus = true) {
       launch: () => setup.launch,
     });
     // What this machine's own runtime holds, pulled from the supervisor when the page renders.
-    // A pure worker's reading lives on its "本机任务" page instead; this page is environment and
-    // connection only, so the same numbers are never shown twice under one role.
+    // A pure worker's reading lives on its "本机任务" page instead, and its "本机环境" page does
+    // not show other workers; only the hub-worker role mounts those two panels with one page refresh.
     if (role !== "worker") {
+      const actions = main.querySelector<HTMLElement>(".page-head-actions")!;
+      const refreshButton = document.createElement("button");
+      refreshButton.type = "button";
+      refreshButton.textContent = "刷新";
+      refreshButton.addEventListener("click", () => {
+        localReading.refresh();
+        workers.refresh();
+      });
+      actions.append(refreshButton);
+      workersRefreshButton = refreshButton;
+
       const readingHost = document.createElement("div");
       main.append(readingHost);
-      localReadingView = mountLocalReadingView(readingHost, localReading);
+      localReadingView = mountLocalReadingView(readingHost, localReading, { showRefresh: false });
+
+      // The hub's own heartbeat and distribution; there is nothing to probe from here.
+      const presence = document.createElement("div");
+      main.append(presence);
+      workersView = mountWorkersView(presence, workers, { showRefresh: false });
+      workers.refresh();
+      localReading.refresh();
+      syncWorkersRefreshButton();
     }
-    // The hub's own heartbeat and distribution; there is nothing to probe from here.
-    const presence = document.createElement("div");
-    main.append(presence);
-    workersView = mountWorkersView(presence, workers);
     run.init();
-    workers.refresh();
-    if (localReadingView) localReading.refresh();
   }
   if (focus) main.focus();
 }
