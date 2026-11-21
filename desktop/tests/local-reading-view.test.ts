@@ -81,7 +81,7 @@ function withDocument<T>(run: () => T): T {
   }
 }
 
-function fixture(state: unknown = { kind: "loading" }) {
+function fixture(state: unknown = { kind: "loading" }, options?: { showRefresh?: boolean }) {
   const root = new TestElement("main");
   let refreshes = 0;
   const control = {
@@ -95,6 +95,7 @@ function fixture(state: unknown = { kind: "loading" }) {
     mountLocalReadingView(
       root as unknown as HTMLElement,
       control as unknown as Parameters<typeof mountLocalReadingView>[1],
+      options,
     ),
   );
   return { root, control, view, refreshes: () => refreshes };
@@ -103,50 +104,56 @@ function update(f: ReturnType<typeof fixture>) {
   withDocument(() => f.view.update());
 }
 
-test("the card states its scope: a reading is for viewing, never proof a drain may proceed", () => {
+test("the card states its scope concisely without exposing internal polling intervals", () => {
   const f = fixture();
   const section = byClass(f.root, "local-reading")[0];
   assert.ok(section, "missing the local reading section");
   assert.equal(section.attributes.get("aria-label"), "本机持有量");
   assert.match(section.textContent, /本机持有量/);
-  assert.match(section.textContent, /每两秒自报一次/);
   assert.match(section.textContent, /不代表可以安全停止或排空/);
+  assert.doesNotMatch(section.textContent, /每两秒自报一次/);
   const status = byId(f.root, "local-reading-status");
   assert.equal(status.attributes.get("role"), "status");
   assert.equal(status.attributes.get("aria-live"), "polite");
 });
 
-test("loading says it is reading rather than showing zeros", () => {
+test("loading says it is reading and hides facts and counts rather than showing placeholders", () => {
   const f = fixture({ kind: "loading" });
   assert.match(byId(f.root, "local-reading-status").textContent, /正在读取/);
-  assert.match(visibleText(f.root), /读取中/);
+  assert.ok(byId(f.root, "local-reading-facts").hidden, "facts must stay hidden while loading");
   assert.ok(byId(f.root, "local-reading-counts").hidden, "counts must stay hidden while loading");
   assert.ok(!/已接单/.test(visibleText(f.root)));
 });
 
-test("empty is the runtime's own absence, not a request failure", () => {
+test("empty is the runtime's own absence without empty fact rows or request failure", () => {
   const f = fixture({ kind: "empty" });
   assert.match(byId(f.root, "local-reading-status").textContent, /未报告持有量/);
-  assert.match(visibleText(f.root), /无读数/);
+  assert.ok(byId(f.root, "local-reading-facts").hidden, "facts stay hidden when there is no reading");
+  assert.ok(!/无读数/.test(visibleText(f.root)));
   assert.ok(!/失败/.test(visibleText(f.root)));
   assert.ok(!/已接单/.test(visibleText(f.root)));
   assert.ok(byId(f.root, "local-reading-counts").hidden);
 });
 
-test("a failed read is an error alert and never rendered as counts", () => {
+test("a failed read shows one error alert without duplicating it in status", () => {
   const f = fixture({ kind: "error" });
-  assert.match(byId(f.root, "local-reading-status").textContent, /读取本机持有量失败/);
+  const status = byId(f.root, "local-reading-status");
+  assert.equal(status.hidden, true);
   const error = byClass(f.root, "rules-error")[0];
   assert.ok(error);
   assert.equal(error.hidden, false);
   assert.equal(error.attributes.get("role"), "alert");
-  assert.match(visibleText(f.root), /未确认/);
+  assert.match(error.textContent, /读取本机持有量失败/);
+  assert.ok(byId(f.root, "local-reading-facts").hidden);
   assert.ok(byId(f.root, "local-reading-counts").hidden);
 });
 
-test("a complete reading renders every bucket with its reported value", () => {
+test("a complete reading renders all six buckets without seq noise or duplicate timestamps", () => {
   const f = fixture({ kind: "ready", snapshot: reading({ seq: 7, observedAt: 1_700_000_120_000 }) });
-  assert.match(byId(f.root, "local-reading-status").textContent, /第 7 次读数/);
+  const text = visibleText(f.root);
+  assert.doesNotMatch(text, /第 7 次读数/);
+  assert.doesNotMatch(text, /读取时间/);
+  assert.match(byId(f.root, "local-reading-status").textContent, /更新于/);
   const counts = byId(f.root, "local-reading-counts");
   assert.equal(counts.hidden, false);
   assert.deepEqual(
@@ -157,8 +164,11 @@ test("a complete reading renders every bucket with its reported value", () => {
     counts.children.map((line) => line.children[1].textContent),
     ["2", "1", "1", "0", "0", "0"],
   );
+  assert.ok(counts.children[0].className.includes("nonzero"));
+  assert.ok(!counts.children[3].className.includes("nonzero"));
   assert.ok(byClass(f.root, "rules-error")[0].hidden);
-  assert.match(visibleText(f.root), /中台连接正常/);
+  assert.match(text, /中台连接正常/);
+  assert.doesNotMatch(text, /最后成功/);
 });
 
 test("an unknown summary is disclosed and renders no bucket at all", () => {
@@ -186,10 +196,11 @@ test("a stale or unreachable hub is named instead of being folded into the count
   assert.ok(!/最后成功/.test(visibleText(unknown.root)));
 });
 
-test("the refresh button is a real callback and is disabled while a read is in flight", () => {
+test("the refresh button is optional and disabled while a read is in flight", () => {
   const f = fixture({ kind: "ready", snapshot: reading() });
   const refresh = all(f.root).find((node) => node.tagName === "button" && node.textContent === "刷新");
   assert.ok(refresh);
+  assert.equal(refresh.hidden, false);
   refresh.click();
   assert.equal(f.refreshes(), 1);
 
@@ -199,15 +210,19 @@ test("the refresh button is a real callback and is disabled while a read is in f
   assert.equal(busy.disabled, true);
   busy.click();
   assert.equal(f.refreshes(), 1);
+
+  const hiddenRefresh = fixture({ kind: "ready", snapshot: reading() }, { showRefresh: false });
+  const btn = all(hiddenRefresh.root).find((node) => node.tagName === "button");
+  assert.equal(btn?.hidden, true);
 });
 
 test("every render replaces the previous reading instead of appending to it", () => {
-  const f = fixture({ kind: "ready", snapshot: reading({ seq: 1 }) });
+  const f = fixture({ kind: "ready", snapshot: reading({ seq: 1, observedAt: 1_700_000_000_000 }) });
   assert.equal(byId(f.root, "local-reading-counts").children.length, 6);
-  f.control.state = { kind: "ready", snapshot: reading({ seq: 2 }) };
+  f.control.state = { kind: "ready", snapshot: reading({ seq: 2, observedAt: 1_700_000_060_000 }) };
   update(f);
   assert.equal(byId(f.root, "local-reading-counts").children.length, 6);
-  assert.match(byId(f.root, "local-reading-status").textContent, /第 2 次读数/);
+  assert.match(byId(f.root, "local-reading-status").textContent, /更新于/);
   f.control.state = { kind: "empty" };
   update(f);
   assert.ok(byId(f.root, "local-reading-counts").hidden);

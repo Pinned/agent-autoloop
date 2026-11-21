@@ -459,6 +459,12 @@ test("the workers page shows the hub's own heartbeat through the pure workers co
   assert.match(main, /createWorkersSource\(\{ home: runtimeHome, getState: runtimeState, readConfig \}\)/);
   // The page states where its data comes from instead of inventing remote environment facts.
   assert.match(view, /不含远程环境信息/);
+  // The workers page exposes one unified page-level refresh action and hides the hub presence card
+  // on a pure worker whose "本机环境" page explicitly does not display other workers.
+  assert.match(app, /mountLocalReadingView\(readingHost,\s*localReading,\s*\{\s*showRefresh:\s*false\s*\}\)/);
+  assert.match(app, /mountWorkersView\(presence,\s*workers,\s*\{\s*showRefresh:\s*false\s*\}\)/);
+  assert.match(app, /if\s*\(\s*currentPage === "workers" &&\s*workersView &&\s*run\.state\.kind === "ready"/);
+  assert.doesNotMatch(read("../src/renderer/run-view.ts"), /应用里不提供覆盖或切换角色/);
 });
 
 test("the tasks page drops the diagnostic mount while preserving the pure execution query contract", () => {

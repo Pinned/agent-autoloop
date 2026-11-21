@@ -522,6 +522,28 @@ main {
   user-select: text;
   -webkit-user-select: text;
 }
+.run-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px 16px;
+  flex-wrap: wrap;
+}
+.run-head-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.run-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.run-status-text {
+  font-size: 12px;
+}
 .run-line {
   display: flex;
   align-items: center;
@@ -530,21 +552,37 @@ main {
 }
 .run-badge {
   display: inline-flex;
-  padding: 2px 7px;
+  align-items: center;
+  padding: 2px 8px;
   border: 1px solid var(--border);
-  border-radius: 4px;
-  font-size: 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 550;
+  line-height: 1.4;
   white-space: nowrap;
+  background: var(--panel2);
   color: var(--muted);
 }
-.run-badge[data-status="starting"],
-.run-badge[data-status="running"],
-.run-badge[data-status="draining"],
-.run-badge[data-status="failed"],
-.run-badge[data-status="unknown"] {
+.run-badge[data-status="running"] {
+  border-color: var(--green);
+  background: color-mix(in srgb, var(--green) 10%, transparent);
+  color: var(--green);
+}
+.run-badge[data-status="starting"] {
   border-color: var(--blue);
   background: var(--accent-bg);
   color: var(--blue);
+}
+.run-badge[data-status="draining"],
+.run-badge[data-status="unknown"] {
+  border-color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 10%, transparent);
+  color: var(--amber);
+}
+.run-badge[data-status="failed"] {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+  color: var(--red);
 }
 .run-facts {
   display: grid;
@@ -552,7 +590,7 @@ main {
   gap: 8px 20px;
   margin: 14px 0 0;
   padding: 12px 0 0;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--soft);
 }
 .run-fact {
   display: flex;
@@ -580,24 +618,49 @@ main {
 .run-admission {
   color: var(--muted);
 }
-.run-error {
-  padding: 12px;
+.run-error,
+.run-receipt {
+  padding: 10px 12px;
   margin-top: 10px;
   border: 1px solid var(--border);
-  border-left: 3px solid var(--blue);
-  background: var(--accent-bg);
+  border-left: 3px solid var(--red);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--red) 6%, var(--panel));
   font-size: 12px;
 }
 .run-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 20px;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.run-action-primary {
+  border-color: var(--blue);
+  background: var(--accent-bg);
+  color: var(--blue);
+  font-weight: 550;
+}
+.run-action-danger {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+  color: var(--red);
+  font-weight: 550;
 }
 .run-note {
   font-size: 11px;
   color: var(--faint);
   margin-top: 12px;
+}
+.run-stop-note {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--amber);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--amber) 7%, var(--panel));
 }
 .today-view {
   min-width: 0;
@@ -2848,28 +2911,53 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
   font-size: 11px;
 }
 /* The workers page: per-worker groups of the hub's own agents, plus channel presence. */
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.section-refresh {
+  padding: 5px 11px;
+  font-size: 12px;
+  flex: none;
+}
 .workers-content {
   display: grid;
-  gap: 18px;
-  margin-top: 18px;
+  gap: 14px;
+  margin-top: 14px;
+}
+.workers-workers {
+  display: grid;
+  gap: 10px;
 }
 .workers-group {
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 14px 15px;
+  padding: 13px 15px;
   background: var(--panel2);
   min-width: 0;
 }
 .workers-group-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
 }
 .workers-group-head h3 {
   font: 600 13px/1.5 var(--mono);
   overflow-wrap: anywhere;
+}
+.workers-local-tag {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--blue);
+  background: var(--accent-bg);
+  color: var(--blue);
+  flex: none;
 }
 .workers-badge {
   font-size: 11px;
@@ -2889,11 +2977,14 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
   color: var(--faint);
 }
 .workers-heartbeat {
+  margin-left: auto;
   font-size: 11px;
   overflow-wrap: anywhere;
 }
 .workers-group .run-list {
-  margin-top: 12px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--soft);
   gap: 8px;
 }
 .workers-group .run-line {
@@ -2902,10 +2993,18 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
   font-size: 12px;
   min-width: 0;
 }
+.workers-agent-use {
+  font: 400 11px/1.4 var(--mono);
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--panel);
+  border: 1px solid var(--soft);
+  color: var(--muted);
+}
 .workers-channels h3 {
   font-size: 12px;
   color: var(--muted);
-  margin-bottom: 2px;
+  margin-bottom: 6px;
 }
 .workers-channels .run-line {
   margin-top: 0;
@@ -2913,28 +3012,61 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
 }
 /* This machine's own runtime reading: display facts only, never proof a drain is safe. */
 .local-reading .run-facts {
-  margin-top: 16px;
+  margin-top: 12px;
 }
-.local-reading .run-list {
-  margin-top: 14px;
-  gap: 6px;
+.local-reading-grid {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
 }
-.local-reading .run-line {
-  margin-top: 0;
-  justify-content: space-between;
-  font-size: 12px;
+.local-reading-tile {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--soft);
+  border-radius: 8px;
+  background: var(--panel2);
+  min-width: 0;
+}
+.local-reading-tile.nonzero {
+  border-color: var(--border);
+  background: var(--panel);
+}
+.local-reading-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+.local-reading-value {
+  font: 600 18px/1.3 var(--mono);
+  color: var(--faint);
+}
+.local-reading-tile.nonzero .local-reading-value {
+  color: var(--text);
+}
+@media (max-width: 720px) {
+  .local-reading-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 @media (max-width: 650px) {
   .setup-choices {
     grid-template-columns: 1fr;
   }
   .workers-group-head .workers-heartbeat {
+    margin-left: 0;
     width: 100%;
   }
 }
 @media (forced-colors: active) {
   .setup-choice[aria-pressed="true"],
-  .setup-steps [aria-current="step"] {
+  .setup-steps [aria-current="step"],
+  .run-action-primary,
+  .run-action-danger,
+  .workers-local-tag {
     outline: 2px solid Highlight;
   }
 }
