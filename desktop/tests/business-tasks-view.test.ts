@@ -7,6 +7,7 @@
 // and inline editors replacing modal operations. Fake DOM/bridge, no Electron or network.
 // Prevent hidden live questions, completion blockers, manual refresh and scattered operation groups.
 // Prevent detail reads from flashing loading prose while retaining visible read errors and write guards.
+// Prevent background detail refreshes from rebuilding unchanged timeline/header/list/session DOM or flashing disabled controls.
 test("operation area keeps progress and live answers above records without manual refresh", () => {
   const source = readFileSync(new URL("../src/renderer/business-tasks-view.ts", import.meta.url), "utf8");
   assert.match(source, /current\.append\(operationTitle, progress, decisions, actionBar\)/);
@@ -56,6 +57,9 @@ class Element {
   id = "";
   dataset: Record<string, string> = {};
   children: Element[] = [];
+  parent: Element | null = null;
+  replaceChildrenCount = 0;
+  textWriteCount = 0;
   private text = "";
   listeners = new Map<string, (event?: any) => void>();
   focused = false;
@@ -78,18 +82,41 @@ class Element {
     this.tag = tag;
   }
   set textContent(v: string) {
+    this.textWriteCount++;
     this.text = v;
+    for (const child of this.children) child.parent = null;
     this.children = [];
   }
   get textContent(): string {
     return this.text + this.children.map((x) => x.textContent).join(" ");
   }
   append(...items: Element[]) {
-    this.children.push(...items);
+    for (const item of items) {
+      item.remove();
+      item.parent = this;
+      this.children.push(item);
+    }
+  }
+  insertBefore(node: Element, before: Element | null) {
+    node.remove();
+    node.parent = this;
+    const index = before ? this.children.indexOf(before) : -1;
+    if (index === -1) this.children.push(node);
+    else this.children.splice(index, 0, node);
+    return node;
+  }
+  remove() {
+    if (!this.parent) return;
+    const index = this.parent.children.indexOf(this);
+    if (index !== -1) this.parent.children.splice(index, 1);
+    this.parent = null;
   }
   replaceChildren(...items: Element[]) {
+    this.replaceChildrenCount++;
     this.text = "";
-    this.children = items;
+    for (const child of this.children) child.parent = null;
+    this.children = [];
+    this.append(...items);
   }
   setAttribute(key: string, value: string) {
     this.attributes.set(key, value);
@@ -1899,4 +1926,448 @@ test("rule viewport owns remaining width and hidden overflow buttons cannot reap
   assert.match(rule(".business-list-toolbar {"), /flex-wrap:\s*nowrap;/);
   assert.match(rule(".business-list-toolbar > select {"), /flex:\s*0 0 auto;/);
   assert.match(rule("[hidden] {"), /display:\s*none !important;/);
+});
+
+// Background detail updates must reconcile timeline nodes incrementally by fact seq instead of tearing down existing cards.
+test("background detail refresh prepends new timeline records while keeping existing nodes, details and inputs mounted", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const trigger = {
+    request: { taskId: 1, title: "需求", detail: "需求正文", availability: "recorded", truncated: false },
+    triggers: {
+      count: 1,
+      truncated: false,
+      items: [
+        {
+          eventId: 3,
+          cardId: 2,
+          kind: "owner.memo",
+          title: "",
+          choice: "",
+          answer: "长触发内容".repeat(60),
+        },
+      ],
+    },
+  };
+  let timelineItems: unknown[] = [
+    {
+      seq: 3,
+      kind: "finish",
+      at: null,
+      runId: 2,
+      eventId: null,
+      cardId: 4,
+      feedbackId: null,
+      text: "",
+      truncated: false,
+      display: {
+        events: [],
+        runs: [{ id: 2, state: "done", summary: "已提出方案", error: "", truncated: false }],
+        cards: [
+          {
+            id: card.id,
+            runId: 2,
+            kind: card.kind,
+            state: card.state,
+            title: card.title,
+            text: card.text,
+            options: card.options,
+            choice: null,
+            answer: null,
+            by: null,
+            result: null,
+            truncated: false,
+          },
+        ],
+        reviews: {
+          truncated: false,
+          items: [
+            {
+              id: 7,
+              key: "check-build",
+              at: "2099-01-01T00:00:00.000Z",
+              about: "核对构建状态",
+              action: "scheduled",
+              state: "pending",
+              truncated: false,
+            },
+          ],
+        },
+        completion: null,
+        feedback: [],
+      },
+    },
+    {
+      seq: 2,
+      kind: "claim",
+      at: null,
+      runId: 2,
+      eventId: null,
+      cardId: null,
+      feedbackId: null,
+      text: "",
+      truncated: false,
+      display: { events: [], runs: [], cards: [], completion: null, feedback: [], trigger },
+    },
+    {
+      seq: 1,
+      kind: "ingest",
+      at: null,
+      runId: null,
+      eventId: 1,
+      cardId: null,
+      feedbackId: null,
+      text: "",
+      truncated: false,
+      display: {
+        events: [{ id: 1, title: "原始任务", detail: "原始详情", availability: "recorded", truncated: false }],
+        runs: [],
+        cards: [],
+        completion: null,
+        feedback: [],
+      },
+    },
+  ];
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      await flush();
+      controller.setActive(true);
+      await flush();
+      const timeline = all(root).find((node) => node.className === "business-timeline")!;
+      assert.equal(timeline.children.length, 3);
+      const [row3, row2, row1] = timeline.children;
+      const reviewDetails = all(row3).find((node) => node.tag === "details")!;
+      const triggerDetails = all(row2).find((node) => node.tag === "details")!;
+      const proposalInput = all(row3).find((node) => node.tag === "textarea")!;
+      reviewDetails.open = true;
+      triggerDetails.open = true;
+      proposalInput.value = "保留输入草稿";
+      proposalInput.focus();
+      proposalInput.listeners.get("input")?.();
+      const replaceBefore = timeline.replaceChildrenCount;
+
+      timelineItems = [
+        {
+          seq: 4,
+          kind: "started",
+          at: null,
+          runId: 3,
+          eventId: null,
+          cardId: null,
+          feedbackId: null,
+          text: "",
+          truncated: false,
+        },
+        ...timelineItems,
+      ];
+      t.mock.timers.tick(5000);
+      await flush();
+      assert.equal(timeline.children.length, 4);
+      assert.equal(timeline.replaceChildrenCount, replaceBefore, "prepending a record must not replaceChildren");
+      assert.equal(timeline.children[1], row3);
+      assert.equal(timeline.children[2], row2);
+      assert.equal(timeline.children[3], row1);
+      assert.equal(all(row3).includes(reviewDetails), true);
+      assert.equal(reviewDetails.open, true);
+      assert.equal(all(row2).includes(triggerDetails), true);
+      assert.equal(triggerDetails.open, true);
+      assert.equal(all(row3).includes(proposalInput), true);
+      assert.equal(proposalInput.value, "保留输入草稿");
+      assert.equal(proposalInput.focused, true);
+      controller.dispose();
+    },
+    item,
+    undefined,
+    {
+      detailRead: async () => ({
+        ok: true,
+        data: {
+          task: item,
+          timeline: { items: timelineItems, hasMore: false, nextBefore: null },
+          actions: { cancelTask: true, completeTask: false, completionBlocker: "cards", correctTask: false },
+        },
+      }),
+    },
+  );
+});
+
+// Opening feedback or transient busy flags must update buttons in place without rebuilding timeline cards.
+test("feedback dialog open and explicit reread preserve timeline card nodes", async () => {
+  let finishDetail: ((v: unknown) => void) | undefined;
+  let hold = false;
+  const payload = {
+    ok: true,
+    data: {
+      task: { ...item, state: "completed", decisions: { items: [], hasMore: false } },
+      timeline: {
+        items: [
+          {
+            seq: 1,
+            kind: "task.completed",
+            at: null,
+            runId: 2,
+            eventId: null,
+            cardId: null,
+            feedbackId: null,
+            text: "",
+            truncated: false,
+            display: {
+              events: [],
+              cards: [],
+              feedback: [],
+              completion: null,
+              runs: [{ id: 2, state: "done", summary: "完成", error: "", truncated: false }],
+            },
+          },
+        ],
+        hasMore: false,
+        nextBefore: null,
+      },
+      actions: { cancelTask: false, completeTask: false, completionBlocker: null, correctTask: false },
+    },
+  };
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      await flush();
+      const timeline = all(root).find((node) => node.className === "business-timeline")!;
+      const row = timeline.children[0];
+      const feedback = all(row).find((node) => node.className === "business-feedback-entry")!;
+      feedback.fire();
+      assert.equal(timeline.children[0], row);
+      assert.equal(
+        all(row).find((node) => node.className === "business-feedback-entry"),
+        feedback,
+      );
+      hold = true;
+      controller.refreshDetail();
+      assert.equal(timeline.children[0], row, "explicit reread must not destroy mounted timeline cards");
+      assert.equal(feedback.disabled, true);
+      finishDetail!(payload);
+      await flush();
+      assert.equal(timeline.children[0], row);
+      assert.equal(feedback.disabled, false);
+    },
+    item,
+    undefined,
+    {
+      detailRead: () =>
+        hold
+          ? new Promise((resolve) => {
+              finishDetail = resolve;
+            })
+          : Promise.resolve(payload),
+    },
+  );
+});
+
+// Background detail updates must keep controls enabled, avoid collapsing expanded descriptions,
+// preserve unchanged text nodes (selection), and skip rebuilding the hidden task list.
+test("silent background refresh avoids button flash, header reflow, text rewrites and hidden list churn", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let progress = "初始进展";
+  let pendingDetail: ((v: unknown) => void) | undefined;
+  let holdDetail = false;
+  const run = {
+    id: 2,
+    rule: "r",
+    agent: "a",
+    state: "claimed",
+    attempts: 1,
+    createdAt: null,
+    claimedAt: null,
+    finishedAt: null,
+    notBefore: null,
+    summary: "",
+    error: "",
+    stopping: false,
+    usage: null,
+    truncated: false,
+  };
+  const emptyPage = { items: [], hasMore: false, nextCursor: null };
+  const activeTask = () => ({
+    ...item,
+    state: "running",
+    latestProgress: progress,
+    decisions: { items: [], hasMore: false },
+  });
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      for (let i = 0; i < 4; i++) await flush();
+      const list = all(root).find((node) => node.className === "run-list")!;
+      const title = all(root).find((node) => node.id === "task-detail-title")!;
+      const desc = all(root).find((node) => node.id === "business-header-description")!;
+      const toggle = all(root).find((node) => node.className === "business-description-toggle")!;
+      desc.scrollHeight = 120;
+      controller.refreshDetail();
+      for (let i = 0; i < 4; i++) await flush();
+      toggle.fire();
+      assert.equal(desc.dataset.expanded, "true");
+      let collapsedDuringUpdate = false;
+      const originalDataset = desc.dataset;
+      desc.dataset = new Proxy(originalDataset, {
+        set(target, prop, value) {
+          if (prop === "expanded" && value === "false") collapsedDuringUpdate = true;
+          target[prop as string] = value;
+          return true;
+        },
+      });
+      const cancelBtn = all(root).find((node) => node.tag === "button" && node.textContent === "取消任务")!;
+      cancelBtn.fire();
+      const cancelReason = all(root).find((node) => node.attributes.get("aria-label") === "取消任务原因")!;
+      const pauseBtn = all(root).find((node) => node.tag === "button" && node.textContent === "暂停任务")!;
+      const correctBtn = all(root).find((node) => node.className === "business-correct-toggle")!;
+      const titleWrites = title.textWriteCount;
+      const descWrites = desc.textWriteCount;
+      const listRebuilds = list.replaceChildrenCount;
+
+      holdDetail = true;
+      progress = "推进中";
+      controller.setActive(true);
+      // Silent refresh in flight: controls must stay enabled.
+      assert.equal(cancelBtn.disabled, false);
+      assert.equal(cancelReason.disabled, false);
+      assert.equal(pauseBtn.disabled, false);
+      assert.equal(correctBtn.disabled, false);
+      pendingDetail!({
+        ok: true,
+        data: {
+          task: activeTask(),
+          timeline: { items: [], hasMore: false, nextBefore: null },
+          actions: {
+            cancelTask: true,
+            completeTask: true,
+            pauseTask: true,
+            correctTask: true,
+            completionBlocker: null,
+          },
+        },
+      });
+      for (let i = 0; i < 4; i++) await flush();
+      assert.equal(collapsedDuringUpdate, false, "routine update must not collapse and re-expand description");
+      assert.equal(desc.dataset.expanded, "true");
+      assert.equal(title.textWriteCount, titleWrites, "unchanged title must not overwrite textContent");
+      assert.equal(desc.textWriteCount, descWrites, "unchanged description must not overwrite textContent");
+      assert.equal(list.replaceChildrenCount, listRebuilds, "hidden list must not rebuild during detail updates");
+      controller.dispose();
+    },
+    activeTask(),
+    { run, association: { kind: "unavailable" }, events: emptyPage, cards: emptyPage, relatedRuns: emptyPage },
+    {
+      detailRead: () => {
+        const response = {
+          ok: true,
+          data: {
+            task: activeTask(),
+            timeline: { items: [], hasMore: false, nextBefore: null },
+            actions: {
+              cancelTask: true,
+              completeTask: true,
+              pauseTask: true,
+              correctTask: true,
+              completionBlocker: null,
+            },
+          },
+        };
+        if (!holdDetail) return Promise.resolve(response);
+        return new Promise((resolve) => {
+          pendingDetail = resolve;
+        });
+      },
+    },
+  );
+});
+
+// Background detail updates while viewing execution history must not tear down launch controls or reset session polling.
+test("background detail update keeps session controls mounted and preserves active session poll timer", async () => {
+  const originalSet = globalThis.setTimeout,
+    originalClear = globalThis.clearTimeout;
+  const sessionTimers = new Map<number, () => void>();
+  let clearedSessionTimers = 0;
+  let serial = 0;
+  globalThis.setTimeout = ((fn: () => void, ms: number) => {
+    const id = ++serial;
+    if (ms === 2000) sessionTimers.set(id, fn);
+    return id;
+  }) as never;
+  globalThis.clearTimeout = ((id: number) => {
+    if (sessionTimers.delete(id)) clearedSessionTimers++;
+  }) as never;
+  let progress = "第一阶段";
+  const timeline = [
+    {
+      seq: 10,
+      kind: "started",
+      at: null,
+      runId: 9,
+      eventId: null,
+      cardId: null,
+      feedbackId: null,
+      text: "",
+      truncated: false,
+      display: {
+        events: [],
+        runs: [{ id: 9, state: "claimed", summary: "", error: "", truncated: false }],
+        cards: [],
+        completion: null,
+        feedback: [],
+      },
+    },
+  ];
+  try {
+    await withView(
+      async (controller, root) => {
+        controller.open("task:1");
+        await flush();
+        all(root)
+          .find((node) => node.className === "business-session-entry")!
+          .fire();
+        await flush();
+        const launchSelect = all(root).find(
+          (node) => node.tag === "select" && node.attributes.get("aria-label") === "执行 9 的启动记录",
+        )!;
+        assert.ok(launchSelect);
+        assert.equal(sessionTimers.size, 1);
+        const clearedBefore = clearedSessionTimers;
+        progress = "第二阶段";
+        controller.refreshDetail();
+        await flush();
+        assert.equal(
+          all(root).find((node) => node.tag === "select" && node.attributes.get("aria-label") === "执行 9 的启动记录"),
+          launchSelect,
+          "detail update must not recreate unchanged session launch selector",
+        );
+        assert.equal(clearedSessionTimers, clearedBefore, "detail update must not reset active 2s session poll timer");
+        controller.dispose();
+      },
+      item,
+      undefined,
+      {
+        detailRead: async () => ({
+          ok: true,
+          data: {
+            task: { ...item, latestProgress: progress },
+            timeline: { items: timeline, hasMore: false, nextBefore: null },
+          },
+        }),
+        historyRead: async () => ({
+          runId: 9,
+          attempt: 1,
+          launch: 0,
+          launches: 2,
+          page: {
+            status: "available",
+            scope: "session",
+            items: [{ id: "m1", kind: "message", at: null, text: "进展", truncated: false }],
+            cursor: "11111111-1111-1111-1111-111111111111",
+            hasMore: false,
+          },
+        }),
+      },
+    );
+  } finally {
+    globalThis.setTimeout = originalSet;
+    globalThis.clearTimeout = originalClear;
+  }
 });

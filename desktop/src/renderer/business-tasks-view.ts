@@ -1,5 +1,5 @@
 import { runTriggerDescription } from "./run-trigger-description.ts";
-import { BUSINESS_STATES, type BusinessTaskItem } from "../../../host/business-task-contract.ts";
+import { BUSINESS_STATES, type BusinessTaskItem, type BusinessTimeline } from "../../../host/business-task-contract.ts";
 import { createAgentHistoryController } from "./agent-history-controller.ts";
 import { permitsTaskNavigation } from "./task-item-navigation.ts";
 import type { DesktopBridge } from "../policy.ts";
@@ -84,6 +84,25 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, text = "", className 
   node.textContent = text;
   node.className = className;
   return node;
+}
+function setText(node: HTMLElement, value: string) {
+  if (node.textContent !== value) node.textContent = value;
+}
+function syncChildren(parent: HTMLElement, desired: readonly HTMLElement[]) {
+  if (parent.children.length === desired.length && desired.every((node, index) => parent.children[index] === node))
+    return;
+  if (typeof parent.insertBefore === "function") {
+    const wanted = new Set<Element>(desired);
+    for (let i = parent.children.length - 1; i >= 0; i--) {
+      const child = parent.children[i];
+      if (!wanted.has(child)) child.remove();
+    }
+    for (let i = 0; i < desired.length; i++) {
+      const node = desired[i];
+      const current = parent.children[i] ?? null;
+      if (current !== node) parent.insertBefore(node, current);
+    }
+  } else parent.replaceChildren(...desired);
 }
 function button(text: string, click: () => void) {
   const node = el("button", text);
@@ -182,21 +201,37 @@ export function mountBusinessTasksView(
     descriptionExpanded = false;
   const descriptionToggle = button("展开全文", () => {
     descriptionExpanded = !descriptionExpanded;
-    measureDescription();
+    measureDescription(true);
   });
   descriptionToggle.className = "business-description-toggle";
   descriptionToggle.setAttribute("aria-controls", headerDescription.id);
-  function measureDescription() {
-    // Measure the collapsed layout even when expanded; line wrapping depends on the actual width.
-    headerDescription.dataset.expanded = "false";
+  function measureDescription(force = false) {
+    if (headerDescription.hidden) {
+      descriptionExpanded = false;
+      headerDescription.dataset.expanded = "false";
+      descriptionToggle.hidden = true;
+      setText(descriptionToggle, "展开全文");
+      descriptionToggle.setAttribute("aria-expanded", "false");
+      return;
+    }
+    // Keep an already-expanded description stable across routine refreshes; ResizeObserver and
+    // content changes still re-measure when wrapping width or text actually changes.
+    if (descriptionExpanded && !force) {
+      descriptionToggle.hidden = false;
+      setText(descriptionToggle, "收起");
+      descriptionToggle.setAttribute("aria-expanded", "true");
+      return;
+    }
+    if (headerDescription.dataset.expanded !== "false") headerDescription.dataset.expanded = "false";
     const overflows = headerDescription.scrollHeight > headerDescription.clientHeight;
     if (!overflows) descriptionExpanded = false;
     headerDescription.dataset.expanded = String(descriptionExpanded);
-    descriptionToggle.hidden = headerDescription.hidden || !overflows;
-    descriptionToggle.textContent = descriptionExpanded ? "收起" : "展开全文";
+    descriptionToggle.hidden = !overflows;
+    setText(descriptionToggle, descriptionExpanded ? "收起" : "展开全文");
     descriptionToggle.setAttribute("aria-expanded", String(descriptionExpanded));
   }
-  const descriptionResize = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measureDescription);
+  const descriptionResize =
+    typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(() => measureDescription(true));
   descriptionResize?.observe(headerDescription);
   const originNotice = el("p", "", "muted");
   detailHead.append(
@@ -315,8 +350,10 @@ export function mountBusinessTasksView(
   const sessionBack = button("←", () => {
     if (controller.actionBusy || controller.mustReread) return;
     sessionRun = null;
+    sessionMetaSignature = "";
+    sessionControlsSignature = "";
     history.select(null);
-    clearTimeout(polling);
+    clearHistoryPoll();
     executionHistory.hidden = true;
     detailPage.hidden = false;
     if (options.scrollHost) options.scrollHost.scrollTop = sessionScroll;
@@ -358,27 +395,43 @@ export function mountBusinessTasksView(
   const historyRows = new Map<string, HTMLElement>();
   const payloads = new Map<string, { text: string; code: HTMLElement; expand: HTMLButtonElement; full: boolean }>();
   let renderedIdentity = "";
+  let sessionMetaSignature = "";
+  let sessionControlsSignature = "";
   let historyList: HTMLOListElement | undefined;
   let polling: ReturnType<typeof setTimeout> | undefined;
-  function scheduleHistory() {
+  let pollingKey = "";
+  function clearHistoryPoll() {
     clearTimeout(polling);
+    polling = undefined;
+    pollingKey = "";
+  }
+  function scheduleHistory() {
     const id = sessionRun;
     const key = controller.selectedKey;
     const data = controller.detail;
     const recorded = data?.timeline.items.flatMap((event) => event.display?.runs ?? []).find((run) => run.id === id);
     const state = recorded?.state ?? (controller.run?.run.id === id ? controller.run.run.state : null);
     const page = history.rounds.get(id ?? 0)?.page;
+    const targetKey = key && id !== null ? `${key}/${id}` : "";
     if (
       !sessionActive ||
       data?.task.state === "completed" ||
       id === null ||
+      !key ||
       history.busy.has(id) ||
       page?.hasMore ||
       page?.status === "changed" ||
       !["claimed", "unknown"].includes(state ?? "")
-    )
+    ) {
+      clearHistoryPoll();
       return;
+    }
+    if (polling !== undefined && pollingKey === targetKey) return;
+    clearHistoryPoll();
+    pollingKey = targetKey;
     polling = setTimeout(() => {
+      polling = undefined;
+      pollingKey = "";
       if (root.isConnected && sessionActive && sessionRun === id && controller.selectedKey === key)
         history.read(id, !!history.rounds.get(id)?.page.cursor);
     }, 2000);
@@ -386,45 +439,64 @@ export function mountBusinessTasksView(
   function renderHistory() {
     allRecords.setAttribute("aria-pressed", String(!agentOnly));
     agentRecords.setAttribute("aria-pressed", String(agentOnly));
-    sessionNotes.replaceChildren();
-    sessionControls.replaceChildren();
     const data = controller.detail;
-    if (!data) return;
-    const ids = sessionRun === null ? [] : [sessionRun];
-    sessionHeading.textContent = "执行会话";
+    if (!data || sessionRun === null) return;
+    const id = sessionRun;
+    setText(sessionHeading, "执行会话");
     const knownRun = data.timeline.items
       .flatMap((event) => event.display?.runs ?? [])
       .find((run) => run.id === sessionRun);
     const currentRun = controller.run?.run;
     const agent = currentRun?.id === sessionRun ? currentRun.agent : "Agent 名称未记录";
     const state = knownRun?.state ?? (currentRun?.id === sessionRun ? currentRun.state : null);
-    sessionState.textContent = roundLabels[state ?? ""] ?? "轮次状态未记录";
+    setText(sessionState, roundLabels[state ?? ""] ?? "轮次状态未记录");
     sessionState.dataset.state = state ?? "unknown";
-    sessionIdentity.textContent = `${agent} · 执行 #${sessionRun}`;
-    sessionMeta.replaceChildren(el("span", `任务 #${data.task.id}`));
-    for (const id of ids) {
+    setText(sessionIdentity, `${agent} · 执行 #${sessionRun}`);
+    const result = history.rounds.get(id);
+    const nextMetaSignature = JSON.stringify([
+      data.task.id,
+      result?.page.status === "available" ? [result.attempt, result.launch, result.launches] : null,
+    ]);
+    if (nextMetaSignature !== sessionMetaSignature) {
+      sessionMetaSignature = nextMetaSignature;
+      const metaNodes = [el("span", `任务 #${data.task.id}`)];
+      if (result?.page.status === "available")
+        metaNodes.push(
+          el("span", `第 ${result.attempt} 次执行`),
+          el("span", `启动 ${result.launch + 1} / ${result.launches}`),
+        );
+      sessionMeta.replaceChildren(...metaNodes);
+    }
+    const nextControlsSignature = JSON.stringify([
+      id,
+      !result && history.rounds.size + history.busy.size >= 20,
+      history.busy.has(id) && !result?.page.items.length,
+      !options.history?.agentHistory,
+      result?.page.status ?? null,
+      result?.attempt ?? null,
+      result?.launch ?? null,
+      result?.launches ?? null,
+      result?.page.status === "available" && !result.page.items.length,
+      history.capped.has(id),
+    ]);
+    if (nextControlsSignature !== sessionControlsSignature) {
+      sessionControlsSignature = nextControlsSignature;
+      sessionNotes.replaceChildren();
       const round = el("section", "", "agent-history-round");
-      const result = history.rounds.get(id);
       if (!result && history.rounds.size + history.busy.size >= 20)
         round.append(el("p", "本任务已达 20 个会话的读取上限，请重新进入任务后选择需要的旧轮。", "muted"));
-      if (!result) sessionMessages.replaceChildren();
       if (history.busy.has(id) && !result?.page.items.length) round.append(el("p", "正在读取已保存记录…", "muted"));
       if (!options.history?.agentHistory)
         round.append(el("p", "此连接暂不支持会话读取；已记录资料与结果仍可查看。", "muted"));
       if (result) {
-        if (result.page.status !== "available") sessionMessages.replaceChildren();
-        const messages: Record<string, string> = {
+        const statusMessages: Record<string, string> = {
           missing: "缺少新启动的可信历史关联，或会话文件尚未落盘；不猜会话，也不据此判断派发资料缺失。",
           unavailable: "本机历史不可读（权限、路径安全或运行身份不满足）；已记录触发资料和执行结果仍在任务记录中。",
           unsupported: "此连接暂不支持会话读取；已记录资料与结果仍可查看。",
           changed: "文件或读取上下文已变化，请从头重新读取。",
         };
-        if (result.page.status !== "available") round.append(el("p", messages[result.page.status], "muted"));
+        if (result.page.status !== "available") round.append(el("p", statusMessages[result.page.status], "muted"));
         else {
-          sessionMeta.append(
-            el("span", `第 ${result.attempt} 次执行`),
-            el("span", `启动 ${result.launch + 1} / ${result.launches}`),
-          );
           if (result.launches > 1) {
             const launch = el("select");
             launch.setAttribute("aria-label", `执行 ${id} 的启动记录`);
@@ -441,100 +513,6 @@ export function mountBusinessTasksView(
           }
           if (result.attempt > 1)
             round.append(button("读取前一次执行关联", () => history.read(id, false, { attempt: result.attempt - 1 })));
-          const identity = `${id}/${result.attempt}/${result.launch}`;
-          if (
-            renderedIdentity !== identity ||
-            result.page.items.length < historyRows.size ||
-            [...historyRows.keys()].some((key) => !result.page.items.some((item) => item.id === key))
-          ) {
-            renderedIdentity = identity;
-            historyRows.clear();
-            payloads.clear();
-            historyList = undefined;
-          }
-          const list = historyList ?? (historyList = el("ol", "", "agent-history-timeline"));
-          const calls = new Map<string, HTMLElement>();
-          for (const item of result.page.items) {
-            if (item.kind === "tool-call" && item.toolUseId && (item.part ?? 0) === 0)
-              calls.set(item.toolUseId, historyRows.get(item.id)!);
-          }
-          for (const item of result.page.items) {
-            if (historyRows.has(item.id)) continue;
-            const base = item.part !== undefined ? item.id.replace(/:[0-9]+$/, "") : item.id;
-            const existing = payloads.get(base);
-            if (existing && (item.part ?? 0) > 0) {
-              historyRows.set(item.id, historyRows.get(`${base}:0`)!);
-              existing.text += item.text;
-              if (existing.full) existing.code.append(document.createTextNode(item.text));
-              else existing.expand.hidden = existing.text.length <= 600 && !item.truncated;
-              continue;
-            }
-            const row = el("li", "", item.kind === "message" ? "session-record" : "session-record session-activity");
-            const target = item.kind === "tool-result" && item.toolUseId ? calls.get(item.toolUseId) : undefined;
-            const card =
-              (target?.firstElementChild as HTMLElement | undefined) ??
-              el("article", "", item.kind === "message" ? "session-card" : "session-card session-tool-card");
-            historyRows.set(item.id, row);
-            row.dataset.agent = String(item.kind === "message" && (item.role ?? "assistant") === "assistant");
-            const title =
-              item.kind === "tool-call"
-                ? (item.name ?? "工具名称未记录")
-                : item.kind === "tool-result"
-                  ? "未关联的工具结果"
-                  : item.role === "task-input"
-                    ? "任务输入"
-                    : item.role === "user"
-                      ? "用户"
-                      : "Agent";
-            if (item.kind === "message" && item.role === "user") card.className += " session-user-card";
-            const head = el("header", "", "session-card-head");
-            if (item.kind === "message") head.append(el("span", title === "Agent" ? "A" : "U", "session-avatar"));
-            head.append(
-              el("strong", title),
-              el("time", item.at ? new Date(item.at).toLocaleTimeString("zh-CN") : "时间未记录", "muted"),
-            );
-            if (!target) {
-              card.append(head);
-              if (item.toolUseId) card.append(el("p", item.toolUseId, "session-tool-reference"));
-            }
-            const payload = el("div", "", "session-payload");
-            const code = el("code", item.text.slice(0, 600));
-            const pre = el("pre");
-            pre.append(code);
-            payload.append(pre);
-            const state = { text: item.text, code, expand: undefined as unknown as HTMLButtonElement, full: false };
-            const expand = button("展开全文", () => {
-              if (state.full) return;
-              code.append(document.createTextNode(state.text.slice(600)));
-              state.full = true;
-              expand.hidden = true;
-            });
-            state.expand = expand;
-            expand.hidden = item.text.length <= 600 && !item.truncated;
-            expand.className = "session-payload-expand";
-            payload.append(expand);
-            payloads.set(base, state);
-            if (item.kind !== "message")
-              card.append(
-                el(
-                  "p",
-                  item.kind === "tool-call"
-                    ? "调用参数"
-                    : `${item.error ? "返回错误" : "调用结果"} · ${item.at ? new Date(item.at).toLocaleTimeString("zh-CN") : "时间未记录"}`,
-                  "session-payload-label",
-                ),
-              );
-            card.append(payload);
-            if (target) {
-              historyRows.set(item.id, target);
-            } else {
-              row.append(card);
-              list.append(row);
-            }
-            if (item.kind === "tool-call" && item.toolUseId && (item.part ?? 0) === 0) calls.set(item.toolUseId, row);
-          }
-          for (const row of historyRows.values()) row.hidden = agentOnly && row.dataset.agent !== "true";
-          if (sessionMessages.firstElementChild !== list) sessionMessages.replaceChildren(list);
           if (!result.page.items.length)
             round.append(el("p", "尚无可公开的已保存过程记录，不用业务摘要补造。", "muted"));
         }
@@ -543,8 +521,106 @@ export function mountBusinessTasksView(
         round.append(
           el("p", "会话超过页面容量，尚未读取完整。已读记录保留，请在本机原始会话文件查看剩余记录。", "error"),
         );
-      sessionControls.append(round);
+      sessionControls.replaceChildren(round);
     }
+    if (!result || result.page.status !== "available") {
+      if (sessionMessages.children.length) sessionMessages.replaceChildren();
+      return;
+    }
+    const identity = `${id}/${result.attempt}/${result.launch}`;
+    if (
+      renderedIdentity !== identity ||
+      result.page.items.length < historyRows.size ||
+      [...historyRows.keys()].some((key) => !result.page.items.some((item) => item.id === key))
+    ) {
+      renderedIdentity = identity;
+      historyRows.clear();
+      payloads.clear();
+      historyList = undefined;
+    }
+    const list = historyList ?? (historyList = el("ol", "", "agent-history-timeline"));
+    const calls = new Map<string, HTMLElement>();
+    for (const item of result.page.items) {
+      if (item.kind === "tool-call" && item.toolUseId && (item.part ?? 0) === 0)
+        calls.set(item.toolUseId, historyRows.get(item.id)!);
+    }
+    for (const item of result.page.items) {
+      if (historyRows.has(item.id)) continue;
+      const base = item.part !== undefined ? item.id.replace(/:[0-9]+$/, "") : item.id;
+      const existing = payloads.get(base);
+      if (existing && (item.part ?? 0) > 0) {
+        historyRows.set(item.id, historyRows.get(`${base}:0`)!);
+        existing.text += item.text;
+        if (existing.full) existing.code.append(document.createTextNode(item.text));
+        else existing.expand.hidden = existing.text.length <= 600 && !item.truncated;
+        continue;
+      }
+      const row = el("li", "", item.kind === "message" ? "session-record" : "session-record session-activity");
+      const target = item.kind === "tool-result" && item.toolUseId ? calls.get(item.toolUseId) : undefined;
+      const card =
+        (target?.firstElementChild as HTMLElement | undefined) ??
+        el("article", "", item.kind === "message" ? "session-card" : "session-card session-tool-card");
+      historyRows.set(item.id, row);
+      row.dataset.agent = String(item.kind === "message" && (item.role ?? "assistant") === "assistant");
+      const title =
+        item.kind === "tool-call"
+          ? (item.name ?? "工具名称未记录")
+          : item.kind === "tool-result"
+            ? "未关联的工具结果"
+            : item.role === "task-input"
+              ? "任务输入"
+              : item.role === "user"
+                ? "用户"
+                : "Agent";
+      if (item.kind === "message" && item.role === "user") card.className += " session-user-card";
+      const head = el("header", "", "session-card-head");
+      if (item.kind === "message") head.append(el("span", title === "Agent" ? "A" : "U", "session-avatar"));
+      head.append(
+        el("strong", title),
+        el("time", item.at ? new Date(item.at).toLocaleTimeString("zh-CN") : "时间未记录", "muted"),
+      );
+      if (!target) {
+        card.append(head);
+        if (item.toolUseId) card.append(el("p", item.toolUseId, "session-tool-reference"));
+      }
+      const payload = el("div", "", "session-payload");
+      const code = el("code", item.text.slice(0, 600));
+      const pre = el("pre");
+      pre.append(code);
+      payload.append(pre);
+      const itemState = { text: item.text, code, expand: undefined as unknown as HTMLButtonElement, full: false };
+      const expand = button("展开全文", () => {
+        if (itemState.full) return;
+        code.append(document.createTextNode(itemState.text.slice(600)));
+        itemState.full = true;
+        expand.hidden = true;
+      });
+      itemState.expand = expand;
+      expand.hidden = item.text.length <= 600 && !item.truncated;
+      expand.className = "session-payload-expand";
+      payload.append(expand);
+      payloads.set(base, itemState);
+      if (item.kind !== "message")
+        card.append(
+          el(
+            "p",
+            item.kind === "tool-call"
+              ? "调用参数"
+              : `${item.error ? "返回错误" : "调用结果"} · ${item.at ? new Date(item.at).toLocaleTimeString("zh-CN") : "时间未记录"}`,
+            "session-payload-label",
+          ),
+        );
+      card.append(payload);
+      if (target) {
+        historyRows.set(item.id, target);
+      } else {
+        row.append(card);
+        list.append(row);
+      }
+      if (item.kind === "tool-call" && item.toolUseId && (item.part ?? 0) === 0) calls.set(item.toolUseId, row);
+    }
+    for (const row of historyRows.values()) row.hidden = agentOnly && row.dataset.agent !== "true";
+    if (sessionMessages.firstElementChild !== list) sessionMessages.replaceChildren(list);
   }
   back.className = "task-back-button";
   back.setAttribute("aria-label", "返回任务列表");
@@ -650,7 +726,7 @@ export function mountBusinessTasksView(
   let formsKey = "",
     runFormsKey = "",
     feedbackFormsKey = "";
-  const controls: HTMLButtonElement[] = [];
+  const decisionControls: HTMLButtonElement[] = [];
   const decisionEmpty = el("p", "没有已记录的开放提问。", "muted");
   const decisionMore = el("p", "还有未展示的开放提问，请在执行诊断或原通道查看；不能把这一页当作全部。", "muted");
   const decisionForms = new Map<string, HTMLElement>();
@@ -758,7 +834,6 @@ export function mountBusinessTasksView(
       });
     });
     send.dataset.cardId = String(card.id);
-    controls.push(send);
     send.disabled =
       !controller.detailFresh ||
       controller.actionBusy ||
@@ -766,6 +841,7 @@ export function mountBusinessTasksView(
       controller.detailBusy ||
       !!controller.detailError;
     form.append(choices, text, send, validation);
+    return send;
   }
   function draftArea(key: string, label: string) {
     const area = el("textarea");
@@ -780,7 +856,239 @@ export function mountBusinessTasksView(
     });
     return area;
   }
-  let timelineSignature = "";
+  type TimelineRowEntry = {
+    key: string;
+    row: HTMLLIElement;
+    contentSignature: string;
+    sessionButtons: HTMLButtonElement[];
+    feedbackButtons: HTMLButtonElement[];
+    answerControls: HTMLButtonElement[];
+    reviewDueChecks: { at: string | null; state: string; element: HTMLParagraphElement }[];
+  };
+  let renderedListItems: readonly BusinessTaskItem[] | null = null;
+  let timelineTaskKey = "";
+  let timelineEmptyRow: HTMLLIElement | null = null;
+  const timelineRows = new Map<string, TimelineRowEntry>();
+  function populateTimelineRow(
+    taskKey: string,
+    event: BusinessTimeline["items"][number],
+    row: HTMLLIElement,
+    openReviews: Set<string>,
+    triggerOpen: boolean,
+  ): Omit<TimelineRowEntry, "key" | "row" | "contentSignature"> {
+    const sessionButtons: HTMLButtonElement[] = [];
+    const feedbackButtons: HTMLButtonElement[] = [];
+    const answerControls: HTMLButtonElement[] = [];
+    const reviewDueChecks: { at: string | null; state: string; element: HTMLParagraphElement }[] = [];
+    row.className = ["claim", "claimNext", "started"].includes(event.kind) ? "business-compact-record" : "";
+    if (event.cardId) row.dataset.questionId = String(event.cardId);
+    else if (event.display?.cards.length === 1) row.dataset.questionId = String(event.display.cards[0].id);
+    else delete row.dataset.questionId;
+    const record = el("article", "", "business-record-card");
+    const heading = el("div", "", "business-record-heading");
+    const display = event.display;
+    const completed = event.kind === "task.completed" || event.kind === "completeTask";
+    const names: Record<string, string> = {
+      ingest: "收到任务",
+      event: "收到任务",
+      claim: "接单程序领取任务",
+      claimNext: "接单程序领取任务",
+      started: "开始执行",
+      result: "本轮结束",
+      finish: "本轮结束",
+      "task.completed": "任务已完成",
+      answer: "方案已获确认",
+    };
+    // A receipt can update cards from an older round while resolving them; those are not new proposals.
+    const proposalCards = completed
+      ? []
+      : (display?.cards ?? []).filter(
+          (card) =>
+            event.kind === "answer" ||
+            (["finish", "result"].includes(event.kind) && event.runId !== null && card.runId === event.runId),
+        );
+    const recordTitle =
+      ["finish", "result"].includes(event.kind) && proposalCards.some((card) => card.kind === "ask")
+        ? "本轮结束，提出方案"
+        : (names[event.kind] ?? timelineLabels[event.kind] ?? "已记录操作");
+    heading.append(el("strong", recordTitle));
+    if (event.runId !== null) heading.append(el("span", `执行 #${event.runId}`, "business-record-run"));
+    heading.append(el("time", historyTime(event.at), "muted"));
+    record.append(heading);
+    if (completed) record.className += " business-completed-card";
+    if (["ingest", "event"].includes(event.kind)) {
+      if (display?.events.length)
+        for (const request of display.events) {
+          const intake = el("section", "", "business-intake-subcard");
+          intake.append(el("h4", request.title), el("p", request.detail));
+          if (request.availability === "missing-history") intake.append(el("p", "原始资料历史缺失。", "muted"));
+          if (request.availability === "empty") intake.append(el("p", "提交时未填写详情。", "muted"));
+          if (request.truncated) intake.append(el("p", "此资料仅显示部分，不能视为完整原文。", "muted"));
+          record.append(intake);
+        }
+      else record.append(el("p", "当前记录未提供完整任务资料，请升级中台后重新读取。", "muted"));
+    } else if (["claim", "claimNext"].includes(event.kind)) {
+      if (display?.trigger) {
+        const section = el("section", "", "business-record-explanation");
+        section.append(el("span", "本轮触发资料", "business-card-label"));
+        const text = runTriggerDescription(display.trigger);
+        if ([...text].length > 160) {
+          const long = el("details", "", "business-trigger-details");
+          long.open = triggerOpen;
+          long.append(el("summary", [...text].slice(0, 160).join("") + "…（展开）"), el("pre", text));
+          section.append(long);
+        } else section.append(el("p", text));
+        record.append(section);
+      }
+    } else if (event.kind === "started" && event.runId !== null) {
+      const id = event.runId;
+      const session = button("查看执行会话 →", () => {
+        sessionScroll = options.scrollHost?.scrollTop ?? 0;
+        sessionRun = id;
+        sessionMetaSignature = "";
+        sessionControlsSignature = "";
+        expanded.add(id);
+        historyRows.clear();
+        payloads.clear();
+        historyList = undefined;
+        history.select(`${controller.selectedKey}/${id}`);
+        detailPage.hidden = true;
+        executionHistory.hidden = false;
+        if (options.scrollHost) options.scrollHost.scrollTop = 0;
+        history.read(id);
+        renderHistory();
+      });
+      session.className = "business-session-entry";
+      sessionButtons.push(session);
+      record.append(session);
+    } else if (!["claim", "claimNext", "answer"].includes(event.kind)) {
+      if (display?.completion?.by === "owner") record.append(el("p", display.completion.reason));
+      else if (display?.runs.length)
+        for (const result of display.runs) {
+          const explanation = el("section", "", "business-record-explanation");
+          explanation.append(el("span", "执行者说明", "business-card-label"));
+          explanation.append(
+            el(
+              "p",
+              result.summary ||
+                (result.state === "done"
+                  ? "本轮已结束，未填写结果。"
+                  : (roundLabels[result.state ?? ""] ?? "轮次状态未记录")),
+            ),
+          );
+          record.append(explanation);
+          if (result.error) record.append(el("p", result.error, "business-record-error"));
+          if (result.truncated) record.append(el("p", "此结果仅显示部分。", "muted"));
+        }
+      else if (event.text && !display?.cards.length && !display?.reviews?.items.length)
+        record.append(el("p", event.text));
+    }
+    if (display?.reviews?.items.length) {
+      const section = el("section", "", "business-record-explanation business-reviews");
+      for (const review of display.reviews.items) {
+        const item = el("section", "", "business-review-item");
+        const title = el("div", "", "business-review-heading");
+        const label =
+          review.action === "cancelled"
+            ? "已取消复查"
+            : review.action === "triggered"
+              ? "本次复查已触发"
+              : "已安排复查";
+        const state =
+          review.state === "pending"
+            ? "待复查"
+            : review.state === "triggered"
+              ? "已触发"
+              : review.state === "cancelled"
+                ? "已取消"
+                : "状态未记录";
+        title.append(el("strong", label), el("span", state, "business-review-state"));
+        item.append(title, el("p", review.key || "复查标识未记录", "business-review-key"));
+        item.append(el("p", `复查时间：${historyTime(review.at)}`));
+        const dueNote = el("p", "", "muted");
+        dueNote.hidden = true;
+        reviewDueChecks.push({ at: review.at, state: review.state, element: dueNote });
+        item.append(dueNote);
+        if (review.state === "unknown") item.append(el("p", "缺少可核对的复查历史。", "muted"));
+        const details = el("details", "", "business-review-details");
+        details.dataset.reviewId = String(review.id);
+        // Keep each historical fact independent, including reschedules of the same timer.
+        details.dataset.reviewIdentity = `${taskKey}/${event.seq}/${review.id}`;
+        details.open = openReviews.has(details.dataset.reviewIdentity);
+        const summary = el("summary", details.open ? "收起交接详情" : "查看交接详情");
+        details.append(summary, el("pre", review.about || "交接资料未记录"));
+        details.addEventListener("toggle", () => {
+          setText(summary, details.open ? "收起交接详情" : "查看交接详情");
+        });
+        item.append(details);
+        if (review.truncated) item.append(el("p", "此复查内容仅显示部分。", "muted"));
+        section.append(item);
+      }
+      if (display.reviews.truncated) section.append(el("p", "复查数量超限，仅显示前20项。", "muted"));
+      record.append(section);
+    } else if (!display?.reviews && ["finish", "result"].includes(event.kind))
+      record.append(el("p", "当前记录未提供复查信息。", "muted"));
+    for (const original of proposalCards) {
+      const card = original;
+      const question = el("section", "", "business-record-question");
+      question.dataset.questionId = String(card.id);
+      question.append(
+        el("span", `${event.kind === "answer" ? "问题" : "待确认方案 · 问题"} #${card.id}`, "business-card-label"),
+        el("h4", original.title),
+        el("p", original.text),
+      );
+      record.append(question);
+      if (card.kind === "ask" && card.state === "open" && event.kind !== "answer") {
+        const form = el("section", "", "business-proposal-actions");
+        answerControls.push(answerForm(taskKey, card, form));
+        record.append(form);
+      } else {
+        if (event.kind !== "answer") {
+          const choices = el("div", "", "business-proposal-actions");
+          original.options.forEach((option, index) => {
+            const choice = button(option, () => {});
+            const selected = card.choice === index;
+            choice.className = selected ? "is-selected" : "is-unselected";
+            if (selected) choice.append(el("span", "已选择", "selection-badge"));
+            choice.setAttribute("aria-pressed", String(selected));
+            choice.disabled = true;
+            choices.append(choice);
+          });
+          record.append(choices);
+        }
+        if (card.choice !== null || card.answer !== null || event.kind === "answer") {
+          const answer = el("section", "", "business-record-answer");
+          answer.append(el("span", "已记录的回答", "business-card-label"));
+          if (card.choice !== null)
+            answer.append(el("p", `已选选项：${card.options[card.choice] ?? "选项原文未记录"}`));
+          if (card.answer !== null) answer.append(el("p", card.answer));
+          if (card.choice === null && card.answer === null) answer.append(el("p", "回答内容未记录"));
+          record.append(answer);
+        }
+      }
+      if (original.truncated) question.append(el("p", "此问题仅显示部分。", "muted"));
+    }
+    for (const result of display?.runs ?? [])
+      if (result.state === "done" && ["finish", "result", "task.completed"].includes(event.kind)) {
+        const footer = el("footer", "", "business-completion-footer");
+        const feedback = button("反馈", () => {
+          feedbackControls.dataset.runId = String(result.id);
+          update();
+          openDialog(feedbackControls, feedback);
+        });
+        feedback.dataset.feedbackFact = `${event.seq}/${result.id}`;
+        feedback.className = "business-feedback-entry";
+        const icon = el("span", "", "business-feedback-icon");
+        icon.setAttribute("aria-hidden", "true");
+        feedback.replaceChildren(icon, el("span", "反馈"));
+        feedbackButtons.push(feedback);
+        footer.append(feedback);
+        record.append(footer);
+      }
+    if (event.truncated) record.append(el("p", "此条记录仅显示部分。", "muted"));
+    row.replaceChildren(record);
+    return { sessionButtons, feedbackButtons, answerControls, reviewDueChecks };
+  }
   function update() {
     const names = [...new Set([...controller.rules, ...(chosenRule ? [chosenRule] : [])])].sort();
     const signature = JSON.stringify(names);
@@ -853,129 +1161,133 @@ export function mountBusinessTasksView(
     pageLabel.textContent = `第 ${controller.pageNumber} 页`;
     more.disabled = controller.busy || !controller.hasMore;
     const listScroll = options.scrollHost?.scrollTop;
-    list.replaceChildren();
-    for (const task of controller.items) {
-      const card = el("li", "", "tasks-run-card");
-      card.dataset.taskKey = task.key;
-      card.dataset.state = task.kind === "legacy" ? (task.execution?.state ?? "unknown") : task.state;
-      const legacy = task.kind === "legacy";
-      const heading = el("div", "", "business-card-head");
-      const taskLink = el("span", taskTitle(task), "business-task-link");
-      taskLink.setAttribute("role", "link");
-      taskLink.tabIndex = 0;
-      const taskHeading = el("h3");
-      taskHeading.append(taskLink);
-      heading.append(taskHeading, el("span", taskState(task), "tasks-run-state"));
-      let selectedDuringGesture = false;
-      const hasSelection = () => !!document.getSelection?.()?.toString();
-      const navigate = () => controller.open(task.key);
-      card.addEventListener("pointerdown", () => {
-        selectedDuringGesture = hasSelection();
-      });
-      card.addEventListener("pointerup", () => {
-        selectedDuringGesture ||= hasSelection();
-      });
-      card.addEventListener("click", (event) => {
-        const selected = selectedDuringGesture || hasSelection();
-        selectedDuringGesture = false;
-        if (
-          permitsTaskNavigation(
-            {
-              ...event,
-              target: event.target as Element,
-              button: event.button,
-              defaultPrevented: event.defaultPrevented,
-              ctrlKey: event.ctrlKey,
-              metaKey: event.metaKey,
-              shiftKey: event.shiftKey,
-              altKey: event.altKey,
-            },
-            selected,
+    if (!open && renderedListItems !== controller.items) {
+      renderedListItems = controller.items;
+      list.replaceChildren();
+      for (const task of controller.items) {
+        const card = el("li", "", "tasks-run-card");
+        card.dataset.taskKey = task.key;
+        card.dataset.state = task.kind === "legacy" ? (task.execution?.state ?? "unknown") : task.state;
+        const legacy = task.kind === "legacy";
+        const heading = el("div", "", "business-card-head");
+        const taskLink = el("span", taskTitle(task), "business-task-link");
+        taskLink.setAttribute("role", "link");
+        taskLink.tabIndex = 0;
+        const taskHeading = el("h3");
+        taskHeading.append(taskLink);
+        heading.append(taskHeading, el("span", taskState(task), "tasks-run-state"));
+        let selectedDuringGesture = false;
+        const hasSelection = () => !!document.getSelection?.()?.toString();
+        const navigate = () => controller.open(task.key);
+        card.addEventListener("pointerdown", () => {
+          selectedDuringGesture = hasSelection();
+        });
+        card.addEventListener("pointerup", () => {
+          selectedDuringGesture ||= hasSelection();
+        });
+        card.addEventListener("click", (event) => {
+          const selected = selectedDuringGesture || hasSelection();
+          selectedDuringGesture = false;
+          if (
+            permitsTaskNavigation(
+              {
+                ...event,
+                target: event.target as Element,
+                button: event.button,
+                defaultPrevented: event.defaultPrevented,
+                ctrlKey: event.ctrlKey,
+                metaKey: event.metaKey,
+                shiftKey: event.shiftKey,
+                altKey: event.altKey,
+              },
+              selected,
+            )
           )
-        )
-          navigate();
-      });
-      taskLink.addEventListener("click", (event) => {
-        if (
-          permitsTaskNavigation(
-            {
-              button: event.button,
-              target: null,
-              defaultPrevented: event.defaultPrevented,
-              ctrlKey: event.ctrlKey,
-              metaKey: event.metaKey,
-              shiftKey: event.shiftKey,
-              altKey: event.altKey,
-            },
-            selectedDuringGesture || hasSelection(),
+            navigate();
+        });
+        taskLink.addEventListener("click", (event) => {
+          if (
+            permitsTaskNavigation(
+              {
+                button: event.button,
+                target: null,
+                defaultPrevented: event.defaultPrevented,
+                ctrlKey: event.ctrlKey,
+                metaKey: event.metaKey,
+                shiftKey: event.shiftKey,
+                altKey: event.altKey,
+              },
+              selectedDuringGesture || hasSelection(),
+            )
           )
-        )
+            navigate();
+        });
+        taskLink.addEventListener("keydown", (event) => {
+          if (
+            event.key !== "Enter" ||
+            event.target !== taskLink ||
+            event.repeat ||
+            event.ctrlKey ||
+            event.metaKey ||
+            event.altKey ||
+            event.shiftKey
+          )
+            return;
+          event.preventDefault();
           navigate();
-      });
-      taskLink.addEventListener("keydown", (event) => {
-        if (
-          event.key !== "Enter" ||
-          event.target !== taskLink ||
-          event.repeat ||
-          event.ctrlKey ||
-          event.metaKey ||
-          event.altKey ||
-          event.shiftKey
-        )
-          return;
-        event.preventDefault();
-        navigate();
-      });
-      const meta = el("div", "", "business-card-meta");
-      meta.append(
-        el("span", legacy ? `历史执行 · 执行 #${task.id} · ${task.rule}` : `任务 #${task.id} · ${task.rule}`),
-        el("time", task.createdAt ? new Date(task.createdAt).toLocaleString("zh-CN") : "时间未记录"),
-      );
-      card.append(meta, heading);
-      if (!legacy)
-        card.append(
-          el(
-            "p",
-            task.origin.availability === "missing-history"
-              ? "原始需求历史缺失"
-              : task.origin.detail || "提交时未填写详情",
-            "tasks-run-detail",
-          ),
+        });
+        const meta = el("div", "", "business-card-meta");
+        meta.append(
+          el("span", legacy ? `历史执行 · 执行 #${task.id} · ${task.rule}` : `任务 #${task.id} · ${task.rule}`),
+          el("time", task.createdAt ? new Date(task.createdAt).toLocaleString("zh-CN") : "时间未记录"),
         );
-      else
-        card.append(
-          el(
-            "p",
-            task.origin.availability === "missing-history"
-              ? "本轮触发详情未读取或没有可用事件关联；可进入详情核对，不据此认定派发资料缺失。"
-              : `触发资料：${task.origin.detail || task.origin.title || "本轮未提供触发详情"}`,
-            "tasks-run-detail",
-          ),
-        );
-      if (task.origin.truncated)
-        card.append(el("p", `${legacy ? "触发资料" : "原始需求"}当前仅显示部分，请进入详情核对。`, "muted"));
-      for (const question of task.decisions.items) {
-        const decision = el("section", "", "business-decision");
-        decision.append(el("strong", `待你决定：${question.title}`), el("p", question.text));
-        question.options.forEach((option, index) =>
-          decision.append(el("p", `${index + 1}. ${option}${question.recommend === index ? " · 推荐" : ""}`)),
-        );
-        if (question.truncated) decision.append(el("p", "此问题当前仅显示部分，请进入详情核对。", "muted"));
-        card.append(decision);
+        card.append(meta, heading);
+        if (!legacy)
+          card.append(
+            el(
+              "p",
+              task.origin.availability === "missing-history"
+                ? "原始需求历史缺失"
+                : task.origin.detail || "提交时未填写详情",
+              "tasks-run-detail",
+            ),
+          );
+        else
+          card.append(
+            el(
+              "p",
+              task.origin.availability === "missing-history"
+                ? "本轮触发详情未读取或没有可用事件关联；可进入详情核对，不据此认定派发资料缺失。"
+                : `触发资料：${task.origin.detail || task.origin.title || "本轮未提供触发详情"}`,
+              "tasks-run-detail",
+            ),
+          );
+        if (task.origin.truncated)
+          card.append(el("p", `${legacy ? "触发资料" : "原始需求"}当前仅显示部分，请进入详情核对。`, "muted"));
+        for (const question of task.decisions.items) {
+          const decision = el("section", "", "business-decision");
+          decision.append(el("strong", `待你决定：${question.title}`), el("p", question.text));
+          question.options.forEach((option, index) =>
+            decision.append(el("p", `${index + 1}. ${option}${question.recommend === index ? " · 推荐" : ""}`)),
+          );
+          if (question.truncated) decision.append(el("p", "此问题当前仅显示部分，请进入详情核对。", "muted"));
+          card.append(decision);
+        }
+        if (task.decisions.hasMore) card.append(el("p", "还有待决策问题，请进入详情查看。", "muted"));
+        list.append(card);
       }
-      if (task.decisions.hasMore) card.append(el("p", "还有待决策问题，请进入详情查看。", "muted"));
-      list.append(card);
+      if (listScroll !== undefined && options.scrollHost) options.scrollHost.scrollTop = listScroll;
     }
-    if (!open && listScroll !== undefined && options.scrollHost) options.scrollHost.scrollTop = listScroll;
     if (!open && pendingScroll && !controller.busy) {
       if (options.scrollHost) options.scrollHost.scrollTop = scroll;
       pendingScroll = false;
     }
     const data = controller.detail;
-    clearTimeout(polling);
-    polling = undefined;
     if (tabTask !== (controller.selectedKey ?? "")) {
+      clearHistoryPoll();
       sessionRun = null;
+      sessionMetaSignature = "";
+      sessionControlsSignature = "";
       historyRows.clear();
       historyList = undefined;
       tabTask = controller.selectedKey ?? "";
@@ -989,60 +1301,69 @@ export function mountBusinessTasksView(
     readDetail.hidden = !controller.mustReread && !controller.detailError;
     actionStatus.hidden = !controller.actionMessage;
     timelineStatus.hidden = !controller.detailError;
-    renderHistory();
-    scheduleHistory();
-    timelineStatus.textContent = controller.detailError
-      ? (messages[controller.detailError] ?? controller.detailError)
-      : "";
+    if (open && sessionRun !== null) {
+      renderHistory();
+      scheduleHistory();
+    } else clearHistoryPoll();
+    setText(timelineStatus, controller.detailError ? (messages[controller.detailError] ?? controller.detailError) : "");
     back.disabled = controller.actionBusy || controller.mustReread;
     back.setAttribute("aria-label", options.backLabel?.() ?? "返回任务列表");
     readDetail.disabled = controller.detailBusy || controller.actionBusy;
     if (!data) {
-      title.textContent = "任务详情";
+      setText(title, "任务详情");
       decisions.hidden = runActions.hidden = timeline.hidden = diagnosis.hidden = true;
       timelineMore.hidden = true;
       return;
     }
     const task = data.task;
-    roundNote.textContent = `${task.execution ? roundLabels[task.execution.state] : "轮次状态未记录"}${task.decisions.items.length || task.decisions.hasMore ? " · 有待回答问题" : " · 无待回答问题"}`;
+    setText(
+      roundNote,
+      `${task.execution ? roundLabels[task.execution.state] : "轮次状态未记录"}${task.decisions.items.length || task.decisions.hasMore ? " · 有待回答问题" : " · 无待回答问题"}`,
+    );
     const transition = ["pausing", "cancelling"].includes(task.state) ? labels[task.state] : "";
-    progress.textContent = transition || task.latestProgress || "";
+    setText(progress, transition || task.latestProgress || "");
     progress.hidden = !progress.textContent;
     decisions.hidden = timeline.hidden = diagnosis.hidden = false;
-    title.textContent = taskTitle(task);
+    setText(title, taskTitle(task));
     const nextDescriptionKey = `${task.key}:${task.origin.detail}`;
-    if (descriptionKey !== nextDescriptionKey) descriptionExpanded = false;
+    const descriptionChanged = descriptionKey !== nextDescriptionKey;
+    if (descriptionChanged) descriptionExpanded = false;
     descriptionKey = nextDescriptionKey;
+    const prevDescriptionHidden = headerDescription.hidden;
     headerDescription.hidden = task.origin.availability !== "recorded" || !task.origin.detail;
-    headerDescription.textContent = headerDescription.hidden ? "" : task.origin.detail;
-    originNotice.textContent =
+    setText(headerDescription, headerDescription.hidden ? "" : task.origin.detail);
+    const nextOriginNotice =
       task.origin.availability === "missing-history"
         ? "原始资料历史缺失，无法还原详情。"
         : task.origin.truncated
           ? "原始资料超过展示长度，当前仅显示部分。"
           : "";
+    setText(originNotice, nextOriginNotice);
     originNotice.hidden = !originNotice.textContent;
-    measureDescription();
-    badge.textContent = taskState(task);
+    measureDescription(descriptionChanged || prevDescriptionHidden !== headerDescription.hidden);
+    setText(badge, taskState(task));
     badge.dataset.state = task.kind === "legacy" ? (task.execution?.state ?? "unknown") : task.state;
-    metadata.textContent = `任务 #${task.id} · ${task.rule}${task.updatedAt ? ` · 更新于 ${new Date(task.updatedAt).toLocaleString("zh-CN")}` : ""}${task.completion ? " · 本人确认完成" : ""}`;
-    metadata.title = task.updatedAt ?? "";
-    if (data.reservation?.held)
-      metadata.textContent += ` · 资源保留：${data.reservation.reasons.join("、") || "等待核实收尾"}`;
+    let nextMetadata = `任务 #${task.id} · ${task.rule}${task.updatedAt ? ` · 更新于 ${new Date(task.updatedAt).toLocaleString("zh-CN")}` : ""}${task.completion ? " · 本人确认完成" : ""}`;
+    if (data.reservation?.held) nextMetadata += ` · 资源保留：${data.reservation.reasons.join("、") || "等待核实收尾"}`;
     if (data.reservation?.blockers.length)
-      metadata.textContent += ` · 等待任务 ${data.reservation.blockers.map((id) => `#${id}`).join("、")} 的资源保留`;
+      nextMetadata += ` · 等待任务 ${data.reservation.blockers.map((id) => `#${id}`).join("、")} 的资源保留`;
+    setText(metadata, nextMetadata);
+    metadata.title = task.updatedAt ?? "";
     const openQuestions = task.decisions.items.filter((card) => card.kind === "ask" && card.state === "open");
     const waitingForAnswer = openQuestions.length > 0 || task.decisions.hasMore || task.state === "waiting-decision";
     decisionOverview.hidden = openQuestions.length === 0;
-    decisionOverview.textContent = openQuestions.length
-      ? `需要你处理：${openQuestions[0].title}${openQuestions.length > 1 || task.decisions.hasMore ? " · 还有其他问题" : ""}`
-      : "";
+    setText(
+      decisionOverview,
+      openQuestions.length
+        ? `需要你处理：${openQuestions[0].title}${openQuestions.length > 1 || task.decisions.hasMore ? " · 还有其他问题" : ""}`
+        : "",
+    );
     const formKey = `${task.key}/${task.decisions.items.map((c) => `${c.id}:${c.options.join("|")}`).join(",")}`;
     if (formKey !== formsKey) {
       formsKey = formKey;
       if (decisionTask !== task.key) {
         decisionTask = task.key;
-        controls.length = 0;
+        decisionControls.length = 0;
         decisionForms.clear();
         decisions.replaceChildren(el("h3", "当前需要你决定"), decisionEmpty, decisionMore);
       }
@@ -1058,13 +1379,13 @@ export function mountBusinessTasksView(
         decisionForms.set(identity, form);
         form.append(el("h4", card.title), el("p", card.text));
         if (card.truncated) form.append(el("p", "此问题当前仅显示部分，不代表原文已完整展示。", "muted"));
-        answerForm(task.key, card, form);
+        decisionControls.push(answerForm(task.key, card, form));
         decisions.append(form);
       }
       decisionEmpty.hidden = task.decisions.items.length > 0;
       decisionMore.hidden = !task.decisions.hasMore;
     }
-    actionStatus.textContent = controller.actionMessage;
+    setText(actionStatus, controller.actionMessage);
     if (cancelTaskKey !== task.key) {
       cancelTaskKey = task.key;
       cancelReason.value = controller.drafts.get(`${task.key}/cancel`) ?? "";
@@ -1099,21 +1420,24 @@ export function mountBusinessTasksView(
     cancelTask.disabled = cancelDisabled || !data.actions?.cancelTask;
     confirmTaskComplete.disabled = cancelDisabled || !data.actions?.completeTask || !completeReason.value.trim();
     completeTask.disabled = cancelDisabled || !data.actions?.completeTask;
-    operationExplanation.textContent = controller.mustReread
-      ? "提交结果需要你重新读取核实，核实前不能再次提交。"
-      : controller.actionBusy
-        ? "正在提交，请勿重复操作。"
-        : !controller.detailFresh || controller.detailError
-          ? "任务状态尚未核实，暂不能操作。"
-          : !data.actions && !["completed", "cancelling", "cancelled"].includes(task.state)
-            ? "当前中台未确认任务操作能力，请升级后重新读取。"
-            : "";
+    setText(
+      operationExplanation,
+      controller.mustReread
+        ? "提交结果需要你重新读取核实，核实前不能再次提交。"
+        : controller.actionBusy
+          ? "正在提交，请勿重复操作。"
+          : !controller.detailFresh || controller.detailError
+            ? "任务状态尚未核实，暂不能操作。"
+            : !data.actions && !["completed", "cancelling", "cancelled"].includes(task.state)
+              ? "当前中台未确认任务操作能力，请升级后重新读取。"
+              : "",
+    );
     operationExplanation.hidden = !operationExplanation.textContent;
     if (taskCancelControls.hidden) taskCancelForm.hidden = true;
     if (taskCompleteControls.hidden) taskCompleteForm.hidden = true;
-    for (const control of controls) {
+    const syncAnswerControl = (control: HTMLButtonElement) => {
       const question = task.decisions.items.find((card) => String(card.id) === control.dataset.cardId);
-      control.textContent = question?.state === "open" ? "提交回答" : "已回答";
+      setText(control, question?.state === "open" ? "提交回答" : "已回答");
       control.disabled =
         question?.state !== "open" ||
         ["cancelling", "cancelled"].includes(task.state) ||
@@ -1122,7 +1446,8 @@ export function mountBusinessTasksView(
         controller.mustReread ||
         controller.detailBusy ||
         !!controller.detailError;
-    }
+    };
+    for (const control of decisionControls) syncAnswerControl(control);
     const run = controller.run?.run;
     runActions.hidden = !run;
     const nextRunKey = `${task.key}/${run?.id}`;
@@ -1248,12 +1573,12 @@ export function mountBusinessTasksView(
       (run.stopping && ["claimed", "unknown"].includes(run.state));
     if (operationDialog.open && correctionOpen && correctionToggle.hidden && !keepCorrection && !controller.detailBusy)
       dismissDialog();
-    correctionToggle.textContent = "更正任务";
+    setText(correctionToggle, "更正任务");
     correctionToggle.setAttribute("aria-expanded", String(correctionOpen));
     memoControls.hidden = !correctionOpen;
     decisions.hidden = !task.decisions.items.length && !task.decisions.hasMore;
     progress.hidden ||= waitingForAnswer;
-    operationTitle.textContent = openQuestions.length ? "待你回答" : "任务操作";
+    setText(operationTitle, openQuestions.length ? "待你回答" : "任务操作");
     adjustments.hidden = correctionToggle.hidden && stopControls.hidden && stoppingText.hidden;
     actionBar.hidden = adjustments.hidden && taskCompleteControls.hidden && taskCancelControls.hidden;
     current.hidden =
@@ -1263,7 +1588,7 @@ export function mountBusinessTasksView(
       operationExplanation.hidden &&
       !controller.actionMessage &&
       !controller.mustReread;
-    if (!feedbackControls.dataset.runId) feedbackControls.hidden = true;
+    if (!feedbackControls.dataset.runId || !operationDialog.open) feedbackControls.hidden = true;
     for (const control of [
       ...roundOperations.querySelectorAll("button"),
       ...runActions.querySelectorAll("button"),
@@ -1276,250 +1601,78 @@ export function mountBusinessTasksView(
         controller.mustReread ||
         controller.detailBusy ||
         !!controller.detailError;
-    const nextTimelineSignature = JSON.stringify([
-      task.key,
-      data.timeline,
-      task.state,
-      controller.detailFresh,
-      controller.actionBusy,
-      controller.mustReread,
-      controller.detailBusy,
-      controller.detailError,
-      feedbackControls.dataset.runId,
-    ]);
-    const rebuildTimeline = timelineSignature !== nextTimelineSignature;
-    if (rebuildTimeline) {
-      timelineSignature = nextTimelineSignature;
-      const openReviews = new Set(
-        [...timeline.querySelectorAll<HTMLDetailsElement>(".business-review-details[open]")].map(
-          (details) => details.dataset.reviewIdentity,
-        ),
-      );
+    if (timelineTaskKey !== task.key) {
+      timelineTaskKey = task.key;
+      timelineRows.clear();
+      timelineEmptyRow = null;
       timeline.replaceChildren();
+    }
+    if (!data.timeline.items.length) {
+      timelineRows.clear();
+      timelineEmptyRow ??= el("li", "没有可关联的历史记录，不补造处理或验收结论。");
+      syncChildren(timeline, [timelineEmptyRow]);
+    } else {
+      timelineEmptyRow = null;
+      const desiredRows: HTMLLIElement[] = [];
+      const nextKeys = new Set<string>();
       for (const event of data.timeline.items) {
-        const row = el("li");
-        if (event.cardId) row.dataset.questionId = String(event.cardId);
-        else if (event.display?.cards.length === 1) row.dataset.questionId = String(event.display.cards[0].id);
-        const record = el("article", "", "business-record-card");
-        const heading = el("div", "", "business-record-heading");
-        const display = event.display;
-        const completed = event.kind === "task.completed" || event.kind === "completeTask";
-        if (["claim", "claimNext", "started"].includes(event.kind)) row.className = "business-compact-record";
-        const names: Record<string, string> = {
-          ingest: "收到任务",
-          event: "收到任务",
-          claim: "接单程序领取任务",
-          claimNext: "接单程序领取任务",
-          started: "开始执行",
-          result: "本轮结束",
-          finish: "本轮结束",
-          "task.completed": "任务已完成",
-          answer: "方案已获确认",
-        };
-        // A receipt can update cards from an older round while resolving them; those are not new proposals.
-        const proposalCards = completed
-          ? []
-          : (display?.cards ?? []).filter(
-              (card) =>
-                event.kind === "answer" ||
-                (["finish", "result"].includes(event.kind) && event.runId !== null && card.runId === event.runId),
-            );
-        const recordTitle =
-          ["finish", "result"].includes(event.kind) && proposalCards.some((card) => card.kind === "ask")
-            ? "本轮结束，提出方案"
-            : (names[event.kind] ?? timelineLabels[event.kind] ?? "已记录操作");
-        heading.append(el("strong", recordTitle));
-        if (event.runId !== null) heading.append(el("span", `执行 #${event.runId}`, "business-record-run"));
-        heading.append(el("time", historyTime(event.at), "muted"));
-        record.append(heading);
-        if (completed) record.className += " business-completed-card";
-        if (["ingest", "event"].includes(event.kind)) {
-          if (display?.events.length)
-            for (const request of display.events) {
-              const intake = el("section", "", "business-intake-subcard");
-              intake.append(el("h4", request.title), el("p", request.detail));
-              if (request.availability === "missing-history") intake.append(el("p", "原始资料历史缺失。", "muted"));
-              if (request.availability === "empty") intake.append(el("p", "提交时未填写详情。", "muted"));
-              if (request.truncated) intake.append(el("p", "此资料仅显示部分，不能视为完整原文。", "muted"));
-              record.append(intake);
-            }
-          else record.append(el("p", "当前记录未提供完整任务资料，请升级中台后重新读取。", "muted"));
-        } else if (["claim", "claimNext"].includes(event.kind)) {
-          if (display?.trigger) {
-            const section = el("section", "", "business-record-explanation");
-            section.append(el("span", "本轮触发资料", "business-card-label"));
-            const text = runTriggerDescription(display.trigger);
-            if ([...text].length > 160) {
-              const long = el("details");
-              long.append(el("summary", [...text].slice(0, 160).join("") + "…（展开）"), el("pre", text));
-              section.append(long);
-            } else section.append(el("p", text));
-            record.append(section);
+        const key = `${task.key}/${event.seq}`;
+        nextKeys.add(key);
+        const contentSignature = JSON.stringify(event);
+        let entry = timelineRows.get(key);
+        if (!entry) {
+          const row = el("li");
+          const handles = populateTimelineRow(task.key, event, row, new Set(), false);
+          entry = { key, row, contentSignature, ...handles };
+          timelineRows.set(key, entry);
+        } else if (entry.contentSignature !== contentSignature) {
+          const openReviews = new Set<string>();
+          let triggerOpen = false;
+          for (const details of entry.row.querySelectorAll<HTMLDetailsElement>("details")) {
+            if (!details.open) continue;
+            if (details.dataset.reviewIdentity) openReviews.add(details.dataset.reviewIdentity);
+            if (details.className === "business-trigger-details") triggerOpen = true;
           }
-        } else if (event.kind === "started" && event.runId !== null) {
-          const id = event.runId;
-          const session = button("查看执行会话 →", () => {
-            sessionScroll = options.scrollHost?.scrollTop ?? 0;
-            sessionRun = id;
-            expanded.add(id);
-            historyRows.clear();
-            payloads.clear();
-            historyList = undefined;
-            history.select(`${controller.selectedKey}/${id}`);
-            detailPage.hidden = true;
-            executionHistory.hidden = false;
-            if (options.scrollHost) options.scrollHost.scrollTop = 0;
-            history.read(id);
-            renderHistory();
-          });
-          session.className = "business-session-entry";
-          session.disabled = !controller.detailFresh || controller.actionBusy || controller.mustReread;
-          record.append(session);
-        } else if (!["claim", "claimNext", "answer"].includes(event.kind)) {
-          if (display?.completion?.by === "owner") record.append(el("p", display.completion.reason));
-          else if (display?.runs.length)
-            for (const result of display.runs) {
-              const explanation = el("section", "", "business-record-explanation");
-              explanation.append(el("span", "执行者说明", "business-card-label"));
-              explanation.append(
-                el(
-                  "p",
-                  result.summary ||
-                    (result.state === "done"
-                      ? "本轮已结束，未填写结果。"
-                      : (roundLabels[result.state ?? ""] ?? "轮次状态未记录")),
-                ),
-              );
-              record.append(explanation);
-              if (result.error) record.append(el("p", result.error, "business-record-error"));
-              if (result.truncated) record.append(el("p", "此结果仅显示部分。", "muted"));
-            }
-          else if (event.text && !display?.cards.length && !display?.reviews?.items.length)
-            record.append(el("p", event.text));
+          const handles = populateTimelineRow(task.key, event, entry.row, openReviews, triggerOpen);
+          entry.contentSignature = contentSignature;
+          entry.sessionButtons = handles.sessionButtons;
+          entry.feedbackButtons = handles.feedbackButtons;
+          entry.answerControls = handles.answerControls;
+          entry.reviewDueChecks = handles.reviewDueChecks;
         }
-        if (display?.reviews?.items.length) {
-          const section = el("section", "", "business-record-explanation business-reviews");
-          for (const review of display.reviews.items) {
-            const item = el("section", "", "business-review-item");
-            const title = el("div", "", "business-review-heading");
-            const label =
-              review.action === "cancelled"
-                ? "已取消复查"
-                : review.action === "triggered"
-                  ? "本次复查已触发"
-                  : "已安排复查";
-            const due = review.state === "pending" && !!review.at && Date.parse(review.at) <= Date.now();
-            const state =
-              review.state === "pending"
-                ? "待复查"
-                : review.state === "triggered"
-                  ? "已触发"
-                  : review.state === "cancelled"
-                    ? "已取消"
-                    : "状态未记录";
-            title.append(el("strong", label), el("span", state, "business-review-state"));
-            item.append(title, el("p", review.key || "复查标识未记录", "business-review-key"));
-            item.append(el("p", `复查时间：${historyTime(review.at)}`));
-            if (due) item.append(el("p", "按本机时间已到点，尚未记录触发。", "muted"));
-            if (review.state === "unknown") item.append(el("p", "缺少可核对的复查历史。", "muted"));
-            const details = el("details", "", "business-review-details");
-            details.dataset.reviewId = String(review.id);
-            // Keep each historical fact independent, including reschedules of the same timer.
-            details.dataset.reviewIdentity = `${task.key}/${event.seq}/${review.id}`;
-            details.open = openReviews.has(details.dataset.reviewIdentity);
-            const summary = el("summary", details.open ? "收起交接详情" : "查看交接详情");
-            details.append(summary, el("pre", review.about || "交接资料未记录"));
-            details.addEventListener("toggle", () => {
-              summary.textContent = details.open ? "收起交接详情" : "查看交接详情";
-            });
-            item.append(details);
-            if (review.truncated) item.append(el("p", "此复查内容仅显示部分。", "muted"));
-            section.append(item);
-          }
-          if (display.reviews.truncated) section.append(el("p", "复查数量超限，仅显示前20项。", "muted"));
-          record.append(section);
-        } else if (!display?.reviews && ["finish", "result"].includes(event.kind))
-          record.append(el("p", "当前记录未提供复查信息。", "muted"));
-        for (const original of proposalCards) {
-          const card = original;
-          const question = el("section", "", "business-record-question");
-          question.dataset.questionId = String(card.id);
-          question.append(
-            el("span", `${event.kind === "answer" ? "问题" : "待确认方案 · 问题"} #${card.id}`, "business-card-label"),
-            el("h4", original.title),
-            el("p", original.text),
-          );
-          record.append(question);
-          if (card.kind === "ask" && card.state === "open" && event.kind !== "answer") {
-            const form = el("section", "", "business-proposal-actions");
-            answerForm(task.key, card, form);
-            record.append(form);
-          } else {
-            if (event.kind !== "answer") {
-              const choices = el("div", "", "business-proposal-actions");
-              original.options.forEach((option, index) => {
-                const choice = button(option, () => {});
-                const selected = card.choice === index;
-                choice.className = selected ? "is-selected" : "is-unselected";
-                if (selected) choice.append(el("span", "已选择", "selection-badge"));
-                choice.setAttribute("aria-pressed", String(selected));
-                choice.disabled = true;
-                choices.append(choice);
-              });
-              record.append(choices);
-            }
-            if (card.choice !== null || card.answer !== null || event.kind === "answer") {
-              const answer = el("section", "", "business-record-answer");
-              answer.append(el("span", "已记录的回答", "business-card-label"));
-              if (card.choice !== null)
-                answer.append(el("p", `已选选项：${card.options[card.choice] ?? "选项原文未记录"}`));
-              if (card.answer !== null) answer.append(el("p", card.answer));
-              if (card.choice === null && card.answer === null) answer.append(el("p", "回答内容未记录"));
-              record.append(answer);
-            }
-          }
-          if (original.truncated) question.append(el("p", "此问题仅显示部分。", "muted"));
-        }
-        for (const result of display?.runs ?? [])
-          if (result.state === "done" && ["finish", "result", "task.completed"].includes(event.kind)) {
-            const footer = el("footer", "", "business-completion-footer");
-            const feedback = button("反馈", () => {
-              feedbackControls.dataset.runId = String(result.id);
-              update();
-              const trigger = [...timeline.querySelectorAll("button")].find(
-                (node) => node.dataset.feedbackFact === `${event.seq}/${result.id}`,
-              );
-              if (trigger) openDialog(feedbackControls, trigger);
-            });
-            feedback.dataset.feedbackFact = `${event.seq}/${result.id}`;
-            feedback.className = "business-feedback-entry";
-            const icon = el("span", "", "business-feedback-icon");
-            icon.setAttribute("aria-hidden", "true");
-            feedback.replaceChildren(icon, el("span", "反馈"));
-            feedback.disabled =
-              !controller.detailFresh ||
-              controller.actionBusy ||
-              controller.mustReread ||
-              controller.detailBusy ||
-              !!controller.detailError;
-            footer.append(feedback);
-            record.append(footer);
-            if (!operationDialog.open && String(result.id) === feedbackControls.dataset.runId)
-              feedbackControls.hidden = true;
-          }
-        if (event.truncated) record.append(el("p", "此条记录仅显示部分。", "muted"));
-        row.append(record);
-        timeline.append(row);
+        desiredRows.push(entry.row);
       }
-      if (!data.timeline.items.length) timeline.append(el("li", "没有可关联的历史记录，不补造处理或验收结论。"));
+      for (const key of [...timelineRows.keys()]) if (!nextKeys.has(key)) timelineRows.delete(key);
+      syncChildren(timeline, desiredRows);
+      const sessionDisabled = !controller.detailFresh || controller.actionBusy || controller.mustReread;
+      const feedbackDisabled =
+        !controller.detailFresh ||
+        controller.actionBusy ||
+        controller.mustReread ||
+        controller.detailBusy ||
+        !!controller.detailError;
+      const now = Date.now();
+      for (const entry of timelineRows.values()) {
+        for (const control of entry.sessionButtons) control.disabled = sessionDisabled;
+        for (const control of entry.feedbackButtons) control.disabled = feedbackDisabled;
+        for (const control of entry.answerControls) syncAnswerControl(control);
+        for (const check of entry.reviewDueChecks) {
+          const due = check.state === "pending" && !!check.at && Date.parse(check.at) <= now;
+          setText(check.element, due ? "按本机时间已到点，尚未记录触发。" : "");
+          check.element.hidden = !due;
+        }
+      }
     }
     timeline.hidden = diagnosis.hidden = false;
     locateQuestion();
     timelineMore.hidden = !data.timeline.hasMore;
     timelineMore.disabled = controller.detailBusy;
-    diagnosisText.textContent = run
-      ? `最新执行 #${run.id} · ${run.agent} · ${run.state} · ${run.error || "未记录执行错误"}`
-      : "最新执行诊断未读取或历史无法关联，不能据此授权操作。";
+    setText(
+      diagnosisText,
+      run
+        ? `最新执行 #${run.id} · ${run.agent} · ${run.state} · ${run.error || "未记录执行错误"}`
+        : "最新执行诊断未读取或历史无法关联，不能据此授权操作。",
+    );
   }
   return {
     root,
@@ -1534,7 +1687,7 @@ export function mountBusinessTasksView(
     setActive(active: boolean) {
       if (sessionActive === active) return;
       sessionActive = active;
-      clearTimeout(polling);
+      clearHistoryPoll();
       if (!active) history.select(null);
       else if (sessionRun !== null) {
         history.select(`${controller.selectedKey}/${sessionRun}`);
@@ -1546,7 +1699,7 @@ export function mountBusinessTasksView(
     dispose() {
       resize?.disconnect();
       descriptionResize?.disconnect();
-      clearTimeout(polling);
+      clearHistoryPoll();
       history.select(null);
     },
   };
