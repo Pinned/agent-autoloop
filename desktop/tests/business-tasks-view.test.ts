@@ -2561,3 +2561,55 @@ test("operation controls carry semantic classes, mode attributes and valid theme
   const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
   assert.doesNotMatch(css, /var\(--ink\)/, "operation dialog must use valid --text token");
 });
+
+// Prevent hidden recommendations, stale validation errors, broken checked-option tokens,
+// or missing primary emphasis and Cmd+Enter submit in live decision forms.
+test("live decision form highlights recommended option, clears validation on input, and supports Cmd+Enter", async () => {
+  const writes: unknown[] = [];
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      await flush();
+      const current = all(root).find((x) => x.className === "business-current")!;
+      assert.equal(current.dataset.mode, "decision");
+      const decisions = all(root).find((x) => x.className === "business-decisions")!;
+      const form = all(decisions).find((x) => x.className === "business-decision")!;
+      const labels = all(form).filter((x) => x.tag === "label");
+      // Index 1 is recommended in fixture `card`.
+      const recommendedBadges = all(labels[1]).filter((x) => x.className === "business-recommend-badge");
+      assert.equal(recommendedBadges.length, 1);
+      assert.equal(recommendedBadges[0].textContent, "推荐");
+      assert.equal(all(labels[0]).filter((x) => x.className === "business-recommend-badge").length, 0);
+      // Secondary fallback options carry secondary class for visual hierarchy.
+      assert.ok(labels[2].className.includes("business-answer-option-secondary"));
+      assert.ok(labels[3].className.includes("business-answer-option-secondary"));
+
+      const send = all(form).find((x) => x.tag === "button" && x.textContent === "提交回答")!;
+      assert.ok(send.className.includes("business-action-primary"));
+
+      // Validation error clears immediately once user selects an option or types.
+      send.fire();
+      assert.ok(form.textContent.includes("请选择选项或填写回答"));
+      const option1 = all(labels[1]).find((x) => x.tag === "input")!;
+      option1.listeners.get("change")?.();
+      assert.ok(!form.textContent.includes("请选择选项或填写回答"));
+
+      // Cmd+Enter in answer textarea submits cleanly.
+      const area = all(form).find((x) => x.tag === "textarea")!;
+      area.value = "按推荐执行";
+      area.listeners.get("input")?.();
+      area.listeners.get("keydown")?.({ key: "Enter", ctrlKey: true, preventDefault() {} });
+      assert.deepEqual(writes, [{ version: 1, action: "answer", cardId: 4, input: { choice: 1, text: "按推荐执行" } }]);
+    },
+    { ...item, decisions: { items: [card], hasMore: false } },
+    undefined,
+    {
+      taskAction: async (input) => {
+        writes.push(input);
+        return new Promise(() => {});
+      },
+    },
+  );
+  const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
+  assert.doesNotMatch(css, /var\(--accent-soft\)/, "checked option must use valid --accent-bg token");
+});

@@ -1411,6 +1411,18 @@ main:has(#task-subpage:not([hidden])) {
 }
 .business-decision-overview {
   overflow-wrap: anywhere;
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 10px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--amber) 35%, var(--border));
+  background: color-mix(in srgb, var(--amber) 8%, var(--panel));
+  color: var(--amber);
+  font-size: 12px;
+  font-weight: 500;
 }
 .business-stopping {
   padding: 12px 16px;
@@ -2997,7 +3009,7 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
 .business-operation-dialog > section { border: 0; padding: 0; }
 .business-dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .business-operation-dialog h3 { font-size: 16px; font-weight: 600; margin: 0; color: var(--text); }
-.business-dialog-close { width: 32px; height: 32px; flex-shrink: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 20px; line-height: 1; }
+.business-dialog-close { width: 36px; height: 36px; flex-shrink: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 20px; line-height: 1; }
 .business-dialog-close:hover:not(:disabled) { background: var(--panel2); color: var(--text); }
 .business-dialog-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 12px; }
 .business-operation-dialog textarea { display: block; min-height: 100px; }
@@ -3259,7 +3271,15 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
   .settings-segmented button.active,
   .task-detail-tabs button[aria-pressed="true"],
   .task-title-route-bar:focus-within,
-  .task-editor-box:focus-within {
+  .task-editor-box:focus-within,
+  .business-answer-option:has(input:checked),
+  .business-action-primary,
+  .business-action-success,
+  .business-action-danger,
+  .business-pause-action[data-armed="true"],
+  .business-complete-action[aria-expanded="true"],
+  .business-danger-action[aria-expanded="true"],
+  .business-recommend-badge {
     outline: 2px solid Highlight;
   }
 }
@@ -3893,7 +3913,6 @@ main:has(.settings-subpage-panel) {
   font-weight: 500;
 }
 .business-decisions select { width: 100%; margin: 12px 0; }
-.business-decisions textarea { width: 100%; min-height: 90px; }
 
 .business-tasks-panel .tasks-detail-page > .business-current {
   border: 1px solid #e0e5ed;
@@ -3918,15 +3937,113 @@ main:has(.settings-subpage-panel) {
   color: var(--amber);
 }
 .business-current .business-decisions > h3 { display: none; }
-.business-current .business-decision { padding: 18px; border: 1px solid #eadfca; border-radius: 9px; background: var(--bg); margin-bottom: 16px; min-width: 0; overflow-wrap: anywhere; }
-.business-answer-options { border: 0; padding: 0; margin: 16px 0; min-width: 0; }
-.business-answer-options legend { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
-.business-answer-option { display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--soft); border-radius: 8px; padding: 12px 14px; margin-top: 8px; cursor: pointer; background: var(--panel); }
-.business-answer-option:has(input:checked) { border-color: #91b0ed; background: var(--accent-soft); }
-.business-answer-option input { flex: 0 0 auto; margin-top: 4px; }
-.business-answer-option span { min-width: 0; overflow-wrap: anywhere; }
+.business-current .business-decision {
+  padding: 16px 18px;
+  border: 1px solid color-mix(in srgb, var(--amber) 34%, var(--border));
+  border-radius: 10px;
+  background: var(--panel);
+  margin: 0 0 14px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.business-current .business-decision h4 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--text);
+}
+.business-current .business-decision > p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+.business-answer-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border: 0;
+  padding: 0;
+  margin: 14px 0 12px;
+  min-width: 0;
+}
+.business-answer-options legend {
+  width: 100%;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+  padding: 0;
+}
+.business-answer-option {
+  flex: 1 0 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 13px;
+  margin: 0;
+  cursor: pointer;
+  background: var(--panel);
+  color: var(--text);
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.business-answer-option:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 4%, var(--panel));
+}
+.business-answer-option-secondary {
+  flex: 1 1 180px;
+  padding: 7px 11px;
+  border-style: dashed;
+  background: var(--panel2);
+  color: var(--muted);
+  font-size: 12px;
+}
+.business-answer-option:has(input:checked) {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--text);
+}
+.business-answer-option input {
+  flex: 0 0 auto;
+  margin-top: 3px;
+}
+.business-answer-option span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.business-recommend-badge {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--green) 40%, var(--border));
+  background: color-mix(in srgb, var(--green) 10%, var(--panel));
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.business-decisions textarea {
+  width: 100%;
+  min-height: 64px;
+  margin: 8px 0 10px;
+}
+.business-answer-submit {
+  padding: 7px 16px;
+  font-size: 13px;
+  border-radius: 7px;
+}
+.business-answer-validation {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--amber);
+}
 .business-current textarea { box-sizing: border-box; max-width: 100%; }
-.business-task-operations .business-danger-action { margin-left: 14px; }
 @media (max-width: 900px) {
   .business-tasks-panel .tasks-detail-page > .business-current { margin-right: 24px; }
 }
@@ -3935,7 +4052,8 @@ main:has(.settings-subpage-panel) {
     padding: 16px;
     margin: 18px 16px 24px;
   }
-  .business-current .business-detail-actions { flex-direction: column; }
+  .business-current .business-detail-actions { flex-direction: column; align-items: stretch; }
   .business-current .business-task-operations { align-self: flex-end; }
   .business-current .business-decision { padding: 14px; }
+  .business-answer-option-secondary { flex-basis: 100%; }
 }

@@ -836,10 +836,17 @@ export function mountBusinessTasksView(
   }
   function answerForm(
     taskKey: string,
-    card: Pick<NonNullable<typeof controller.detail>["task"]["decisions"]["items"][number], "id" | "title" | "options">,
+    card: Pick<
+      NonNullable<typeof controller.detail>["task"]["decisions"]["items"][number],
+      "id" | "title" | "options"
+    > & { recommend?: number | null },
     form: HTMLElement,
   ) {
-    const text = draftArea(`${taskKey}/answer/${card.id}`, `${card.title}：文字回答`);
+    const validation = el("p", "", "rules-status business-answer-validation");
+    validation.setAttribute("role", "status");
+    const text = draftArea(`${taskKey}/answer/${card.id}`, `${card.title}：文字回答`, () => {
+      if (validation.textContent) validation.textContent = "";
+    });
     text.placeholder = "补充说明或其他要求";
     const choices = el("fieldset", "", "business-answer-options");
     choices.append(el("legend", "选择选项，或直接填写文字回答"));
@@ -850,12 +857,22 @@ export function mountBusinessTasksView(
       for (const entry of root.querySelectorAll<HTMLInputElement>("input"))
         if (entry.dataset.choiceKey === choiceKey) entry.checked = entry.value === controller.drafts.get(choiceKey);
     };
-    for (const [value, option] of [
-      ...card.options.map((option, index) => [String(index), option]),
-      ["", "只用文字回答"],
-      ["other", "其他想法（请填写说明）"],
-    ]) {
-      const label = el("label", "", "business-answer-option");
+    const entries: { value: string; option: string; recommended: boolean; secondary: boolean }[] = [
+      ...card.options.map((option, index) => ({
+        value: String(index),
+        option,
+        recommended: card.recommend === index,
+        secondary: false,
+      })),
+      { value: "", option: "只用文字回答", recommended: false, secondary: true },
+      { value: "other", option: "其他想法（请填写说明）", recommended: false, secondary: true },
+    ];
+    for (const { value, option, recommended, secondary } of entries) {
+      const label = el(
+        "label",
+        "",
+        secondary ? "business-answer-option business-answer-option-secondary" : "business-answer-option",
+      );
       const entry = el("input");
       entry.type = "radio";
       entry.name = groupName;
@@ -864,14 +881,15 @@ export function mountBusinessTasksView(
       entry.checked = controller.drafts.get(choiceKey) === value;
       entry.addEventListener("change", () => {
         controller.drafts.set(choiceKey, value);
+        if (validation.textContent) validation.textContent = "";
         syncChoice();
       });
       label.append(entry, el("span", option));
+      if (recommended) label.append(el("span", "推荐", "business-recommend-badge"));
       choices.append(label);
     }
-    const validation = el("p", "", "rules-status");
-    validation.setAttribute("role", "status");
-    const send = button("提交回答", () => {
+    const submitAnswer = () => {
+      if (send.disabled) return;
       const selected = controller.drafts.get(choiceKey) ?? "";
       const answerText = controller.drafts.get(`${taskKey}/answer/${card.id}`) ?? text.value;
       const note = answerText.trim();
@@ -890,7 +908,9 @@ export function mountBusinessTasksView(
             ? { choice: Number(selected), ...(note ? { text: answerText } : {}) }
             : { text: answerText },
       });
-    });
+    };
+    const send = button("提交回答", submitAnswer);
+    send.className = "business-action-primary business-answer-submit";
     send.dataset.cardId = String(card.id);
     send.disabled =
       !controller.detailFresh ||
@@ -898,6 +918,12 @@ export function mountBusinessTasksView(
       controller.mustReread ||
       controller.detailBusy ||
       !!controller.detailError;
+    text.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        submitAnswer();
+      }
+    });
     form.append(choices, text, send, validation);
     return send;
   }
