@@ -11,6 +11,7 @@ test("all built-in kinds use the same loader and external plugins take precedenc
   for (const [name, kind] of [
     ["claude", "agent"],
     ["codex", "agent"],
+    ["agy", "agent"],
     ["command", "agent"],
     ["acp", "agent"],
     ["feishu", "channel"],

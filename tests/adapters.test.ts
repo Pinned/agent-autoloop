@@ -34,6 +34,7 @@ printf '%s\\n' "$#" "$@" >> "$ADAPTER_LOOKUP_LOG"
 case "$4" in
 claude) printf '%s\\n' /test/claude ;;
 codex) printf '%s\\n' /test/codex ;;
+agy) printf '%s\\n' /test/agy ;;
 launcher) printf '%s\\n' /test/wrapper ;;
 *) exit 1 ;;
 esac
@@ -45,6 +46,7 @@ const { findProgram } = await import("../worker/agents.ts");
 type Adapter = import("../worker/agents.ts").Adapter;
 const claude: Adapter = (await import("../plugins/claude/agent.ts")).default;
 const codex: Adapter = (await import("../plugins/codex/agent.ts")).default;
+const agy: Adapter = (await import("../plugins/agy/agent.ts")).default;
 const command: Adapter = (await import("../plugins/command/agent.ts")).default;
 
 const turn = {
@@ -139,6 +141,72 @@ test("Codex: new and resumed runs use only browser access configured for the bac
     assert.ok(prompt.endsWith(turn.prompt));
     assert.doesNotMatch(prompt, /~\/\.local\/bin\/|\/Users\//);
   }
+});
+
+test("agy: access, new and going on, model", () => {
+  const argv = stubbed(agy, {})!;
+  assert.equal(argv[0], "/test/agy");
+  assert.ok(has(argv, "--output-format", "stream-json"));
+  assert.ok(has(argv, "--mode", "accept-edits"));
+  assert.ok(has(argv, "--add-dir", "/run"));
+  assert.ok(argv.includes("-p=做这件事"));
+  assert.ok(!argv.includes("--conversation"));
+  assert.ok(!argv.includes("--sandbox"));
+  assert.ok(!argv.includes("--dangerously-skip-permissions"));
+  assert.ok(!argv.includes("--model"));
+  const readArgv = stubbed(agy, { access: "read" })!;
+  assert.ok(has(readArgv, "--mode", "plan"));
+  assert.ok(readArgv.includes("--sandbox"));
+  const fullArgv = stubbed(agy, { access: "full" })!;
+  assert.ok(has(fullArgv, "--mode", "auto"));
+  assert.ok(fullArgv.includes("--dangerously-skip-permissions"));
+  const again = stubbed(agy, { resume: "conv-1", model: "m", effort: "high" })!;
+  assert.ok(has(again, "--conversation", "conv-1"));
+  assert.ok(has(again, "--model", "m"));
+  assert.ok(has(again, "--effort", "high"));
+});
+
+test("agy: reading stream-json and result", () => {
+  const init = JSON.stringify({ event: "init", conversation_id: "c1" });
+  const delta = JSON.stringify({
+    event: "step_update",
+    step_update: {
+      conversation_id: "c1",
+      step_index: 1,
+      state: "ACTIVE",
+      step_type: "agent_response",
+      text_delta: "hi",
+    },
+  });
+  const done = JSON.stringify({
+    event: "result",
+    result: {
+      conversation_id: "c1",
+      status: "SUCCESS",
+      response: "好了\n",
+      usage: { input_tokens: 100, output_tokens: 20, cache_read_tokens: 30 },
+    },
+  });
+  assert.deepEqual(agy.read(`${init}\n${delta}\n`, null, ""), { session: "c1" }, "running captures session only");
+  assert.deepEqual(agy.read(`${init}\n${delta}\n${done}\n`, 0, ""), {
+    text: "好了\n",
+    session: "c1",
+    usage: { input: 100, output: 20, cached: 30 },
+    finished: true,
+  });
+  const failed = JSON.stringify({
+    event: "result",
+    result: { conversation_id: "c1", status: "ERROR", error: "auth failed\nmore" },
+  });
+  assert.deepEqual(agy.read(`${failed}\n`, 1, ""), {
+    session: "c1",
+    error: "auth failed",
+    finished: true,
+  });
+  assert.deepEqual(agy.read("", null, ""), {}, "still going");
+  assert.equal(agy.read("", 1, "boom").error, "boom");
+  assert.equal(agy.read("", 0, "").error, "没留下结果");
+  assert.equal(agy.link!("c1"), "agy://conversation/c1");
 });
 
 test("Codex: only a finished turn's last message is its answer", () => {
@@ -300,8 +368,14 @@ test("the fake lookup receives exactly the shell contract and the complete progr
   const lines = readFileSync(lookupLog, "utf8").trim().split("\n");
   assert.deepEqual(
     lines,
-    ["claude", "codex", "launcher", "nowhere-at-all", "surely-not-installed-anywhere", "claude-not-installed"].flatMap(
-      (name) => ["4", "-lc", 'command -v -- "$1"', "agent-autoloop-lookup", name],
-    ),
+    [
+      "claude",
+      "codex",
+      "agy",
+      "launcher",
+      "nowhere-at-all",
+      "surely-not-installed-anywhere",
+      "claude-not-installed",
+    ].flatMap((name) => ["4", "-lc", 'command -v -- "$1"', "agent-autoloop-lookup", name]),
   );
 });
