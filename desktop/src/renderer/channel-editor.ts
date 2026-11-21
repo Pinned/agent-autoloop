@@ -145,6 +145,7 @@ export function buildChannelSavePayload(
 export function renderPresetPicker(
   existingIds: readonly string[],
   onPick: (meta: ChannelPresetMeta, suggestedId: string) => void,
+  existingPresets: readonly ChannelPreset[] = [],
 ): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "channel-preset-wrap";
@@ -154,6 +155,9 @@ export function renderPresetPicker(
   lead.textContent = "选择要接入的通知渠道，系统会自动填充默认配置和生成密钥。";
   wrap.append(lead);
 
+  const singletonTaken = (preset: ChannelPreset) =>
+    (preset === "feishu" || preset === "desktop") && (existingPresets.includes(preset) || existingIds.includes(preset));
+
   const grid = document.createElement("div");
   grid.className = "channel-preset-grid";
   for (const meta of CHANNEL_PRESET_CARDS) {
@@ -161,13 +165,20 @@ export function renderPresetPicker(
     card.type = "button";
     card.className = "channel-preset-card";
     card.setAttribute("data-preset", meta.preset);
+    const taken = singletonTaken(meta.preset);
+    if (taken) card.disabled = true;
 
     const top = document.createElement("div");
     top.className = "channel-preset-top";
     const title = document.createElement("strong");
     title.textContent = meta.title;
     top.append(title);
-    if (meta.badge) {
+    if (taken) {
+      const badge = document.createElement("span");
+      badge.className = "channel-preset-badge";
+      badge.textContent = "已添加";
+      top.append(badge);
+    } else if (meta.badge) {
       const badge = document.createElement("span");
       badge.className = "channel-preset-badge";
       badge.textContent = meta.badge;
@@ -176,12 +187,14 @@ export function renderPresetPicker(
 
     const desc = document.createElement("p");
     desc.className = "channel-preset-desc";
-    desc.textContent = meta.summary;
+    desc.textContent = taken ? "已添加过该通道，请在列表中直接编辑现有配置。" : meta.summary;
 
     card.append(top, desc);
-    card.addEventListener("click", () => {
-      onPick(meta, nextAvailableId(meta.defaultId, existingIds));
-    });
+    if (!taken) {
+      card.addEventListener("click", () => {
+        onPick(meta, nextAvailableId(meta.defaultId, existingIds));
+      });
+    }
     grid.append(card);
   }
   wrap.append(grid);

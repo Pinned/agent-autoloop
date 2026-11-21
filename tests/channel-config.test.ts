@@ -64,6 +64,16 @@ test("channel config source saves feishu without exposing appSecret and preserve
   assert.equal(disk.channels.feishu.appSecret, "sec_super_secret");
   assert.equal(disk.channels.feishu.user, "ou_updated");
   assert.equal(disk.channels.feishu.key, "key-feishu");
+
+  // Adding a second feishu channel under another id is rejected.
+  const second = await source.save({
+    id: "feishu-2",
+    preset: "feishu",
+    appId: "cli_other",
+    appSecret: "sec_other",
+    user: "ou_other",
+  });
+  assert.equal(second.ok, false);
 });
 
 test("channel config source validates webhooks, tests sending, and binds feishu open_id", async () => {

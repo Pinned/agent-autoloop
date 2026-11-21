@@ -331,6 +331,19 @@ export function createChannelConfigSource(options: ChannelConfigSourceOptions) {
       }
       try {
         const config = readLocalConfig(options.home);
+        if (input.preset === "feishu") {
+          const duplicate = Object.entries(config.channels ?? {}).find(
+            ([otherId, raw]) =>
+              otherId !== input.id && inferChannelPreset(otherId, (raw ?? {}) as Record<string, unknown>) === "feishu",
+          );
+          if (duplicate) {
+            return {
+              version: 1,
+              ok: false,
+              error: { code: "invalid", message: `已添加过飞书通道（${duplicate[0]}），请直接编辑现有飞书配置` },
+            };
+          }
+        }
         const existing = config.channels?.[input.id] as Record<string, unknown> | undefined;
         const key = isNonEmptyString(existing?.key) ? existing.key.trim() : await createKey(input.id);
         const nextEntry = buildChannelRecord(input, key, existing);

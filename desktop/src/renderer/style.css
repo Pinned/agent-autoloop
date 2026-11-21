@@ -4352,9 +4352,13 @@ main:has(.settings-subpage-panel) {
   cursor: pointer;
   transition: border-color 0.14s ease, background 0.14s ease;
 }
-.channel-preset-card:hover {
+.channel-preset-card:hover:not(:disabled) {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+}
+.channel-preset-card:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
 }
 .channel-preset-top {
   display: flex;
@@ -4377,6 +4381,7 @@ main:has(.settings-subpage-panel) {
   line-height: 1.45;
 }
 .channel-guide-details {
+  margin-bottom: 14px;
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 10px 12px;
@@ -4524,4 +4529,32 @@ main:has(.settings-subpage-panel) {
 .channel-bind-summary.ok {
   color: var(--green);
   font-weight: 500;
+}
+.channel-danger-dialog {
+  border-color: color-mix(in srgb, var(--red) 55%, var(--border));
+}
+.channel-danger-title {
+  color: var(--red);
+}
+.channel-danger-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text);
+}
+.channel-danger-dialog .channel-pairing-actions {
+  gap: 8px;
+}
+.channel-bind-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.channel-form-footer {
+  padding-top: 14px;
+  border-top: 1px solid var(--soft);
+}
+.channel-form-footer .settings-form-primary {
+  margin-left: auto;
 }

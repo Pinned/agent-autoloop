@@ -166,9 +166,14 @@ export function mountSettingsView(
   let localPublicUrl: string | undefined;
   let localChannelUnavailable: string | null = null;
   let localChannelLoading = false;
+  let localChannelLoaded = false;
+  let pendingChannelRemovalId: string | null = null;
+  let pendingChannelSavePayload: ReturnType<typeof buildChannelSavePayload> | null = null;
+  let keepSubpageOnSave = false;
+  let suppressSavedStatusForDelete = false;
 
-  function refreshLocalChannels() {
-    if (!options.channelBridge || localChannelLoading) return;
+  function refreshLocalChannels(force = false) {
+    if (!options.channelBridge || localChannelLoading || (localChannelLoaded && !force)) return;
     localChannelLoading = true;
     void Promise.resolve(options.channelBridge.get())
       .then((res) => {
@@ -185,6 +190,7 @@ export function mountSettingsView(
       })
       .finally(() => {
         localChannelLoading = false;
+        localChannelLoaded = true;
         if (tab === "channels" && !editing) renderTab();
       });
   }
@@ -242,6 +248,7 @@ export function mountSettingsView(
       button.addEventListener("click", () => {
         if (editing) return;
         tab = item.id;
+        if (tab === "channels") refreshLocalChannels(true);
         renderTab();
       });
       return button;
@@ -306,6 +313,53 @@ export function mountSettingsView(
     node.className = "muted";
     node.textContent = text;
     return node;
+  }
+  function confirmChannelDelete(name: string, id: string, onConfirm: () => void) {
+    const dialog = document.createElement("dialog");
+    dialog.className = "channel-pairing-dialog channel-danger-dialog";
+    dialog.setAttribute("role", "alertdialog");
+
+    const title = document.createElement("h3");
+    title.className = "channel-danger-title";
+    title.textContent = "确认删除通知通道";
+
+    const desc = document.createElement("p");
+    desc.className = "channel-danger-desc";
+    desc.textContent = `确定要删除「${name || id}（${id}）」吗？删除后将清除该通道的本机密钥与规则配置，无法再通过此通道接收通知。`;
+
+    const actions = document.createElement("div");
+    actions.className = "channel-pairing-actions";
+    const cancelBtn = button("取消");
+    const confirmBtn = button("确认删除");
+    confirmBtn.className = "run-action-danger";
+
+    const close = () => {
+      if (typeof (dialog as HTMLDialogElement).close === "function" && dialog.open) {
+        (dialog as HTMLDialogElement).close();
+      }
+      dialog.open = false;
+      dialog.hidden = true;
+      dialog.remove?.();
+    };
+    cancelBtn.addEventListener("click", close);
+    dialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      close();
+    });
+    confirmBtn.addEventListener("click", () => {
+      close();
+      onConfirm();
+    });
+
+    actions.append(cancelBtn, confirmBtn);
+    dialog.append(title, desc, actions);
+    root.append(dialog);
+    if (typeof (dialog as HTMLDialogElement).showModal === "function") {
+      (dialog as HTMLDialogElement).showModal();
+    } else {
+      dialog.open = true;
+      dialog.hidden = false;
+    }
   }
   function register(node: HTMLButtonElement, kind: "list" | "act" | "cancel") {
     buttons.push({ node, kind });
@@ -411,6 +465,9 @@ export function mountSettingsView(
   }
 
   function startRowEdit(section: ListSection, rowIndex: number | null) {
+    suppressSavedStatusForDelete = false;
+    keepSubpageOnSave = false;
+    pendingChannelSavePayload = null;
     const state = controller.getState();
     if (state.saving || state.reloading || state.needsReview || state.draft) return;
     controller.beginEdit(section);
@@ -444,6 +501,7 @@ export function mountSettingsView(
     renderTab();
   }
   function ensureGlobalEdit(): Extract<Editing, { section: "settings" }> | null {
+    suppressSavedStatusForDelete = false;
     if (editing?.section === "settings") return editing;
     const state = controller.getState();
     if (!state.snapshot || state.saving || state.reloading || state.needsReview || state.draft) return null;
@@ -584,16 +642,21 @@ export function mountSettingsView(
 
     if (session.section === "channels" && options.channelBridge && row._presetChosen !== true) {
       const existingIds = draftEntries().map((item) => String(item.id ?? ""));
+      const existingPresets = existingIds.map((id) => localChannels.get(id)?.preset ?? inferPresetFromId(id));
       container.append(
-        renderPresetPicker(existingIds, (meta, suggestedId) => {
-          row._presetChosen = true;
-          row._preset = meta.preset;
-          row.id = suggestedId;
-          row.name = meta.defaultName;
-          row.links = Boolean(meta.defaultLinks);
-          row.domain = "feishu";
-          renderTab();
-        }),
+        renderPresetPicker(
+          existingIds,
+          (meta, suggestedId) => {
+            row._presetChosen = true;
+            row._preset = meta.preset;
+            row.id = suggestedId;
+            row.name = meta.defaultName;
+            row.links = Boolean(meta.defaultLinks);
+            row.domain = "feishu";
+            renderTab();
+          },
+          existingPresets,
+        ),
       );
       return container;
     }
@@ -772,6 +835,9 @@ export function mountSettingsView(
 
         const bindSummary = document.createElement("span");
         bindSummary.className = "channel-bind-summary";
+        const inlineTestBtn = button("发送测试通知");
+        inlineTestBtn.hidden = !String(row.user ?? "").trim();
+        inlineTestBtn.disabled = Boolean(localChannelUnavailable);
         const bindBtn = button(String(row.user ?? "").trim() ? "重新配对" : "连接并配对", true);
         bindBtn.disabled = Boolean(localChannelUnavailable);
 
@@ -782,6 +848,7 @@ export function mountSettingsView(
         const syncBindSummary = () => {
           const currentUser = String(row.user ?? "").trim();
           const currentName = String(row.userName ?? "").trim();
+          inlineTestBtn.hidden = !currentUser;
           if (currentUser) {
             bindSummary.textContent = currentName
               ? `已绑定：${currentName}（${currentUser}）`
@@ -795,6 +862,31 @@ export function mountSettingsView(
           }
         };
         syncBindSummary();
+
+        inlineTestBtn.addEventListener("click", () => {
+          if (!options.channelBridge) return;
+          inlineTestBtn.disabled = true;
+          inlineTestBtn.textContent = "发送中…";
+          bindStatus.hidden = true;
+          void options.channelBridge
+            .test(buildChannelSavePayload("feishu", row))
+            .then((res) => {
+              bindStatus.className = res.ok
+                ? "channel-test-status ok settings-span2"
+                : "channel-test-status error settings-span2";
+              bindStatus.textContent = res.message;
+              bindStatus.hidden = false;
+            })
+            .catch((err) => {
+              bindStatus.className = "channel-test-status error settings-span2";
+              bindStatus.textContent = err instanceof Error ? err.message : "发送测试通知失败";
+              bindStatus.hidden = false;
+            })
+            .finally(() => {
+              inlineTestBtn.disabled = Boolean(localChannelUnavailable);
+              inlineTestBtn.textContent = "发送测试通知";
+            });
+        });
 
         const pairingDialog = document.createElement("dialog");
         pairingDialog.className = "channel-pairing-dialog";
@@ -887,11 +979,22 @@ export function mountSettingsView(
                 closePairing();
                 row.user = res.openId;
                 row.userName = res.userName ?? "";
-                if (!String(row.answerers ?? "").trim()) {
-                  row.answerers = res.openId;
-                }
+                row.answerers = res.openId;
                 syncBindSummary();
-                bindStatus.hidden = true;
+                bindStatus.className = "channel-test-status ok settings-span2";
+                bindStatus.textContent = res.userName
+                  ? `配对成功，正在保存并启用：${res.userName}（${res.openId}）…`
+                  : `配对成功，正在保存并启用：${res.openId}…`;
+                bindStatus.hidden = false;
+                pendingChannelSavePayload = buildChannelSavePayload("feishu", row);
+                keepSubpageOnSave = true;
+                suppressSavedStatusForDelete = true;
+                if (!commit(error, compose)) {
+                  pendingChannelSavePayload = null;
+                  keepSubpageOnSave = false;
+                  return;
+                }
+                controller.save();
               } else {
                 dialogState.className = "channel-test-status error";
                 dialogState.textContent = res.message;
@@ -907,12 +1010,23 @@ export function mountSettingsView(
               syncBindSummary();
             });
         });
+        const bindActions = document.createElement("div");
+        bindActions.className = "channel-bind-actions";
+        bindActions.append(inlineTestBtn, bindBtn);
+
         const userWrap = document.createElement("div");
         userWrap.className = "channel-bind-row settings-span2";
-        userWrap.append(bindSummary, bindBtn);
+        userWrap.append(bindSummary, bindActions);
+
+        const domainSelect = select(`${prefix}-domain`, ["feishu", "lark"], String(row.domain || "feishu"), {
+          feishu: "飞书国内版 (open.feishu.cn)",
+          lark: "Lark 国际版 (open.larksuite.com)",
+        });
+        domainSelect.addEventListener("change", () => (row.domain = domainSelect.value));
 
         container.append(
-          formCard("飞书应用凭据", [
+          formCard("飞书应用配置", [
+            field("服务区域", domainSelect, true),
             field("App ID", appIdInput),
             field("App Secret", secretWrap),
             userWrap,
@@ -920,35 +1034,6 @@ export function mountSettingsView(
           ]),
           pairingDialog,
         );
-
-        const answerersField = chipField({
-          id: `${prefix}-answerers`,
-          label: "允许回答的人（默认包含接收人）",
-          placeholder: "输入 Open ID 后回车添加",
-          initial: String(row.answerers ?? ""),
-          onChange: (serialized) => {
-            row.answerers = serialized;
-          },
-        });
-        const domainSelect = select(`${prefix}-domain`, ["feishu", "lark"], String(row.domain || "feishu"), {
-          feishu: "飞书国内版 (open.feishu.cn)",
-          lark: "Lark 国际版 (open.larksuite.com)",
-        });
-        domainSelect.addEventListener("change", () => (row.domain = domainSelect.value));
-        const advanced = document.createElement("details");
-        advanced.className = "settings-advanced";
-        const advSummary = document.createElement("summary");
-        advSummary.textContent = "更多选项（名称、回答权限与国际版）";
-        const advBody = document.createElement("div");
-        advBody.className = "settings-form-grid";
-        advBody.append(
-          field("显示名称", nameInput),
-          field("通道标识", idInput),
-          answerersField,
-          field("服务区域", domainSelect),
-        );
-        advanced.append(advSummary, advBody);
-        container.append(advanced);
       } else if (
         preset === "dingtalk" ||
         preset === "wecom" ||
@@ -1047,7 +1132,7 @@ export function mountSettingsView(
     save.addEventListener("click", () => {
       if (session.section === "channels" && options.channelBridge && !localChannelUnavailable) {
         const preset = (String(row._preset || "") as ChannelPreset) || inferPresetFromId(String(row.id ?? ""));
-        if (preset === "feishu" && !String(row.answerers ?? "").trim() && String(row.user ?? "").trim()) {
+        if (preset === "feishu" && String(row.user ?? "").trim()) {
           row.answerers = String(row.user).trim();
         }
         try {
@@ -1071,6 +1156,7 @@ export function mountSettingsView(
               return;
             }
             localChannels.set(res.data.channel.id, res.data.channel);
+            if (session.fresh) suppressSavedStatusForDelete = true;
             if (commit(error, compose)) controller.save();
           })
           .catch((err) => {
@@ -1081,51 +1167,65 @@ export function mountSettingsView(
           });
         return;
       }
+      if (session.section === "channels" && session.fresh) suppressSavedStatusForDelete = true;
       if (!commit(error, compose)) return;
       controller.save();
     });
     cancel.addEventListener("click", stopEdit);
-    register(save, "act");
-    register(cancel, "cancel");
-    primaryActions.append(save, cancel);
+    const isChannelBridgeForm = session.section === "channels" && Boolean(options.channelBridge);
+    const channelPreset = isChannelBridgeForm
+      ? (String(row._preset || "") as ChannelPreset) || inferPresetFromId(String(row.id ?? ""))
+      : null;
 
-    if (session.section === "channels" && options.channelBridge && !localChannelUnavailable) {
-      const testBtn = button("发送测试通知");
-      testBtn.addEventListener("click", () => {
-        const preset = (String(row._preset || "") as ChannelPreset) || inferPresetFromId(String(row.id ?? ""));
-        const id = String(row.id ?? "").trim();
-        if (!id) {
-          testStatus.className = "channel-test-status error";
-          testStatus.textContent = "请先填写通道标识";
-          testStatus.hidden = false;
-          return;
-        }
-        testBtn.disabled = true;
-        testBtn.textContent = "发送中…";
-        testStatus.hidden = true;
-        const payload = buildChannelSavePayload(preset, row);
-        void options
-          .channelBridge!.test(payload)
-          .then((res) => {
-            testStatus.className = res.ok ? "channel-test-status ok" : "channel-test-status error";
-            testStatus.textContent = res.message;
-            testStatus.hidden = false;
-          })
-          .catch((err) => {
-            testStatus.className = "channel-test-status error";
-            testStatus.textContent = err instanceof Error ? err.message : "发送测试通知失败";
-            testStatus.hidden = false;
-          })
-          .finally(() => {
-            testBtn.disabled = false;
-            testBtn.textContent = "发送测试通知";
-          });
-      });
-      register(testBtn, "act");
-      primaryActions.append(testBtn);
+    if (isChannelBridgeForm && channelPreset === "feishu") {
+      container.append(error, testStatus);
+      return container;
     }
 
-    footer.append(primaryActions);
+    if (isChannelBridgeForm) footer.className = "settings-form-footer channel-form-footer";
+
+    register(save, "act");
+    register(cancel, "cancel");
+
+    if (isChannelBridgeForm) {
+      if (!localChannelUnavailable && channelPreset !== "feishu") {
+        const testBtn = button("发送测试通知");
+        testBtn.addEventListener("click", () => {
+          const id = String(row.id ?? "").trim();
+          if (!id) {
+            testStatus.className = "channel-test-status error";
+            testStatus.textContent = "请先填写通道标识";
+            testStatus.hidden = false;
+            return;
+          }
+          testBtn.disabled = true;
+          testBtn.textContent = "发送中…";
+          testStatus.hidden = true;
+          const payload = buildChannelSavePayload(channelPreset!, row);
+          void options
+            .channelBridge!.test(payload)
+            .then((res) => {
+              testStatus.className = res.ok ? "channel-test-status ok" : "channel-test-status error";
+              testStatus.textContent = res.message;
+              testStatus.hidden = false;
+            })
+            .catch((err) => {
+              testStatus.className = "channel-test-status error";
+              testStatus.textContent = err instanceof Error ? err.message : "发送测试通知失败";
+              testStatus.hidden = false;
+            })
+            .finally(() => {
+              testBtn.disabled = false;
+              testBtn.textContent = "发送测试通知";
+            });
+        });
+        register(testBtn, "act");
+        primaryActions.append(testBtn);
+      }
+      primaryActions.append(cancel, save);
+    } else {
+      primaryActions.append(save, cancel);
+    }
 
     if (!session.fresh) {
       let removeArmed = false;
@@ -1145,6 +1245,23 @@ export function mountSettingsView(
         syncRemove();
       });
       remove.addEventListener("click", () => {
+        if (session.section === "channels") {
+          const targetId = String(row.id ?? "").trim();
+          const targetName = String(row.name ?? "").trim();
+          confirmChannelDelete(targetName, targetId, () => {
+            suppressSavedStatusForDelete = true;
+            if (options.channelBridge && !localChannelUnavailable && targetId) {
+              pendingChannelRemovalId = targetId;
+            }
+            if (!commit(error, () => composeRemoval(session))) {
+              pendingChannelRemovalId = null;
+              suppressSavedStatusForDelete = false;
+              return;
+            }
+            controller.save();
+          });
+          return;
+        }
         if (!removeArmed) {
           removeArmed = true;
           syncRemove();
@@ -1152,19 +1269,19 @@ export function mountSettingsView(
         }
         removeArmed = false;
         syncRemove();
-        if (session.section === "channels" && options.channelBridge && !localChannelUnavailable) {
-          const removedId = String(row.id ?? "").trim();
-          if (removedId) {
-            void options.channelBridge.remove({ id: removedId }).then(() => localChannels.delete(removedId));
-          }
-        }
         if (!commit(error, () => composeRemoval(session))) return;
         controller.save();
       });
       register(remove, "act");
       register(cancelRemove, "act");
       dangerActions.append(cancelRemove, remove);
-      footer.append(dangerActions);
+      if (isChannelBridgeForm) {
+        footer.append(dangerActions, primaryActions);
+      } else {
+        footer.append(primaryActions, dangerActions);
+      }
+    } else {
+      footer.append(primaryActions);
     }
 
     container.append(error, testStatus, footer);
@@ -1233,6 +1350,35 @@ export function mountSettingsView(
     });
     register(edit, "list");
     actions.append(edit);
+    if (section === "channels") {
+      const removeBtn = button("删除");
+      removeBtn.className = "settings-delete-button";
+      removeBtn.disabled = busy;
+      removeBtn.addEventListener("click", (event) => {
+        event?.stopPropagation?.();
+        const removedId = String(entry.id ?? "").trim();
+        const removedName = String(entry.name ?? "").trim();
+        confirmChannelDelete(removedName, removedId, () => {
+          suppressSavedStatusForDelete = true;
+          if (removedId && options.channelBridge && !localChannelUnavailable) {
+            pendingChannelRemovalId = removedId;
+          }
+          controller.beginEdit("channels");
+          const draft = controller.getState().draft;
+          if (!draft || draft.section !== "channels") {
+            pendingChannelRemovalId = null;
+            suppressSavedStatusForDelete = false;
+            return;
+          }
+          const nextEntries = [...(draft.value as readonly Record<string, unknown>[])];
+          nextEntries.splice(index, 1);
+          controller.update(nextEntries);
+          controller.save();
+        });
+      });
+      register(removeBtn, "list");
+      actions.append(removeBtn);
+    }
     item.addEventListener("click", (event) => {
       const mouse = event as MouseEvent | undefined;
       if (mouse?.metaKey || mouse?.ctrlKey || mouse?.shiftKey || mouse?.altKey) return;
@@ -1537,6 +1683,40 @@ export function mountSettingsView(
       return;
     }
     const state = controller.getState();
+    let refreshAfterDelete = false;
+    if (pendingChannelRemovalId && !state.saving && (state.save.kind === "confirmed" || state.save.kind === "failed")) {
+      const targetId = pendingChannelRemovalId;
+      pendingChannelRemovalId = null;
+      if (state.save.kind === "confirmed") {
+        refreshAfterDelete = true;
+        if (options.channelBridge && !localChannelUnavailable) {
+          void options.channelBridge.remove({ id: targetId }).then(() => {
+            localChannels.delete(targetId);
+            if (tab === "channels" && !editing) renderTab();
+          });
+        }
+      }
+    }
+    if (!state.saving && state.save.kind === "failed") {
+      suppressSavedStatusForDelete = false;
+      pendingChannelSavePayload = null;
+      keepSubpageOnSave = false;
+    }
+    if (pendingChannelSavePayload && !state.saving && state.save.kind === "confirmed") {
+      const payload = pendingChannelSavePayload;
+      pendingChannelSavePayload = null;
+      void options.channelBridge?.save(payload).then((res) => {
+        if (res.ok) {
+          localChannels.set(res.data.channel.id, res.data.channel);
+          if (editing && editing.section === "channels") {
+            editing.fresh = false;
+            editing.row._hasSecret = true;
+            editing.row.appSecret = "";
+            if (tab === "channels") renderTab();
+          }
+        }
+      });
+    }
     // A read settling (or being cleared by a reload) changes what the tab should show, not just
     // what the status line says; the body follows the snapshot, never a stale loading state.
     if ((state.snapshot !== null) !== hadSnapshot) {
@@ -1555,7 +1735,7 @@ export function mountSettingsView(
     const parts: string[] = [];
     if (state.loading) parts.push("正在读取本机配置…");
     if (state.saving) parts.push("正在保存…");
-    if (state.save.kind === "confirmed") parts.push("已保存");
+    if (state.save.kind === "confirmed" && !suppressSavedStatusForDelete) parts.push("已保存");
     status.textContent = parts.join(" ");
     const lines: string[] = [];
     if (state.loadError) lines.push(state.loadError.message);
@@ -1585,10 +1765,13 @@ export function mountSettingsView(
     if (generalActionsEl) generalActionsEl.hidden = editing?.section !== "settings";
     syncThemeControl();
     // A draft that disappeared underneath the form (confirmed save, or a reload) must not linger.
-    if (editing && !state.draft) {
+    if ((editing && !state.draft && !keepSubpageOnSave) || refreshAfterDelete) {
       editing = null;
       renderTab();
       return;
+    }
+    if (editing && !state.draft && keepSubpageOnSave && state.save.kind === "confirmed") {
+      keepSubpageOnSave = false;
     }
     if (editing && state.draft && state.draft.section !== editing.section) {
       editing = null;
