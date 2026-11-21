@@ -1233,7 +1233,6 @@ export function mountBusinessTasksView(
     stopControls.hidden =
       taskCancelled ||
       waitingForAnswer ||
-      !controller.runReady ||
       !controller.detailFresh ||
       !run ||
       run.stopping ||
@@ -1243,7 +1242,6 @@ export function mountBusinessTasksView(
       !data.actions?.correctTask ||
       taskCancelled ||
       waitingForAnswer ||
-      !controller.runReady ||
       !run ||
       run.state === "queued" ||
       (run.stopping && ["claimed", "unknown"].includes(run.state));

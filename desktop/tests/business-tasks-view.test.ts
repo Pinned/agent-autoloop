@@ -167,6 +167,7 @@ async function withView(
     scrollHost?: HTMLElement;
     actionAuthority?: "missing" | "execution" | "cards" | "timers" | "hold";
     timeline?: unknown[];
+    runRead?: () => Promise<unknown>;
     detailRead?: () => Promise<unknown>;
     backFromDetail?: () => void;
     backLabel?: () => string;
@@ -228,7 +229,8 @@ async function withView(
                   },
           } as never;
         },
-        taskDetail: async () => ({ version: 1, ok: true, data: runDetail }) as never,
+        taskDetail: async () =>
+          (options.runRead ? await options.runRead() : { version: 1, ok: true, data: runDetail }) as never,
         taskAction: (options.taskAction as never) ?? (() => new Promise(() => {})),
       },
       () => view?.update(),
@@ -1510,9 +1512,12 @@ test("unified DOM retains protected current actions and correction drafts", asyn
       ...item,
       key: `${kind}:1`,
       kind,
+      state: "paused",
       legacyNotice: kind === "legacy" ? "旧轮" : null,
       decisions: { items: [], hasMore: false },
     };
+    let release: (() => void) | undefined;
+    let held = false;
     await withView(
       async (controller, root) => {
         controller.open(`${kind}:1`);
@@ -1533,20 +1538,40 @@ test("unified DOM retains protected current actions and correction drafts", asyn
         );
         assert.ok(!all(current).some((x) => x.textContent === "记录反馈"));
         const toggle = all(detail).find((x) => x.className === "business-correct-toggle")!;
+        assert.equal(toggle.hidden, false);
         toggle.fire();
         assert.equal(memo.hidden, false);
         assert.ok(all(root).find((x) => x.tag === "dialog")!.open);
         const input = all(memo).find((x) => x.tag === "textarea")!;
         input.value = "更正草稿";
         input.listeners.get("input")?.();
+        held = true;
         controller.refreshDetail();
+        assert.equal(toggle.hidden, false);
+        await flush();
+        const hidden = toggle.hidden;
+        release?.();
         for (let i = 0; i < 4; i++) await flush();
+        assert.equal(hidden, false);
         assert.ok(all(memo).includes(input));
         assert.equal(input.value, "更正草稿");
         assert.equal(all(detail).find((x) => x.className === "business-process-content")!.hidden, false);
       },
       shown,
-      { run, association: { kind: "unavailable" }, events: page, cards: page, relatedRuns: page },
+      undefined,
+      {
+        runRead: async () => {
+          if (held)
+            await new Promise<void>((resolve) => {
+              release = resolve;
+            });
+          return {
+            version: 1,
+            ok: true,
+            data: { run, association: { kind: "unavailable" }, events: page, cards: page, relatedRuns: page },
+          };
+        },
+      },
     );
   }
 });
