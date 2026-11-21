@@ -647,3 +647,105 @@ test("an invalid row shows a specific Chinese field message in the form, never s
   assert.ok(error, "the refusal is on screen");
   assert.match(error!.textContent, /标识.*小写字母/);
 });
+
+test("general tab uses segmented theme control and direct-manipulation global settings without extra edit step", async () => {
+  const chosenThemes: string[] = [];
+  let currentTheme: "system" | "light" | "dark" = "system";
+  const r = recordingBridge();
+  const host = new TestElement("main");
+  let view!: ReturnType<typeof mountSettingsView>;
+  withDocument(() => {
+    view = mountSettingsView(createRendererSettings(r.bridge), {
+      role: () => "hub-worker",
+      legacyConfig: () => false,
+      theme: () => currentTheme,
+      setTheme: (next) => {
+        currentTheme = next;
+        chosenThemes.push(next);
+      },
+      openSetup: () => {},
+    });
+  });
+  const root = view.root as unknown as TestElement;
+  host.append(root);
+  const tabs = all(root).find((node) => node.className.split(" ").includes("settings-tabs"))!;
+  await withDocumentAcross(async () => {
+    view.init();
+    await flush();
+  });
+
+  click(tabs.children.find((node) => node.dataset.tab === "general")!);
+  // Theme uses a 3-way segmented control with zero redundant hint text.
+  assert.equal(root.textContent.includes("跟随系统，或固定为浅色、深色"), false);
+  const darkButton = find(root, "深色")!;
+  assert.ok(darkButton);
+  assert.equal(find(root, "跟随系统")!.attributes.get("aria-pressed"), "true");
+  click(darkButton);
+  assert.deepEqual(chosenThemes, ["dark"]);
+  assert.equal(darkButton.attributes.get("aria-pressed"), "true");
+
+  // Timezone and askFirst are directly editable without clicking an extra "编辑" button.
+  assert.equal(find(root, "编辑"), undefined);
+  const tzInput = byId(root, "settings-timezone")!;
+  const askInput = byId(root, "settings-ask-first")!;
+  const generalActions = byId(root, "settings-general-actions")!;
+  assert.ok(tzInput);
+  assert.ok(askInput);
+  assert.equal(generalActions.hidden, true);
+  assert.equal(tzInput.value, "Asia/Shanghai");
+
+  // Typing immediately opens the draft without replacing the focused input node and reveals save/cancel.
+  type(tzInput, "UTC");
+  assert.equal(byId(root, "settings-timezone"), tzInput);
+  assert.equal(generalActions.hidden, false);
+  type(askInput, "删数据 停服");
+
+  await withDocumentAcross(async () => {
+    find(root, "保存")!.click();
+    await flush();
+  });
+  assert.equal(r.puts.length, 1);
+  assert.equal(r.puts[0].section, "settings");
+  assert.deepEqual(r.puts[0].value, { timezone: "UTC", askFirst: ["删数据", "停服"] });
+  assert.equal(byId(root, "settings-general-actions")!.hidden, true);
+});
+
+test("general tab hides hub settings for a pure worker without hub snapshot", () => {
+  const f = fixture(() => "worker");
+  click(f.tabs.children.find((node) => node.dataset.tab === "general")!);
+  assert.ok(find(f.root, "跟随系统"));
+  assert.equal(byId(f.root, "settings-timezone"), undefined);
+  assert.equal(f.root.textContent.includes("尚未读取到本机配置"), false);
+});
+
+test("connection tab renders structured role badge and scannable key commands without filler prose", () => {
+  let setupOpened = 0;
+  const host = new TestElement("main");
+  let view!: ReturnType<typeof mountSettingsView>;
+  withDocument(() => {
+    view = mountSettingsView(createRendererSettings(emptyBridge), {
+      role: () => "hub-worker",
+      legacyConfig: () => false,
+      theme: () => "system",
+      setTheme: () => {},
+      openSetup: () => {
+        setupOpened++;
+      },
+    });
+  });
+  const root = view.root as unknown as TestElement;
+  host.append(root);
+  const tabs = all(root).find((node) => node.className.split(" ").includes("settings-tabs"))!;
+  click(tabs.children.find((node) => node.dataset.tab === "connection")!);
+  assert.ok(root.textContent.includes("中台＋执行机"));
+  assert.equal(root.textContent.includes("可以直接修改上方的配置"), false);
+  const codes = all(root)
+    .filter((node) => node.tagName === "code")
+    .map((node) => node.textContent);
+  assert.equal(codes.length, 3);
+  assert.ok(codes.some((line) => line.includes("agent-autoloop key new")));
+  assert.ok(codes.some((line) => line.includes("agent-autoloop key list")));
+  assert.ok(codes.some((line) => line.includes("agent-autoloop key remove")));
+  click(find(root, "查看本机配置状态")!);
+  assert.equal(setupOpened, 1);
+});

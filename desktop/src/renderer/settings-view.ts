@@ -100,6 +100,26 @@ function select(
 const wordsOf = (text: string) => text.split(/[\s,，]+/).filter(Boolean);
 const ACCESS_LABELS: Record<string, string> = { read: "只读", edit: "可编辑", full: "完全权限" };
 const AGENT_USES = ["claude", "codex", "agy", "command"] as const;
+const COMMON_TIMEZONES = [
+  "Asia/Shanghai",
+  "Asia/Hong_Kong",
+  "Asia/Tokyo",
+  "Asia/Singapore",
+  "UTC",
+  "America/New_York",
+  "America/Los_Angeles",
+  "Europe/London",
+  "Europe/Berlin",
+] as const;
+const THEME_OPTIONS: readonly { value: Theme; label: string }[] = [
+  { value: "system", label: "跟随系统" },
+  { value: "light", label: "浅色" },
+  { value: "dark", label: "深色" },
+];
+const ROLE_LABELS: Record<"hub-worker" | "worker", string> = {
+  "hub-worker": "中台＋执行机",
+  worker: "纯执行机",
+};
 const ADD_LABELS: Record<ListSection, string> = {
   agents: "＋ 添加 Agent",
   sources: "＋ 添加来源",
@@ -134,6 +154,8 @@ export function mountSettingsView(
   // entry point (locked while any session is open), a form action (locked only by real work, not
   // by the very draft it exists to save) and a cancel (locked exactly when it would strand a result).
   let buttons: { node: HTMLButtonElement; kind: "list" | "act" | "cancel" }[] = [];
+  let themeButtons: HTMLButtonElement[] = [];
+  let generalActionsEl: HTMLElement | null = null;
   // Whether the body was last drawn from a snapshot. A first read settling (or a reload clearing
   // it) has to redraw the tab: the status line can say "done", but the list is the page's content.
   let hadSnapshot = false;
@@ -240,12 +262,6 @@ export function mountSettingsView(
     if (primary) node.className = "setup-primary";
     return node;
   }
-  function actionBar(controls: HTMLElement[]) {
-    const bar = document.createElement("div");
-    bar.className = "setup-actions";
-    bar.append(...controls);
-    return bar;
-  }
   function emptyState(text: string): HTMLElement {
     const node = document.createElement("p");
     node.className = "muted";
@@ -328,8 +344,12 @@ export function mountSettingsView(
   /** The whole section value: this row's raw form values on top of the draft's current entries. */
   function compose(): unknown {
     const session = editing!;
-    if (session.section === "settings")
-      return { timezone: session.global.timezone.trim(), askFirst: wordsOf(session.global.askFirst) };
+    if (session.section === "settings") {
+      const timezone = session.global.timezone.trim();
+      if (!timezone || !/^[A-Za-z][A-Za-z0-9_+\-/]*$/.test(timezone))
+        throw new Error("请填写有效的 IANA 时区名称，例如 Asia/Shanghai");
+      return { timezone, askFirst: wordsOf(session.global.askFirst) };
+    }
     const entries = draftEntries();
     entries[session.rowIndex] = entryOf(session.section, session.row, entries, session.rowIndex);
     return entries;
@@ -367,15 +387,21 @@ export function mountSettingsView(
     editing = { section, rowIndex: fresh ? entries.length : rowIndex!, row, fresh };
     renderTab();
   }
-  function startGlobalEdit() {
+  function ensureGlobalEdit(): Extract<Editing, { section: "settings" }> | null {
+    if (editing?.section === "settings") return editing;
     const state = controller.getState();
-    if (state.saving || state.reloading || state.needsReview || state.draft) return;
+    if (!state.snapshot || state.saving || state.reloading || state.needsReview || state.draft) return null;
+    const session: Extract<Editing, { section: "settings" }> = {
+      section: "settings",
+      global: { timezone: state.snapshot.timezone, askFirst: state.snapshot.askFirst.join(" ") },
+    };
+    editing = session;
     controller.beginEdit("settings");
-    const draft = controller.getState().draft;
-    if (!draft || draft.section !== "settings") return;
-    const value = draft.value as { timezone: string; askFirst: readonly string[] };
-    editing = { section: "settings", global: { timezone: value.timezone, askFirst: value.askFirst.join(" ") } };
-    renderTab();
+    if (controller.getState().draft?.section !== "settings") {
+      editing = null;
+      return null;
+    }
+    return session;
   }
   function stopEdit() {
     editing = null;
@@ -675,30 +701,6 @@ export function mountSettingsView(
     return container;
   }
 
-  function globalForm(): HTMLElement {
-    const session = editing as Extract<Editing, { section: "settings" }>;
-    const wrap = document.createElement("div");
-    wrap.className = "settings-editor";
-    const error = document.createElement("p");
-    error.className = "setup-error";
-    error.hidden = true;
-    const timezone = input("settings-timezone", session.global.timezone);
-    timezone.addEventListener("input", () => (session.global.timezone = timezone.value));
-    const askFirst = textarea("settings-ask-first", session.global.askFirst);
-    askFirst.addEventListener("input", () => (session.global.askFirst = askFirst.value));
-    const save = button("保存", true);
-    const cancel = button("取消");
-    save.addEventListener("click", () => {
-      if (!commit(error, compose)) return;
-      controller.save();
-    });
-    cancel.addEventListener("click", stopEdit);
-    register(save, "act");
-    register(cancel, "cancel");
-    wrap.append(field("时区", timezone), field("确认事项", askFirst), error, actionBar([save, cancel]));
-    return wrap;
-  }
-
   function readOnlyRow(
     section: ListSection,
     entry: Record<string, unknown>,
@@ -822,74 +824,204 @@ export function mountSettingsView(
     return wrap;
   }
 
+  function timezonesList(): HTMLElement {
+    const list = document.createElement("datalist");
+    list.id = "settings-timezones";
+    list.replaceChildren(
+      ...COMMON_TIMEZONES.map((tz) => {
+        const option = document.createElement("option");
+        option.value = tz;
+        return option;
+      }),
+    );
+    return list;
+  }
+
   function connectionTab(): HTMLElement {
     const wrap = document.createElement("div");
+    wrap.className = "settings-stack";
     const role = options.role();
     const legacy = options.legacyConfig();
-    const note = document.createElement("p");
-    note.className = "muted";
-    // A legacy record has a role but no automatic-start authorization; the app cannot grant one.
-    note.textContent = legacy
-      ? "这台电脑有旧配置，但没有自动启动授权。打开应用不会自动启动它：请先到执行机页手动启动。要改成自动启动，需要移除本机配置数据后重新完成首次配置。"
-      : role === "worker"
-        ? "此电脑是纯执行机：Agent、来源与通知通道由中台管理，本页只能查看连接方式。"
-        : role === "hub-worker"
-          ? "此电脑同时运行中台与执行机，可以直接修改上方的配置。"
-          : "尚未确认此电脑的角色；启动本机运行服务后才能修改配置。";
-    const buttonRow = document.createElement("div");
-    buttonRow.className = "setup-actions";
+
+    const roleCard = document.createElement("section");
+    roleCard.className = "settings-form-group";
+    const roleHead = document.createElement("div");
+    roleHead.className = "settings-conn-head";
+    const roleTitleGroup = document.createElement("div");
+    roleTitleGroup.className = "settings-conn-title";
+    const roleTitle = document.createElement("h3");
+    roleTitle.textContent = "本机角色";
+    const roleBadge = document.createElement("span");
+    roleBadge.className = "settings-role-badge";
+    roleBadge.textContent = role ? ROLE_LABELS[role] : "未确认";
+    roleTitleGroup.append(roleTitle, roleBadge);
     // The wizard only reports the existing configuration; it never overwrites one from here.
-    const setup = button("查看本机配置状态", true);
+    const setup = button("查看本机配置状态");
     setup.addEventListener("click", () => options.openSetup());
-    buttonRow.append(setup);
-    const credentials = document.createElement("div");
-    credentials.className = "setup-field";
-    const credentialTitle = document.createElement("span");
-    credentialTitle.textContent = "凭据";
-    const credentialText = document.createElement("p");
-    credentialText.className = "muted";
+    roleHead.append(roleTitleGroup, setup);
+    roleCard.append(roleHead);
+
+    // Only show a note when the machine has a real operational constraint; no filler for healthy hub-worker.
+    const noteText = legacy
+      ? "当前为旧版配置，打开应用不会自动启动；请先到执行机页手动启动，或移除本机配置数据后重新配置。"
+      : role === "worker"
+        ? "纯执行机仅连接已有中台，全局来源与通知通道在中台设备上管理。"
+        : role === null
+          ? "尚未确认此电脑的角色，启动本机运行服务后可管理配置。"
+          : "";
+    if (noteText) {
+      const note = document.createElement("p");
+      note.className = legacy ? "setup-error settings-conn-note" : "muted settings-conn-note";
+      note.textContent = noteText;
+      roleCard.append(note);
+    }
+
+    const credCard = document.createElement("section");
+    credCard.className = "settings-form-group";
+    const credTitle = document.createElement("h3");
+    credTitle.textContent = "凭据管理";
+    const credNote = document.createElement("p");
+    credNote.className = "muted settings-cred-note";
     // The app never holds plaintext secrets: keys are written and listed by the CLI only.
-    credentialText.textContent =
-      "本应用不读取、不显示、不保存任何明文密钥。新增凭据请在中台机器上运行 agent-autoloop key new <类型> <名称>，查看列表用 agent-autoloop key list，移除用 agent-autoloop key remove <类型> <名称>。";
-    credentials.append(credentialTitle, credentialText);
-    wrap.append(note, buttonRow, credentials);
+    credNote.textContent = "本应用不读取、不显示、不保存明文密钥，请在中台终端管理：";
+    const cmdList = document.createElement("dl");
+    cmdList.className = "settings-cmd-list";
+    for (const [label, command] of [
+      ["新增", "agent-autoloop key new <类型> <名称>"],
+      ["查看", "agent-autoloop key list"],
+      ["移除", "agent-autoloop key remove <类型> <名称>"],
+    ]) {
+      const row = document.createElement("div");
+      row.className = "settings-cmd-row";
+      const dt = document.createElement("dt");
+      dt.textContent = label;
+      const dd = document.createElement("dd");
+      const code = document.createElement("code");
+      code.textContent = command;
+      dd.append(code);
+      row.append(dt, dd);
+      cmdList.append(row);
+    }
+    credCard.append(credTitle, credNote, cmdList);
+
+    wrap.append(roleCard, credCard);
     return wrap;
+  }
+
+  function syncThemeControl() {
+    const active = options.theme();
+    for (const node of themeButtons) {
+      const selected = node.dataset.themeChoice === active;
+      node.classList.toggle("active", selected);
+      node.setAttribute("aria-pressed", String(selected));
+    }
   }
 
   function generalTab(): HTMLElement {
     const wrap = document.createElement("div");
+    wrap.className = "settings-stack";
+
+    const appearanceCard = document.createElement("section");
+    appearanceCard.className = "settings-form-group";
+    const appearanceTitle = document.createElement("h3");
+    appearanceTitle.textContent = "外观";
     const themeRow = document.createElement("div");
-    themeRow.className = "settings-theme";
-    const themeSelect = select("theme", ["system", "light", "dark"], options.theme());
-    const labels: Record<string, string> = { system: "跟随系统", light: "浅色", dark: "深色" };
-    for (const option of themeSelect.options) option.textContent = labels[option.value];
-    themeSelect.addEventListener("change", () => options.setTheme(themeSelect.value as Theme));
-    themeRow.append(field("主题", themeSelect));
-    wrap.append(themeRow);
-    if (editing && editing.section === "settings") {
-      wrap.append(globalForm());
-      return wrap;
-    }
+    themeRow.className = "settings-inline-row";
+    const themeLabel = document.createElement("span");
+    themeLabel.className = "settings-inline-label";
+    themeLabel.textContent = "主题";
+    const segmented = document.createElement("div");
+    segmented.className = "settings-segmented";
+    segmented.setAttribute("role", "group");
+    segmented.setAttribute("aria-label", "主题");
+    const currentTheme = options.theme();
+    themeButtons = THEME_OPTIONS.map((item) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.dataset.themeChoice = item.value;
+      btn.textContent = item.label;
+      const selected = item.value === currentTheme;
+      btn.classList.toggle("active", selected);
+      btn.setAttribute("aria-pressed", String(selected));
+      btn.addEventListener("click", () => {
+        options.setTheme(item.value);
+        syncThemeControl();
+      });
+      return btn;
+    });
+    segmented.append(...themeButtons);
+    themeRow.append(themeLabel, segmented);
+    appearanceCard.append(appearanceTitle, themeRow);
+    wrap.append(appearanceCard);
+
     const state = controller.getState();
     if (!state.snapshot) {
-      wrap.append(emptyState(state.loading ? "正在读取本机配置……" : "尚未读取到本机配置。"));
+      if (state.loading && options.role() !== "worker") wrap.append(emptyState("正在读取本机配置…"));
       return wrap;
     }
-    const summary = document.createElement("div");
-    summary.className = "entry-meta muted";
-    summary.textContent = `时区 ${state.snapshot.timezone} · 确认事项 ${
-      state.snapshot.askFirst.length ? state.snapshot.askFirst.join("、") : "无"
-    }`;
-    const edit = button("编辑", true);
-    edit.disabled = state.saving || state.reloading || state.needsReview || state.draft !== null;
-    edit.addEventListener("click", startGlobalEdit);
-    register(edit, "list");
-    wrap.append(summary, actionBar([edit]));
+
+    const activeGlobal = editing?.section === "settings" ? editing.global : null;
+    const initialTz = activeGlobal ? activeGlobal.timezone : state.snapshot.timezone;
+    const initialAsk = activeGlobal ? activeGlobal.askFirst : state.snapshot.askFirst.join(" ");
+
+    const error = document.createElement("p");
+    error.className = "setup-error";
+    error.setAttribute("role", "alert");
+    error.hidden = true;
+
+    const tzInput = input("settings-timezone", initialTz, "例如 Asia/Shanghai");
+    tzInput.className = "settings-mono-input";
+    tzInput.setAttribute("list", "settings-timezones");
+    tzInput.addEventListener("input", () => {
+      const session = ensureGlobalEdit();
+      if (!session) return;
+      session.global.timezone = tzInput.value;
+      update();
+    });
+
+    const askField = chipField({
+      id: "settings-ask-first",
+      label: "需先确认的事项",
+      placeholder: "输入事项后回车添加，可留空",
+      initial: initialAsk,
+      onChange: (serialized) => {
+        const session = ensureGlobalEdit();
+        if (!session) return;
+        session.global.askFirst = serialized;
+        update();
+      },
+    });
+
+    const actions = document.createElement("div");
+    actions.className = "settings-general-actions";
+    actions.id = "settings-general-actions";
+    actions.hidden = editing?.section !== "settings";
+    generalActionsEl = actions;
+    const dirtyHint = document.createElement("span");
+    dirtyHint.className = "muted settings-dirty-hint";
+    dirtyHint.textContent = "有未保存的更改";
+    const save = button("保存", true);
+    const cancel = button("取消");
+    save.addEventListener("click", () => {
+      if (!ensureGlobalEdit()) return;
+      if (!commit(error, compose)) return;
+      controller.save();
+    });
+    cancel.addEventListener("click", stopEdit);
+    register(save, "act");
+    register(cancel, "cancel");
+    actions.append(dirtyHint, cancel, save);
+
+    const hubCard = formCard("中台通用设置", [field("时区", tzInput, true), askField]);
+    hubCard.append(error, actions);
+    wrap.append(hubCard, timezonesList());
     return wrap;
   }
 
   function renderTab() {
     buttons = [];
+    themeButtons = [];
+    generalActionsEl = null;
     syncTabs();
     const state = controller.getState();
     hadSnapshot = state.snapshot !== null;
@@ -961,8 +1093,12 @@ export function mountSettingsView(
     retryButton.hidden = !showRetry;
     retryButton.disabled = state.loading || state.saving;
     recoveryBar.hidden = !showDiscard && !showRetry;
-    const themeSelect = body.querySelector<HTMLSelectElement>("#theme");
-    if (themeSelect && themeSelect !== document.activeElement) themeSelect.value = options.theme();
+    for (const tabBtn of tabButtons) {
+      tabBtn.disabled =
+        tabBtn.dataset.tab !== tab && (editing !== null || state.saving || state.reloading || state.needsReview);
+    }
+    if (generalActionsEl) generalActionsEl.hidden = editing?.section !== "settings";
+    syncThemeControl();
     // A draft that disappeared underneath the form (confirmed save, or a reload) must not linger.
     if (editing && !state.draft) {
       editing = null;

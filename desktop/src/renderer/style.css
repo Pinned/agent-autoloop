@@ -3118,6 +3118,7 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
   .sidebar nav button.active,
   .new-task-button.active,
   .settings-tab.active,
+  .settings-segmented button.active,
   .task-detail-tabs button[aria-pressed="true"],
   .task-title-route-bar:focus-within,
   .task-editor-box:focus-within {
@@ -3403,8 +3404,124 @@ main:has(.settings-subpage-panel) {
 .settings-body .entry-list {
   margin-top: 0;
 }
-.settings-theme {
-  margin-bottom: 14px;
+.settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.settings-inline-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+}
+.settings-inline-label {
+  font-size: 13px;
+  color: var(--text);
+}
+.settings-segmented {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel2);
+  gap: 2px;
+}
+.settings-segmented button {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 5px 12px;
+}
+.settings-segmented button:hover:not(.active):not(:disabled) {
+  color: var(--text);
+}
+.settings-segmented button.active {
+  background: var(--panel);
+  border-color: var(--border);
+  color: var(--text);
+  font-weight: 600;
+}
+.settings-general-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--soft);
+}
+.settings-dirty-hint {
+  font-size: 12px;
+  margin-right: auto;
+}
+.settings-conn-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+.settings-conn-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.settings-conn-title h3 {
+  margin: 0;
+}
+.settings-role-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel2);
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--text);
+}
+.settings-conn-note,
+.settings-cred-note {
+  margin-top: 12px;
+  font-size: 12px;
+}
+.settings-cmd-list {
+  margin: 12px 0 0;
+  border: 1px solid var(--soft);
+  border-radius: 7px;
+  background: var(--panel2);
+  overflow: hidden;
+}
+.settings-cmd-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--soft);
+}
+.settings-cmd-row:last-child {
+  border-bottom: 0;
+}
+.settings-cmd-row dt {
+  font-size: 12px;
+  color: var(--muted);
+}
+.settings-cmd-row dd {
+  margin: 0;
+  min-width: 0;
+}
+.settings-cmd-row code {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
 }
 @media (max-width: 650px) {
   .settings-form-grid {
