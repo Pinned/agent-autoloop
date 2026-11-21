@@ -2,7 +2,15 @@
 // it out of the app's wiring makes the one decision that matters testable on its own: a pure
 // worker must never be offered a page that would speak for a workspace it cannot see.
 export type Role = "hub-worker" | "worker" | null;
-export type Page = { id: string; nav: string; title: string; description: string; icon: string };
+export type NavigationSection = "work" | "system";
+export type Page = {
+  id: string;
+  nav: string;
+  title: string;
+  description: string;
+  icon: string;
+  section: NavigationSection;
+};
 
 export const ownerPages: readonly Page[] = [
   {
@@ -11,14 +19,23 @@ export const ownerPages: readonly Page[] = [
     title: "今天",
     description: "让 Agent 继续推进，只把需要你的事情带回来。",
     icon: "today",
+    section: "work",
   },
-  { id: "tasks", nav: "任务", title: "任务", description: "查看工作的来龙去脉，知道下一步由谁推进。", icon: "tasks" },
+  {
+    id: "tasks",
+    nav: "任务",
+    title: "任务",
+    description: "查看工作的来龙去脉，知道下一步由谁推进。",
+    icon: "tasks",
+    section: "work",
+  },
   {
     id: "automation",
     nav: "规则",
     title: "规则",
     description: "管理本机事件与定时规则；其他规则在中台网页控制台修改。",
     icon: "automation",
+    section: "work",
   },
   {
     id: "workers",
@@ -26,8 +43,16 @@ export const ownerPages: readonly Page[] = [
     title: "执行机",
     description: "查看此电脑的运行状态，管理本机启动与停止。",
     icon: "workers",
+    section: "system",
   },
-  { id: "settings", nav: "设置", title: "设置", description: "调整桌面体验与本机角色配置。", icon: "settings" },
+  {
+    id: "settings",
+    nav: "设置",
+    title: "设置",
+    description: "调整桌面体验与本机角色配置。",
+    icon: "settings",
+    section: "system",
+  },
 ];
 // The restricted view: this machine's work, this machine's environment, the connection.
 export const workerPages: readonly Page[] = [
@@ -37,6 +62,7 @@ export const workerPages: readonly Page[] = [
     title: "本机任务",
     description: "本机运行进程自报的持有量；不可创建或管理全局任务。",
     icon: "tasks",
+    section: "work",
   },
   {
     id: "workers",
@@ -44,6 +70,7 @@ export const workerPages: readonly Page[] = [
     title: "本机环境",
     description: "本机运行服务与中台连接；不展示其他执行机。",
     icon: "workers",
+    section: "work",
   },
   {
     id: "settings",
@@ -51,6 +78,7 @@ export const workerPages: readonly Page[] = [
     title: "设置",
     description: "仅本机 Agent、连接和个人外观设置。",
     icon: "settings",
+    section: "system",
   },
 ];
 

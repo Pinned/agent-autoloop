@@ -54,10 +54,19 @@ test("identity follows the role and nothing else", () => {
   assert.notEqual(navigationSignature("worker"), navigationSignature(null));
 });
 
-test("every page the projection can return has a title and an icon key", () => {
+test("every page the projection can return has a title, an icon key and a valid navigation section", () => {
   for (const page of [...ownerPages, ...workerPages]) {
     assert.ok(page.title.length > 0, page.id);
     assert.ok(page.icon.length > 0, page.id);
     assert.ok(page.description.length > 0, page.id);
+    assert.ok(page.section === "work" || page.section === "system", page.id);
   }
+  assert.deepEqual(
+    ownerPages.map((page) => page.section),
+    ["work", "work", "work", "system", "system"],
+  );
+  assert.deepEqual(
+    workerPages.map((page) => page.section),
+    ["work", "work", "system"],
+  );
 });
