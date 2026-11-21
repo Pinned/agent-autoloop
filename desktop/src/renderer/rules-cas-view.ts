@@ -1,4 +1,4 @@
-import { type DesktopRuleEntry } from "../../../host/desktop-rules-contract.ts";
+import { DESKTOP_RULES_TYPE_PATTERN, type DesktopRuleEntry } from "../../../host/desktop-rules-contract.ts";
 import type { createRendererRulesCas } from "./rules-cas-controller.ts";
 import { decodeSchedule, encodeSchedule, minuteIntervals, scheduleSummary, type Schedule } from "./cron-schedule.ts";
 
@@ -223,12 +223,15 @@ export function mountRulesCasView(
   const triggerField = document.createElement("div");
   triggerField.className = "rule-trigger-field";
   const triggerLabel = document.createElement("span");
+  triggerLabel.className = "rule-field-caption";
   triggerLabel.textContent = "触发方式";
   triggerField.setAttribute("role", "group");
   triggerField.setAttribute("aria-label", "触发方式");
   const triggerInput = document.createElement("select");
   triggerInput.id = "rules-trigger";
   triggerInput.hidden = true;
+  const triggerSegmented = document.createElement("div");
+  triggerSegmented.className = "settings-segmented rule-segmented";
   const triggerButtons: HTMLButtonElement[] = [];
   for (const [value, text] of [
     ["event", "事件触发"],
@@ -247,8 +250,9 @@ export function mountRulesCasView(
       syncTrigger();
     });
     triggerButtons.push(button);
+    triggerSegmented.append(button);
   }
-  triggerField.append(triggerLabel, triggerInput, ...triggerButtons);
+  triggerField.append(triggerLabel, triggerInput, triggerSegmented);
   headBar.append(nameField);
 
   function field(label: string, id: string, multiline = true) {
@@ -275,7 +279,13 @@ export function mountRulesCasView(
   triggerGrid.className = "rule-grid";
   const { wrap: typesWrap, input: typesInput } = field("事件类型", "types");
   typesWrap.className += " rule-span2";
+  (typesInput as HTMLTextAreaElement).rows = 1;
+  typesInput.className = "rule-single-line";
   typesInput.setAttribute("placeholder", "空格或逗号分隔，可用 x.* 通配");
+  const typesChips = document.createElement("div");
+  typesChips.className = "settings-chips rule-types-chips";
+  typesChips.hidden = true;
+  typesWrap.append(typesChips);
   // Unsupported schedules remain immutable, rather than approximated by visual controls.
   let preservedCron: string | null = null;
   const visualWrap = document.createElement("div");
@@ -318,12 +328,15 @@ export function mountRulesCasView(
   }
   intervalWrap.append(intervalLabel, intervalInput);
   const weekWrap = document.createElement("div");
-  weekWrap.className = "rule-trigger-field rule-span2";
+  weekWrap.className = "rule-weekday-group rule-span2";
   weekWrap.setAttribute("role", "group");
   weekWrap.setAttribute("aria-label", "执行星期");
   const weekLabel = document.createElement("span");
+  weekLabel.className = "rule-field-caption";
   weekLabel.textContent = "执行星期";
-  weekWrap.append(weekLabel);
+  const weekButtonsRow = document.createElement("div");
+  weekButtonsRow.className = "rule-weekday-buttons";
+  weekWrap.append(weekLabel, weekButtonsRow);
   const weekdays = new Set<number>();
   const weekdayButtons: HTMLButtonElement[] = [];
   for (const day of [1, 2, 3, 4, 5, 6, 0]) {
@@ -338,10 +351,10 @@ export function mountRulesCasView(
       syncSchedule();
     });
     weekdayButtons.push(button);
-    weekWrap.append(button);
+    weekButtonsRow.append(button);
   }
   const scheduleNote = document.createElement("p");
-  scheduleNote.className = "muted rule-span2";
+  scheduleNote.className = "rule-schedule-preview rule-span2";
   scheduleNote.setAttribute("role", "status");
   scheduleNote.setAttribute("aria-live", "polite");
   function readSchedule(): Schedule {
@@ -360,13 +373,16 @@ export function mountRulesCasView(
     for (const button of weekdayButtons)
       button.setAttribute("aria-pressed", String(weekdays.has(Number(button.value))));
     try {
-      if (preserved)
+      if (preserved) {
+        scheduleNote.className = "rule-schedule-preview rule-span2";
         scheduleNote.textContent = `此时间表无法完整转换为可视化配置，已只读保留：${preservedCron}。可修改其他字段；执行时间不变，按中台设置的时区执行。`;
-      else {
+      } else {
         encodeSchedule(readSchedule());
+        scheduleNote.className = "rule-schedule-preview rule-span2";
         scheduleNote.textContent = scheduleSummary(readSchedule());
       }
     } catch (failure) {
+      scheduleNote.className = "rule-schedule-preview is-error rule-span2";
       scheduleNote.textContent = failure instanceof Error ? failure.message : "请核对执行时间";
     }
   }
@@ -399,6 +415,7 @@ export function mountRulesCasView(
   // dialog (a main-process door) is the only way in. A path chosen with the keyboard was a
   // typo the hub only refused at save time; the dialog answers that question before the form.
   cwdInput.setAttribute("readonly", "readonly");
+  cwdInput.setAttribute("placeholder", "点击右侧按钮选择项目文件夹");
   (cwdInput as HTMLTextAreaElement).rows = 1;
   const cwdPickRow = document.createElement("span");
   cwdPickRow.className = "rule-cwd-picker";
@@ -419,7 +436,10 @@ export function mountRulesCasView(
     door()
       .then((chosen) => {
         // The edit session may have ended while the OS dialog was open; a late answer is dropped.
-        if (chosen !== null && editing) cwdInput.value = chosen;
+        if (chosen !== null && editing) {
+          cwdInput.value = chosen;
+          cwdCopy.textContent = "复制完整路径";
+        }
       })
       .catch(() => {})
       .finally(() => {
@@ -483,10 +503,16 @@ export function mountRulesCasView(
   }
   const { wrap: promptWrap, input: promptInput } = field("任务说明", "prompt");
   promptWrap.className += " rule-span2";
+  (promptInput as HTMLTextAreaElement).rows = 4;
+  promptInput.className = "rule-multiline";
   promptInput.setAttribute("placeholder", "收到事件后，需要完成什么？（可选）");
   const { wrap: skillWrap, input: skillInput } = field("技能", "skill");
+  (skillInput as HTMLTextAreaElement).rows = 1;
+  skillInput.className = "rule-single-line";
   skillInput.setAttribute("placeholder", "可选");
   const { wrap: groupWrap, input: groupInput } = field("分组", "group");
+  (groupInput as HTMLTextAreaElement).rows = 1;
+  groupInput.className = "rule-single-line";
   groupInput.setAttribute("placeholder", "可选，留空随规则名");
   const tellField = document.createElement("label");
   tellField.className = "rule-field";
@@ -507,16 +533,24 @@ export function mountRulesCasView(
   }
   tellField.append(tellLabel, tellInput);
   const { wrap: emitsSourceWrap, input: emitsSourceInput } = field("输出事件来源", "emits-source");
+  (emitsSourceInput as HTMLTextAreaElement).rows = 1;
+  emitsSourceInput.className = "rule-single-line";
   emitsSourceInput.setAttribute("placeholder", "可选");
   const { wrap: emitsTypesWrap, input: emitsTypesInput } = field("输出事件类型", "emits-types");
   emitsTypesWrap.className += " rule-span2";
+  (emitsTypesInput as HTMLTextAreaElement).rows = 1;
+  emitsTypesInput.className = "rule-single-line";
   emitsTypesInput.setAttribute("placeholder", "可选，空格或逗号分隔");
+  const emitsTypesChips = document.createElement("div");
+  emitsTypesChips.className = "settings-chips rule-emits-chips";
+  emitsTypesChips.hidden = true;
+  emitsTypesWrap.append(emitsTypesChips);
   skillWrap.className += " rule-span2";
   tellField.className += " rule-span2";
   const contentGroup = groupSection("执行内容", promptWrap, skillWrap);
   const contentHint = document.createElement("p");
-  contentHint.className = "muted";
-  contentHint.textContent = "非 command 执行体：任务说明和技能至少填写一项；command 执行体可以都留空。";
+  contentHint.className = "muted rule-content-hint";
+  contentHint.textContent = "当前执行体需要任务说明或技能，请至少填写一项。";
   contentGroup.append(contentHint);
   const noticeGroup = groupSection("完成通知", tellField);
   function booleanSetting(title: string, id: string) {
@@ -549,16 +583,74 @@ export function mountRulesCasView(
   const schedule = scheduleFold.element;
   const followupFold = fold("后续事件", emitsSourceWrap, emitsTypesWrap);
   const followup = followupFold.element;
-  const syncSummaries = () => {
-    scheduleFold.description.textContent = `${parallelInput.value ? `按对象分事项 · 最多同时执行 ${parallelInput.value} 项` : "整条规则一个事项"} · ${groupInput.value || "默认分组"}`;
-    followupFold.description.textContent =
-      emitsSourceInput.value || emitsTypesInput.value
-        ? `${emitsSourceInput.value || "未填来源"} · ${emitsTypesInput.value || "未填类型"}`
-        : "未配置";
-    cwdInput.setAttribute("title", readCwd());
+  const splitTypes = (value: string) => value.split(/[\s,，]+/).filter(Boolean);
+  const renderTypeChips = (
+    input: HTMLInputElement | HTMLTextAreaElement,
+    host: HTMLElement,
+    onAfterRemove?: () => void,
+  ) => {
+    const tokens = splitTypes(input.value);
+    host.hidden = tokens.length === 0;
+    const disabled = controller.getState().saving || controller.getState().needsReview;
+    host.replaceChildren(
+      ...tokens.map((token, idx) => {
+        const pill = document.createElement("span");
+        const valid = DESKTOP_RULES_TYPE_PATTERN.test(token);
+        pill.className = valid ? "settings-chip rule-type-chip" : "settings-chip rule-type-chip is-invalid";
+        if (!valid) pill.setAttribute("title", "事件类型格式无效，须以小写字母开头或使用 * / x.* 通配");
+        const code = document.createElement("code");
+        code.textContent = token;
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "settings-chip-remove";
+        remove.setAttribute("aria-label", `移除 ${token}`);
+        remove.textContent = "×";
+        remove.disabled = disabled;
+        remove.addEventListener("click", () => {
+          const remaining = splitTypes(input.value).filter((_, i) => i !== idx);
+          input.value = remaining.join(" ");
+          renderTypeChips(input, host, onAfterRemove);
+          onAfterRemove?.();
+        });
+        pill.append(code, remove);
+        return pill;
+      }),
+    );
   };
+  const syncContentHint = () => {
+    const roster = controller.getState().snapshot?.agents ?? [];
+    const agent = roster.find((item) => item.id === toInput.value);
+    contentHint.textContent =
+      agent?.use === "command"
+        ? "当前执行体为自定义命令，任务说明和技能均可留空。"
+        : "当前执行体需要任务说明或技能，请至少填写一项。";
+  };
+  const syncSummaries = () => {
+    const scheduleParts: string[] = [
+      parallelInput.value ? `按对象分事项 · 最多同时执行 ${parallelInput.value} 项` : "整条规则一个事项",
+    ];
+    if (groupInput.value.trim()) scheduleParts.push(`分组 ${groupInput.value.trim()}`);
+    else if (autoGroup.input.value === "true") scheduleParts.push("自动分组");
+    else scheduleParts.push("默认分组");
+    if (pauseOnAsk.input.value === "true") scheduleParts.push("待确认暂停同组");
+    scheduleFold.description.textContent = scheduleParts.join(" · ");
+    const emitTokens = splitTypes(emitsTypesInput.value);
+    followupFold.description.textContent =
+      emitsSourceInput.value.trim() || emitTokens.length
+        ? `${emitsSourceInput.value.trim() || "未填来源"} · ${emitTokens.length ? `${emitTokens.length} 个类型` : "未填类型"}`
+        : "未配置";
+    const currentCwd = readCwd();
+    cwdInput.setAttribute("title", currentCwd);
+    cwdCopy.hidden = !currentCwd.trim();
+    syncContentHint();
+    renderTypeChips(typesInput, typesChips);
+    renderTypeChips(emitsTypesInput, emitsTypesChips, syncSummaries);
+  };
+  typesInput.addEventListener("input", () => renderTypeChips(typesInput, typesChips));
+  toInput.addEventListener("change", syncContentHint);
   for (const input of [parallelInput, groupInput, emitsSourceInput, emitsTypesInput])
     input.addEventListener("input", syncSummaries);
+  for (const selectInput of [autoGroup.input, pauseOnAsk.input]) selectInput.addEventListener("change", syncSummaries);
 
   const formError = document.createElement("p");
   formError.className = "setup-error";
@@ -603,7 +695,7 @@ export function mountRulesCasView(
   formDanger.append(cancelDeleteButton, deleteButton);
   formFooterRow.append(formPrimary, formDanger);
   formActions.append(formError, editorReviewNote, formFooterRow);
-  form.append(headBar, triggerGroup, contentGroup, execGroup, noticeGroup, schedule, followup, formActions);
+  form.append(headBar, triggerGroup, execGroup, contentGroup, noticeGroup, schedule, followup, formActions);
   editor.append(form);
   // The list page and the editor subpage share one root; hidden is the whole switch, so the
   // app-level view is re-attached on return and the editor never rebuilds what the draft holds.
@@ -643,8 +735,11 @@ export function mountRulesCasView(
   // bound value survives a switch back) but asks nothing.
   const syncTrigger = () => {
     const timed = triggerInput.value === "cron";
-    for (const button of triggerButtons)
-      button.setAttribute("aria-pressed", String(button.value === triggerInput.value));
+    for (const button of triggerButtons) {
+      const pressed = button.value === triggerInput.value;
+      button.setAttribute("aria-pressed", String(pressed));
+      button.className = pressed ? "active" : "";
+    }
     typesWrap.hidden = timed;
     visualWrap.hidden = !timed;
     syncSchedule();
@@ -663,7 +758,6 @@ export function mountRulesCasView(
     const initial = input.value;
     return () => (input.value === initial ? original : changed(input.value));
   }
-  const splitTypes = (value: string) => value.split(/[\s,，]+/).filter(Boolean);
 
   function validForm() {
     const state = controller.getState();
@@ -804,12 +898,13 @@ export function mountRulesCasView(
       },
     };
     formError.hidden = true;
-    schedule.open =
-      !source ||
-      source.parallel !== undefined ||
-      source.group !== undefined ||
-      source.autoGroup !== undefined ||
-      source.pauseOnAsk !== undefined;
+    schedule.open = Boolean(
+      source &&
+      (source.parallel !== undefined ||
+        source.group !== undefined ||
+        source.autoGroup !== undefined ||
+        source.pauseOnAsk !== undefined),
+    );
     followup.open = source?.emits !== undefined;
     cwdCopy.textContent = "复制完整路径";
     syncSummaries();

@@ -2386,10 +2386,7 @@ main:has(#task-subpage:not([hidden])) {
   border-color: var(--blue);
   color: var(--text);
 }
-/* The rule editor subpage: grouped panels instead of one flat field stack, the same panel
-   language as the dispatch-task form. The fused head bar carries name + trigger so identity and
-   routing read as one header; groups keep the required facts above the fold; the optional facts
-   collapse behind a native <details>. */
+/* The rule editor subpage: separated form cards matching the settings subpage language. */
 .rules-editor-panel {
   padding: 0;
   border: 0;
@@ -2398,62 +2395,100 @@ main:has(#task-subpage:not([hidden])) {
 .rules-editor-panel .rule-form {
   display: flex;
   flex-direction: column;
-  gap: 0;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel);
-  overflow: hidden;
+  gap: 14px;
+  background: transparent;
 }
 .rule-head-bar {
-  padding: 22px 26px;
-  border-bottom: 1px solid var(--soft);
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel);
 }
 .rule-name-field {
   display: grid;
   gap: 7px;
 }
 .rule-name-label {
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
 }
 .rule-name-field textarea {
   width: 100%;
   min-height: 38px;
-  padding: 8px 12px;
+  height: 38px;
+  padding: 7px 12px;
   font: inherit;
-  font-size: 15px;
+  font-size: 14px;
   color: var(--text);
   background: var(--panel2);
   border: 1px solid var(--border);
   border-radius: 6px;
-  resize: vertical;
+  resize: none;
 }
 .rule-trigger-field {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: 10px 14px;
+  margin-bottom: 14px;
 }
-.rule-trigger-field button {
-  padding: 6px 16px;
+.rule-field-caption {
+  font-size: 12px;
+  color: var(--muted);
+}
+.rule-weekday-group {
+  display: grid;
+  gap: 8px;
+}
+.rule-weekday-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.rule-weekday-buttons button {
+  padding: 5px 12px;
+  font-size: 12px;
   background: var(--panel2);
-  border: 1px solid var(--soft);
+  border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--muted);
 }
-.rule-trigger-field button[aria-pressed="true"] {
+.rule-weekday-buttons button[aria-pressed="true"] {
   background: var(--accent-bg);
   border-color: var(--blue);
   color: var(--blue);
+  font-weight: 600;
+}
+.rule-schedule-preview {
+  margin: 2px 0 0;
+  padding: 9px 12px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--blue) 30%, var(--border));
+  background: color-mix(in srgb, var(--blue) 6%, var(--panel2));
+  font-size: 12px;
+  color: var(--text);
+}
+.rule-schedule-preview.is-error {
+  border-color: color-mix(in srgb, var(--red) 45%, var(--border));
+  background: color-mix(in srgb, var(--red) 7%, var(--panel2));
+  color: var(--red);
 }
 .rule-group {
-  border-bottom: 1px solid var(--soft);
-  padding: 22px 26px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel);
 }
 .rule-group > h2 {
   margin: 0 0 12px;
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
+}
+.rule-content-hint {
+  margin: 10px 0 0;
+  font-size: 12px;
 }
 .rule-grid {
   display: grid;
@@ -2469,6 +2504,11 @@ main:has(#task-subpage:not([hidden])) {
   font-size: 12px;
   color: var(--muted);
 }
+.rule-field > small {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+}
 .rule-field input,
 .rule-field textarea,
 .rule-field select {
@@ -2481,11 +2521,30 @@ main:has(#task-subpage:not([hidden])) {
   padding: 8px 10px;
 }
 .rule-field input[type="number"] {
-  width: 90px;
+  width: 96px;
 }
 .rule-field textarea {
   resize: vertical;
   min-height: 60px;
+}
+.rule-field textarea.rule-single-line {
+  min-height: 38px;
+  height: 38px;
+  padding: 7px 10px;
+  resize: none;
+}
+.rule-field textarea.rule-multiline {
+  min-height: 96px;
+  resize: vertical;
+}
+.rule-type-chip code {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.rule-type-chip.is-invalid {
+  border-color: var(--red);
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 8%, transparent);
 }
 /* The working directory is picked, not typed: the field shows the chosen folder and the picker
    button is the only way in. Read-only text still needs the field's own visual (not greyed
@@ -2513,72 +2572,80 @@ main:has(#task-subpage:not([hidden])) {
 }
 .rule-cwd-copy {
   justify-self: start;
-  padding: 3px 0;
+  padding: 2px 0;
   border: 0;
   background: transparent;
   color: var(--muted);
   font-size: 12px;
 }
+.rule-cwd-copy:hover:not(:disabled) {
+  color: var(--blue);
+}
 .rule-cwd-pick {
   flex-shrink: 0;
+  font-size: 12px;
+  padding: 6px 12px;
 }
 .rule-fold-summary {
   margin-left: auto;
   font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
   overflow-wrap: anywhere;
-}
-.rule-footer-hint {
-  flex: 1 1 240px;
-  margin: 0;
-  font-size: 12px;
-}
-.rule-cwd-pick {
-  font-size: 12px;
-  padding: 6px 10px;
 }
 .rule-span2 {
   grid-column: span 2;
 }
 .rule-advanced {
-  margin-top: 2px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel);
+  overflow: hidden;
 }
 .rule-advanced summary {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   list-style: none;
   cursor: pointer;
   user-select: none;
-  padding: 18px 26px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--muted);
+  padding: 15px 20px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
 }
 .rule-advanced summary::-webkit-details-marker {
   display: none;
 }
 .rule-advanced summary:hover {
-  color: var(--text);
+  background: color-mix(in srgb, var(--panel2) 55%, var(--panel));
 }
 .rule-advanced summary::after {
   content: "›";
   color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
   transition: transform 0.12s ease;
 }
 .rule-advanced[open] > summary::after {
   transform: rotate(90deg);
 }
+.rule-advanced[open] > summary {
+  border-bottom: 1px solid var(--soft);
+}
 .rule-advanced .rule-group > h2 {
   display: none;
 }
 .rule-advanced .rule-group {
-  margin-top: 4px;
+  border: 0;
+  border-radius: 0;
+  padding: 16px 20px 18px;
 }
 .rule-footer {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 18px 26px;
+  padding: 4px 0 8px;
 }
 .rule-footer-row {
   display: flex;
@@ -2620,7 +2687,9 @@ main:has(#task-subpage:not([hidden])) {
   }
 }
 @media (forced-colors: active) {
-  .rule-advanced summary:focus-visible {
+  .rule-advanced summary:focus-visible,
+  .rule-weekday-buttons button[aria-pressed="true"],
+  .rule-segmented button[aria-pressed="true"] {
     outline: 2px solid Highlight;
   }
 }

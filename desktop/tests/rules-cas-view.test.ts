@@ -993,3 +993,39 @@ test("list view supports trigger filtering, whole-row click, friendly labels and
     assert.equal(empty.hidden, false);
     assert.ok(all(empty).some((node) => node.tag === "button" && node.textContent === "＋ 添加第一条规则"));
   }));
+
+// Prevent bloated new-rule folds, static agent hints, hidden copy buttons on empty paths, or broken type chips.
+test("editor shows live event-type chips, dynamic agent hint, collapsed default schedule fold and conditional cwd copy", () =>
+  dom(async (f) => {
+    f.use("claude");
+    f.view.init();
+    await flush();
+    f.button("＋ 添加规则").click();
+    // New rule keeps advanced schedule fold collapsed by default while surfacing autoGroup in its summary.
+    const folds = all(f.body).filter((node) => node.tag === "details");
+    assert.deepEqual(
+      folds.map((node) => node.open),
+      [false, false],
+    );
+    assert.match(f.find((node) => node.className.includes("rule-fold-summary")).textContent, /自动分组/);
+    // Copy path button stays hidden until a folder is picked.
+    const copyBtn = f.find((node) => node.className.includes("rule-cwd-copy"));
+    assert.equal(copyBtn.hidden, true);
+    f.pick("/work/demo");
+    f.button("选择文件夹").click();
+    await flush();
+    assert.equal(copyBtn.hidden, false);
+    // Dynamic content hint matches the selected non-command agent without raw English jargon.
+    const contentHint = f.find((node) => node.className.includes("rule-content-hint"));
+    assert.match(contentHint.textContent, /当前执行体需要任务说明或技能/);
+    // Event type chips parse typed tokens live and support removing one chip directly.
+    f.id("types").value = "task.one task.two";
+    f.id("types").emit("input");
+    const chipWrap = f.find((node) => node.className.includes("rule-types-chips"));
+    assert.equal(chipWrap.hidden, false);
+    const removeButtons = all(chipWrap).filter((node) => node.className.includes("settings-chip-remove"));
+    assert.equal(removeButtons.length, 2);
+    removeButtons[0].click();
+    assert.equal(f.id("types").value, "task.two");
+    assert.equal(all(chipWrap).filter((node) => node.className.includes("settings-chip-remove")).length, 1);
+  }));
