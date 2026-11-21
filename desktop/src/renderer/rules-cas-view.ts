@@ -35,6 +35,25 @@ function sameEntry(left: DesktopRuleEntry, right: DesktopRuleEntry): boolean {
 
 /** How a draft row differs from the baseline: the badge and the row actions both follow this. */
 type RowKind = "added" | "changed" | "removed" | "same";
+type TriggerFilter = "all" | "event" | "cron";
+
+const TELL_LABELS: Record<string, string> = {
+  always: "总是",
+  needed: "需要才说",
+  never: "从不",
+};
+
+const WEEKDAY_NAMES = ["日", "一", "二", "三", "四", "五", "六"] as const;
+
+function scheduleLabel(cron: string): string {
+  const decoded = decodeSchedule(cron);
+  if (!decoded) return "自定义时间表";
+  if (decoded.kind === "interval") return `每隔 ${decoded.minutes} 分钟`;
+  if (decoded.kind === "weekly")
+    return `每周${decoded.days.map((day) => WEEKDAY_NAMES[day]).join("、")} ${decoded.time}`;
+  if (decoded.kind === "monthly") return `每月 ${decoded.day} 日 ${decoded.time}`;
+  return `每天 ${decoded.time}`;
+}
 
 /**
  * Aligns draft entries against the baseline by position, the same order the save hands over.
@@ -135,9 +154,47 @@ export function mountRulesCasView(
   list.className = "entry-list";
   const addButton = document.createElement("button");
   addButton.type = "button";
-  addButton.className = "rules-add";
+  addButton.className = "rules-add setup-primary";
   addButton.textContent = "＋ 添加规则";
   addButton.addEventListener("click", () => openForm(null));
+
+  let filterKind: TriggerFilter = "all";
+  const toolbar = document.createElement("div");
+  toolbar.className = "rules-toolbar";
+  toolbar.hidden = true;
+  const filterTabs = document.createElement("nav");
+  filterTabs.className = "settings-tabs rules-filter-tabs";
+  filterTabs.setAttribute("aria-label", "规则类型筛选");
+  const filterButtons: Record<TriggerFilter, HTMLButtonElement> = {
+    all: document.createElement("button"),
+    event: document.createElement("button"),
+    cron: document.createElement("button"),
+  };
+  for (const kind of ["all", "event", "cron"] as const) {
+    const btn = filterButtons[kind];
+    btn.type = "button";
+    btn.className = "settings-tab";
+    btn.setAttribute("data-filter", kind);
+    btn.addEventListener("click", () => {
+      filterKind = kind;
+      update();
+    });
+    filterTabs.append(btn);
+  }
+  toolbar.append(filterTabs);
+
+  const filterEmpty = document.createElement("div");
+  filterEmpty.className = "today-empty rules-filter-empty";
+  filterEmpty.hidden = true;
+  const filterEmptyLine = document.createElement("p");
+  const filterResetButton = document.createElement("button");
+  filterResetButton.type = "button";
+  filterResetButton.textContent = "查看全部规则";
+  filterResetButton.addEventListener("click", () => {
+    filterKind = "all";
+    update();
+  });
+  filterEmpty.append(filterEmptyLine, filterResetButton);
 
   // The editor is an in-page subpage panel, not a modal: it lives inside this view's own root so a
   // page switch re-attaches it without rebuilding the form, and hiding it never strands focus in a
@@ -530,11 +587,16 @@ export function mountRulesCasView(
   emptyTitle.textContent = "还没有规则";
   const emptyLine = document.createElement("p");
   emptyLine.textContent = "添加规则后，匹配的事件或到点的定时会交给执行体推进。";
-  emptyCard.append(emptyTitle, emptyLine);
+  const emptyAddButton = document.createElement("button");
+  emptyAddButton.type = "button";
+  emptyAddButton.className = "setup-primary";
+  emptyAddButton.textContent = "＋ 添加第一条规则";
+  emptyAddButton.addEventListener("click", () => openForm(null));
+  emptyCard.append(emptyTitle, emptyLine, emptyAddButton);
   emptyCard.hidden = true;
   const listPage = document.createElement("section");
   listPage.className = "rules-list-page";
-  listPage.append(addButton, refreshButton, status, error, warning, draftBar, emptyCard, list);
+  listPage.append(addButton, refreshButton, status, error, warning, draftBar, toolbar, emptyCard, filterEmpty, list);
   root.append(listPage, editor);
   let editing: {
     index: number | null;
@@ -623,7 +685,7 @@ export function mountRulesCasView(
     const text = (input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string | undefined) =>
       bindValue<string | undefined>(input, value, value ?? "", (next) => next);
     const name = text(nameInput, source?.name);
-    const timed = source?.cron !== undefined;
+    const timed = source ? source.cron !== undefined : filterKind === "cron";
     triggerInput.value = timed ? "cron" : "event";
     syncTrigger();
     const types = bindValue(typesInput, source?.types ?? [], source?.types?.join(" ") ?? "", splitTypes);
@@ -793,6 +855,8 @@ export function mountRulesCasView(
 
   function entryNode(entry: DesktopRuleEntry, index: number, kind: RowKind, baseline: DesktopRuleEntry | undefined) {
     const state = controller.getState();
+    const roster = state.snapshot?.agents ?? [];
+    const agentName = roster.find((agent) => agent.id === entry.to)?.name ?? entry.to;
     const identity = state.draft ? { generation: state.draft.generation, revision: state.draft.revision } : null;
     function currentRow() {
       const now = controller.getState();
@@ -801,7 +865,19 @@ export function mountRulesCasView(
       return now.draft === null && now.snapshot === state.snapshot;
     }
     const item = document.createElement("li");
-    item.className = kind === "same" ? "entry-item" : `entry-item ${kind}`;
+    const clickable = kind !== "removed";
+    item.className = `${kind === "same" ? "entry-item" : `entry-item ${kind}`}${clickable ? " rules-row" : ""}`;
+    if (clickable) {
+      item.addEventListener("click", (event) => {
+        const mouse = event as MouseEvent | undefined;
+        if (mouse?.metaKey || mouse?.ctrlKey || mouse?.shiftKey || mouse?.altKey) return;
+        const target = mouse?.target as { closest?: (selector: string) => unknown } | null | undefined;
+        if (target?.closest?.("button, a, input, select, textarea")) return;
+        const selected = typeof globalThis.getSelection === "function" ? globalThis.getSelection()?.toString() : "";
+        if (selected) return;
+        if (currentRow()) openForm(index);
+      });
+    }
     const copy = document.createElement("div");
     copy.className = "entry-copy";
     const head = document.createElement("div");
@@ -814,18 +890,24 @@ export function mountRulesCasView(
     }
     const name = document.createElement("strong");
     name.textContent = entry.name;
+    const kindTag = document.createElement("span");
+    kindTag.className = entry.cron !== undefined ? "entry-kind-tag cron" : "entry-kind-tag event";
+    kindTag.textContent = entry.cron !== undefined ? "定时" : "事件";
     const to = document.createElement("span");
     to.className = "entry-to";
-    to.textContent = `→ ${entry.to}`;
-    head.append(name, to);
+    to.textContent = `→ ${agentName}`;
+    head.append(name, kindTag, to);
     const types = document.createElement("div");
     types.className = "entry-types";
-    // An event row shows its type chips; a timed row shows the schedule where the chips would go,
-    // so the trigger is always in plain view — never an empty strip that reads as "no trigger".
+    // An event row shows its type chips; a timed row shows both human-readable cadence and the
+    // exact cron expression so the trigger is always clear to both casual and power users.
     if (entry.cron !== undefined) {
+      const cadence = document.createElement("span");
+      cadence.className = "entry-schedule-text";
+      cadence.textContent = scheduleLabel(entry.cron);
       const chip = document.createElement("code");
       chip.textContent = entry.cron;
-      types.append(chip);
+      types.append(cadence, chip);
     } else {
       for (const type of entry.types ?? []) {
         const chip = document.createElement("code");
@@ -840,9 +922,9 @@ export function mountRulesCasView(
     if (entry.skill) parts.push(`技能 ${entry.skill}`);
     if (entry.parallel !== undefined) parts.push(`并行 ${entry.parallel}`);
     if (entry.group !== undefined) parts.push(`分组 ${entry.group}`);
-    else if (entry.autoGroup) parts.push("按接单电脑和目录自动分组");
+    else if (entry.autoGroup) parts.push("自动分组");
     if (entry.pauseOnAsk) parts.push("待确认暂停同组");
-    if (entry.tell !== undefined) parts.push(`通知 ${entry.tell}`);
+    if (entry.tell !== undefined) parts.push(`通知 ${TELL_LABELS[entry.tell] ?? entry.tell}`);
     if (entry.emits) parts.push(`输出 ${entry.emits.source}: ${entry.emits.types.join("、")}`);
     meta.textContent = parts.join(" · ");
     copy.append(head, types, meta);
@@ -853,7 +935,8 @@ export function mountRulesCasView(
       restore.type = "button";
       restore.textContent = "撤销删除";
       restore.disabled = state.saving;
-      restore.addEventListener("click", () => {
+      restore.addEventListener("click", (event) => {
+        event?.stopPropagation?.();
         if (currentRow() && baseline) controller.restoreEntry(index, baseline);
       });
       row.append(restore);
@@ -862,7 +945,8 @@ export function mountRulesCasView(
       edit.type = "button";
       edit.textContent = "编辑";
       edit.disabled = state.saving || state.reloading;
-      edit.addEventListener("click", () => {
+      edit.addEventListener("click", (event) => {
+        event?.stopPropagation?.();
         if (currentRow()) openForm(index);
       });
       row.append(edit);
@@ -872,7 +956,8 @@ export function mountRulesCasView(
           revert.type = "button";
           revert.textContent = "还原";
           revert.disabled = state.saving;
-          revert.addEventListener("click", () => {
+          revert.addEventListener("click", (event) => {
+            event?.stopPropagation?.();
             if (currentRow() && baseline) controller.updateEntry(index, baseline);
           });
           row.append(revert);
@@ -881,7 +966,8 @@ export function mountRulesCasView(
           remove.type = "button";
           remove.textContent = "移除";
           remove.disabled = state.saving;
-          remove.addEventListener("click", () => {
+          remove.addEventListener("click", (event) => {
+            event?.stopPropagation?.();
             if (currentRow()) controller.removeEntry(index);
           });
           row.append(remove);
@@ -907,13 +993,38 @@ export function mountRulesCasView(
     // The empty card replaces the old bare noEntry sentence: the loading and saving states keep it
     // out of the way, and a draft that adds an entry shows the row instead of the card.
     emptyCard.hidden = !!entries.length || state.loading || state.saving;
+    const eventCount = entries.filter((entry) => entry.cron === undefined).length;
+    const cronCount = entries.length - eventCount;
+    toolbar.hidden = entries.length === 0;
+    const filterLabels: Record<TriggerFilter, string> = {
+      all: `全部 (${entries.length})`,
+      event: `事件触发 (${eventCount})`,
+      cron: `定时触发 (${cronCount})`,
+    };
+    for (const kind of ["all", "event", "cron"] as const) {
+      const btn = filterButtons[kind];
+      btn.textContent = filterLabels[kind];
+      const active = filterKind === kind;
+      btn.className = active ? "settings-tab active" : "settings-tab";
+      btn.setAttribute("aria-pressed", String(active));
+    }
+    const visible = entries
+      .map((entry, index) => ({ entry, index, kind: rows[index], baseline: baseline[index] }))
+      .filter(({ entry }) =>
+        filterKind === "all" ? true : filterKind === "cron" ? entry.cron !== undefined : entry.cron === undefined,
+      );
+    filterEmpty.hidden = entries.length === 0 || visible.length > 0;
+    filterEmptyLine.textContent = filterKind === "cron" ? "当前没有定时触发规则。" : "当前没有事件触发规则。";
     const messages: string[] = [];
     if (state.loadError) messages.push(state.loadError.message);
     if (state.save.kind === "failed") messages.push(state.save.message);
     if (state.reviewMessage && !messages.includes(state.reviewMessage)) messages.push(state.reviewMessage);
     error.textContent = messages.join("\n");
     error.hidden = messages.length === 0;
-    list.replaceChildren(...entries.map((entry, index) => entryNode(entry, index, rows[index], baseline[index])));
+    list.hidden = visible.length === 0;
+    list.replaceChildren(
+      ...visible.map(({ entry, index, kind, baseline: base }) => entryNode(entry, index, kind, base)),
+    );
     // The executor select holds exactly the agents the read offered. The current value survives a
     // redraw when it is still one of them; a value the roster no longer carries stays as a one-off
     // option, never silently rewritten — the owner sees what they are saving either way.
@@ -934,7 +1045,8 @@ export function mountRulesCasView(
         : []),
     );
     toInput.value = toPrevious;
-    addButton.disabled = state.saving || state.reloading;
+    addButton.disabled = !state.snapshot || state.saving || state.reloading;
+    emptyAddButton.disabled = addButton.disabled;
     saveButton.disabled = !draft || editing !== null || state.saving || state.needsReview;
     // Staged changes and recovery share the same full-list preview and CAS save door.
     const draftVisible = Boolean(draft) && (state.saving || state.needsReview || !editing);

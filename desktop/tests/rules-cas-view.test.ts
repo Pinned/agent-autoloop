@@ -932,3 +932,62 @@ test("copy uses the complete original path, not normalized display text", () =>
       else Reflect.deleteProperty(globalThis, "navigator");
     }
   }));
+
+// Prevent unreadable list rows, dead row clicks, missing empty-state CTA, or broken filter-index mapping.
+test("list view supports trigger filtering, whole-row click, friendly labels and empty-state CTA", () =>
+  dom(async (f) => {
+    const timed = {
+      name: "早报",
+      cron: "0 9 * * *",
+      to: "a",
+      cwd: "/work/daily",
+      prompt: "写早报",
+      tell: "always" as const,
+      autoGroup: true,
+    };
+    const eventRule = {
+      name: "修缺陷",
+      types: ["task.fix"],
+      to: "a",
+      cwd: "/work/fix",
+      prompt: "修",
+      tell: "never" as const,
+    };
+    f.entries([timed, eventRule]);
+    f.view.init();
+    await flush();
+    const text = f.text();
+    // Friendly Chinese labels replace raw enum values and raw cron-only chips.
+    assert.ok(text.includes("每天 09:00"));
+    assert.ok(text.includes("0 9 * * *"));
+    assert.ok(text.includes("通知 总是"));
+    assert.ok(text.includes("通知 从不"));
+    assert.ok(!text.includes("通知 never"));
+    assert.ok(!text.includes("通知 always"));
+    assert.ok(text.includes("→ <svg onload=evil>"));
+    // Filter toolbar lets the user narrow to event rules and still opens the true original index.
+    f.button("事件触发 (1)").click();
+    const eventRows = all(f.body).filter((node) => node.className.includes("entry-item"));
+    assert.equal(eventRows.length, 1);
+    assert.ok(all(eventRows[0]).some((node) => node.textContent === "修缺陷"));
+    // Clicking the row body opens the editor for that exact filtered rule (index 1, not 0).
+    eventRows[0].click();
+    assert.equal(f.editorOpen(), true);
+    assert.equal(f.id("name").value, "修缺陷");
+    f.button("取消").click();
+    assert.equal(f.editorOpen(), false);
+    // Filtering to timed rules and clicking add pre-selects timed trigger mode.
+    f.button("定时触发 (1)").click();
+    f.button("＋ 添加规则").click();
+    assert.equal(f.id("trigger").value, "cron");
+    f.button("取消").click();
+    // Empty list hides filter toolbar and shows an actionable CTA inside the empty card.
+    f.entries([]);
+    f.controller.refresh();
+    await flush();
+    const toolbar = f.find((node) => node.className.includes("rules-toolbar"));
+    assert.equal(toolbar.hidden, true);
+    const empty = f.find((node) => /\brules-empty\b/.test(node.className));
+    assert.equal(empty.hidden, false);
+    assert.ok(all(empty).some((node) => node.tag === "button" && node.textContent === "＋ 添加第一条规则"));
+  }));
