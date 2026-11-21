@@ -114,6 +114,8 @@ export function mountRulesCasView(
   addButton: HTMLButtonElement;
   init(): void;
   update(): void;
+  /** Current editor subpage title ("添加规则" or "编辑规则"). */
+  editorTitle(): string;
   /** The entry editor subpage: shows the in-page form. */
   openEditor(): void;
   /** Hides the entry editor and returns the list page; the caller owns navigation. */
@@ -560,21 +562,47 @@ export function mountRulesCasView(
 
   const formError = document.createElement("p");
   formError.className = "setup-error";
+  formError.setAttribute("role", "alert");
+  formError.setAttribute("tabindex", "-1");
   formError.hidden = true;
+  const editorReviewNote = document.createElement("p");
+  editorReviewNote.className = "muted rule-review-note";
+  editorReviewNote.hidden = true;
   const formActions = document.createElement("div");
   formActions.className = "rule-footer";
+  const formFooterRow = document.createElement("div");
+  formFooterRow.className = "rule-footer-row";
+  const formPrimary = document.createElement("div");
+  formPrimary.className = "rule-footer-primary";
+  const formSubmit = document.createElement("button");
+  formSubmit.type = "submit";
+  formSubmit.className = "rule-submit setup-primary";
+  formSubmit.textContent = "保存规则";
   const formCancel = document.createElement("button");
   formCancel.type = "button";
   formCancel.className = "rule-cancel";
   formCancel.textContent = "取消";
-  const formSubmit = document.createElement("button");
-  formSubmit.type = "submit";
-  formSubmit.className = "rule-submit";
-  formSubmit.textContent = "保存规则";
-  const footerHint = document.createElement("p");
-  footerHint.className = "muted rule-footer-hint";
-  footerHint.textContent = "确认后返回列表，保存到本机中台才会生效。";
-  formActions.append(footerHint, formError, formCancel, formSubmit);
+  const editorRecoverButton = document.createElement("button");
+  editorRecoverButton.type = "button";
+  editorRecoverButton.className = "rule-recover";
+  editorRecoverButton.textContent = "丢弃修改并重新读取";
+  editorRecoverButton.hidden = true;
+  formPrimary.append(formSubmit, formCancel, editorRecoverButton);
+
+  const formDanger = document.createElement("div");
+  formDanger.className = "rule-footer-danger";
+  const cancelDeleteButton = document.createElement("button");
+  cancelDeleteButton.type = "button";
+  cancelDeleteButton.className = "rule-delete-cancel";
+  cancelDeleteButton.textContent = "取消删除";
+  cancelDeleteButton.hidden = true;
+  const deleteButton = document.createElement("button");
+  deleteButton.type = "button";
+  deleteButton.className = "rule-delete settings-delete-button";
+  deleteButton.textContent = "删除";
+  formDanger.append(cancelDeleteButton, deleteButton);
+  formFooterRow.append(formPrimary, formDanger);
+  formActions.append(formError, editorReviewNote, formFooterRow);
   form.append(headBar, triggerGroup, contentGroup, execGroup, noticeGroup, schedule, followup, formActions);
   editor.append(form);
   // The list page and the editor subpage share one root; hidden is the whole switch, so the
@@ -600,10 +628,14 @@ export function mountRulesCasView(
   root.append(listPage, editor);
   let editing: {
     index: number | null;
+    fresh: boolean;
     ownsDraft: boolean;
     generation: number;
     revision: number;
-    savingNew?: boolean;
+    pendingAction: "save" | "delete" | null;
+    deleteArmed: boolean;
+    removed: boolean;
+    removedEntry?: DesktopRuleEntry;
     read(): Record<string, unknown>;
   } | null = null;
   let submitting = false;
@@ -644,12 +676,12 @@ export function mountRulesCasView(
   }
   /** Leaves the editor subpage without a confirmed change: what "cancel" means on a page, not in a dialog. */
   function dismissEditor() {
-    if (controller.getState().saving) return;
+    const state = controller.getState();
+    if (state.saving || state.needsReview) return;
     editor.hidden = true;
     listPage.hidden = false;
     const ownsDraft = editing?.ownsDraft;
     editing = null;
-    const state = controller.getState();
     if (ownsDraft && state.draft && !state.saving && !state.needsReview) controller.cancelEdit();
     update();
     // The host owns the page change: back to the rules list page and its own head.
@@ -661,19 +693,22 @@ export function mountRulesCasView(
     listPage.hidden = true;
   }
   function closeEditor() {
-    if (editor.hidden || controller.getState().saving) return;
+    const state = controller.getState();
+    if (editor.hidden || state.saving || state.needsReview) return;
     editor.hidden = true;
     listPage.hidden = false;
-    // The submit path lands here after the save (or the no-change cancel) is already settled, so
-    // no live flight's draft can be dropped — but the edit session itself always ends with the
-    // page it belongs to, exactly like the dialog's close event used to end it.
+    const ownsDraft = editing?.ownsDraft;
     editing = null;
+    // Closing an unsubmitted form (for example via the header back button) drops the draft this
+    // form created so no stale draft bar lingers on the list; after a confirmed save draft is null.
+    if (ownsDraft && state.draft && !state.saving && !state.needsReview) controller.cancelEdit();
     update();
     nav.backFromEntry?.();
   }
   function openForm(index: number | null) {
-    if (controller.getState().saving) return;
-    const ownsDraft = controller.getState().draft === null;
+    const current = controller.getState();
+    if (current.saving || current.reloading || current.needsReview || !current.snapshot) return;
+    const ownsDraft = current.draft === null;
     controller.beginEdit();
     const draft = controller.getState().draft;
     if (!draft) return;
@@ -732,12 +767,16 @@ export function mountRulesCasView(
       source?.emits?.types.join(" ") ?? "",
       splitTypes,
     );
-    // Each reader belongs to this dialog identity, never to a later open or a new draft.
+    // Each reader belongs to this form identity, never to a later open or a new draft.
     editing = {
       index,
+      fresh: index === null,
       ownsDraft,
       generation: draft.generation,
       revision: draft.revision,
+      pendingAction: null,
+      deleteArmed: false,
+      removed: false,
       read() {
         const outputSource = emitsSource();
         const outputTypes = emitsTypes();
@@ -772,13 +811,6 @@ export function mountRulesCasView(
       source.autoGroup !== undefined ||
       source.pauseOnAsk !== undefined;
     followup.open = source?.emits !== undefined;
-    formSubmit.textContent = index === null ? "保存规则" : "确认修改";
-    footerHint.textContent =
-      index !== null
-        ? "确认后返回列表，保存到本机中台才会生效。"
-        : ownsDraft || draftEqualsBaseline(controller.getState().snapshot?.entries ?? [], draft.entries)
-          ? "直接保存到本机中台，保存成功后返回列表。"
-          : "列表中已有待保存修改，本次会一并保存到本机中台；成功后返回列表。";
     cwdCopy.textContent = "复制完整路径";
     syncSummaries();
     // Opening the form is a page change the host owns: the pseudo page renders the subpage head
@@ -803,12 +835,58 @@ export function mountRulesCasView(
     if (controller.getState().needsReview) controller.discardAndReload();
     else controller.cancelEdit();
   });
+  editorRecoverButton.addEventListener("click", () => {
+    const state = controller.getState();
+    if (state.saving || !state.needsReview) return;
+    editor.hidden = true;
+    listPage.hidden = false;
+    editing = null;
+    controller.discardAndReload();
+    update();
+    nav.backFromEntry?.();
+  });
+  cancelDeleteButton.addEventListener("click", () => {
+    if (!editing || controller.getState().saving) return;
+    editing.deleteArmed = false;
+    update();
+  });
+  deleteButton.addEventListener("click", () => {
+    const state = controller.getState();
+    if (!validForm() || submitting || state.needsReview || !editing || editing.fresh || editing.index === null) return;
+    if (!editing.deleteArmed) {
+      editing.deleteArmed = true;
+      update();
+      return;
+    }
+    const target = editing;
+    submitting = true;
+    try {
+      // A failed not-sent delete already removed the entry from the draft; retrying must not
+      // splice a second neighboring rule at the same index.
+      if (!target.removed) {
+        const draftEntries = controller.getState().draft?.entries ?? [];
+        target.removedEntry = draftEntries[target.index!];
+        controller.removeEntry(target.index!);
+        target.removed = true;
+        target.revision = controller.getState().draft!.revision;
+      }
+      target.deleteArmed = false;
+      target.pendingAction = "delete";
+      formError.hidden = true;
+      controller.save();
+    } catch (failure) {
+      formError.textContent = failure instanceof Error ? failure.message : "删除规则失败";
+      formError.hidden = false;
+      formError.focus?.();
+    } finally {
+      submitting = false;
+    }
+  });
   formCancel.addEventListener("click", dismissEditor);
-  // The submit path closes only after the save (or the no-change cancel) settles, so a cancel
-  // never drops a live flight's draft; dismissEditor is the only path that drops an owned draft.
+  // Both add and edit save directly via CAS PUT; an unchanged edit closes cleanly without a write.
   form.addEventListener("submit", (event) => {
     event.preventDefault();
-    if (!validForm() || submitting || (editing?.savingNew && controller.getState().needsReview)) return;
+    if (!validForm() || submitting || controller.getState().needsReview) return;
     const target = editing!;
     submitting = true;
     try {
@@ -818,36 +896,45 @@ export function mountRulesCasView(
       if (agent && agent.use !== "command" && !String(raw.prompt ?? "").trim() && !String(raw.skill ?? "").trim())
         throw new Error("此执行体需要任务说明或技能，请至少填写一项。");
       const group = String(raw.group || raw.name).trim();
-      const entries = controller.getState().draft?.entries ?? [];
+      const currentEntries = controller.getState().draft?.entries ?? [];
       if (
-        entries.some(
+        currentEntries.some(
           (entry, index) =>
             index !== target.index && (entry.group ?? entry.name) === group && entry.parallel !== raw.parallel,
         )
       )
         throw new Error(`同组「${group}」的并行设置必须一致，留空与填写 1 不同。`);
+      if (target.removed && target.removedEntry !== undefined && target.index !== null) {
+        controller.restoreEntry(target.index, target.removedEntry);
+        target.removed = false;
+        target.removedEntry = undefined;
+      }
       if (target.index === null) {
         controller.addEntry(raw);
-        target.index = entries.length;
-        target.savingNew = true;
+        target.index = currentEntries.length;
       } else controller.updateEntry(target.index, raw);
       target.revision = controller.getState().draft!.revision;
-      if (target.savingNew) {
-        formError.hidden = true;
-        controller.save();
-        return;
-      }
-      // Confirmation stages the complete draft; only the list save button issues the CAS PUT.
-      // A confirm with no actual change leaves no pending draft.
+      // A confirm with no actual change against the baseline saves nothing and drops the draft.
       const state = controller.getState();
       const draft = state.draft;
-      if (draft && !state.saving && !state.needsReview) {
-        if (draftEqualsBaseline(state.snapshot?.entries ?? [], draft.entries)) controller.cancelEdit();
+      if (
+        draft &&
+        !state.saving &&
+        !state.needsReview &&
+        draftEqualsBaseline(state.snapshot?.entries ?? [], draft.entries)
+      ) {
+        controller.cancelEdit();
+        closeEditor();
+        return;
       }
-      closeEditor();
+      target.deleteArmed = false;
+      target.pendingAction = "save";
+      formError.hidden = true;
+      controller.save();
     } catch (failure) {
       formError.textContent = failure instanceof Error ? failure.message : "规则不合规";
       formError.hidden = false;
+      formError.focus?.();
     } finally {
       submitting = false;
     }
@@ -1045,7 +1132,7 @@ export function mountRulesCasView(
         : []),
     );
     toInput.value = toPrevious;
-    addButton.disabled = !state.snapshot || state.saving || state.reloading;
+    addButton.disabled = !state.snapshot || state.saving || state.reloading || state.needsReview;
     emptyAddButton.disabled = addButton.disabled;
     saveButton.disabled = !draft || editing !== null || state.saving || state.needsReview;
     // Staged changes and recovery share the same full-list preview and CAS save door.
@@ -1058,7 +1145,7 @@ export function mountRulesCasView(
           ? "放弃本地修改不会撤回已发出的请求。"
           : "修改尚未生效，保存到本机中台后才会生效。";
     draftBar.hidden = !draftVisible;
-    discardButton.textContent = draftVisible ? "放弃本地修改" : "";
+    discardButton.textContent = state.needsReview ? "丢弃修改并重新读取" : draftVisible ? "放弃本地修改" : "";
     preview.hidden = !draftVisible;
     preview.textContent = draftVisible && draft ? previewText(alignRows(baseline, draft.entries)) : "";
     // Refresh is visible only when the error path offers a re-read as the recovery.
@@ -1066,7 +1153,7 @@ export function mountRulesCasView(
     refreshButton.hidden = !needsRefresh;
     // The picker button locks with the editor's other doors: no OS dialog over a save in flight
     // and no dialog without an edit session. cwdPicking covers the dialog's own open span.
-    cwdPickButton.disabled = cwdPicking || state.saving || !editing;
+    cwdPickButton.disabled = cwdPicking || state.saving || state.needsReview || !editing;
     for (const input of [
       nameInput,
       triggerInput,
@@ -1089,17 +1176,38 @@ export function mountRulesCasView(
       emitsTypesInput,
       ...triggerButtons,
     ])
-      input.disabled = state.saving;
-    formSubmit.disabled = state.saving || Boolean(editing?.savingNew && state.needsReview);
-    formCancel.disabled = state.saving;
-    if (editing?.savingNew && !state.saving) {
+      input.disabled = state.saving || state.needsReview;
+    const savingSave = state.saving && editing?.pendingAction === "save";
+    const savingDelete = state.saving && editing?.pendingAction === "delete";
+    formSubmit.textContent = savingSave ? "保存中…" : editing?.fresh ? "保存规则" : "保存修改";
+    formSubmit.disabled = state.saving || state.needsReview;
+    formCancel.disabled = state.saving || state.needsReview;
+    editorRecoverButton.hidden = !editing || !state.needsReview || state.saving;
+    const showReviewNote = Boolean(editing && state.needsReview);
+    editorReviewNote.hidden = !showReviewNote;
+    editorReviewNote.textContent = showReviewNote ? "放弃本地修改不会撤回已发出的请求。" : "";
+    const showDanger = Boolean(editing && !editing.fresh);
+    formDanger.hidden = !showDanger;
+    deleteButton.hidden = !showDanger;
+    const armed = Boolean(editing?.deleteArmed);
+    cancelDeleteButton.hidden = !showDanger || !armed || state.saving;
+    cancelDeleteButton.disabled = state.saving || state.needsReview;
+    deleteButton.textContent = savingDelete ? "删除中…" : armed ? "确认删除" : "删除";
+    deleteButton.className = armed
+      ? "rule-delete settings-delete-button run-action-danger"
+      : "rule-delete settings-delete-button";
+    deleteButton.disabled = state.saving || state.needsReview;
+    if (editing?.pendingAction && !state.saving) {
       if (state.save.kind === "confirmed" && !state.draft) {
+        editing.pendingAction = null;
         closeEditor();
         return;
       }
       if (state.save.kind === "failed") {
+        editing.pendingAction = null;
         formError.textContent = state.save.message;
         formError.hidden = false;
+        formError.focus?.();
       }
     }
     if (editing) syncSummaries();
@@ -1116,6 +1224,9 @@ export function mountRulesCasView(
       update();
     },
     update,
+    editorTitle() {
+      return editing?.fresh ? "添加规则" : "编辑规则";
+    },
     openEditor,
     closeEditor,
   };

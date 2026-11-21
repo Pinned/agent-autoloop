@@ -190,6 +190,12 @@ let workersView: ReturnType<typeof mountWorkersView> | undefined;
 let localReadingView: ReturnType<typeof mountLocalReadingView> | undefined;
 let localSummaryView: ReturnType<typeof mountLocalSummaryView> | undefined;
 let workersRefreshButton: HTMLButtonElement | undefined;
+let rulesBackButton: HTMLButtonElement | undefined;
+function syncRulesBackButton() {
+  if (!rulesBackButton) return;
+  const state = rules.getState();
+  rulesBackButton.disabled = state.saving || state.needsReview;
+}
 function syncWorkersRefreshButton() {
   if (!workersRefreshButton) return;
   const busy = workers.busy || localReading.busy;
@@ -230,9 +236,10 @@ function leaveTaskPage() {
 // The automation entry editor is a subpage of the automation page, the same pseudo-page pattern:
 // the view is app-level so the edit survives navigation, and leaving returns to the list.
 function leaveEntryEditor() {
-  if (rules.getState().saving) return;
+  const state = rules.getState();
+  if (state.saving || state.needsReview) return;
   rulesPage.closeEditor();
-  render("automation");
+  if (currentPage !== "automation") render("automation");
 }
 function openEntryEditor() {
   render("automation-entry");
@@ -341,7 +348,10 @@ const rules = createRendererRulesCas(
     rulesPut: (input) => window.desktop.rulesCasPut(input),
   },
   () => {
-    if (currentPage === "automation" || currentPage === "automation-entry") rulesPage?.update();
+    if (currentPage === "automation" || currentPage === "automation-entry") {
+      rulesPage?.update();
+      syncRulesBackButton();
+    }
   },
 );
 // Opening a form is a real page change (the automation-entry pseudo page renders the subpage head
@@ -537,6 +547,7 @@ function render(id: string, focus = true) {
   localReadingView = undefined;
   localSummaryView = undefined;
   workersRefreshButton = undefined;
+  rulesBackButton = undefined;
   renderedFlavor = isDispatchTask ? "dispatch-task" : isAutomationEntry ? "automation" : pageFlavor(role, id);
   if (currentPage === "tasks" && id !== "tasks") todayDetailReturn = null;
   currentPage = id;
@@ -555,9 +566,9 @@ function render(id: string, focus = true) {
     : isAutomationEntry
       ? {
           id: "automation-entry",
-          nav: "编辑规则",
-          title: "编辑规则",
-          description: "新增直接保存到本机中台；已有规则确认修改后，在列表保存。",
+          nav: rulesPage.editorTitle(),
+          title: rulesPage.editorTitle(),
+          description: "配置触发条件与执行信息，保存后立即写入本机中台。",
           icon: "automation",
         }
       : pages.find((item) => item.id === id)!;
@@ -624,7 +635,9 @@ function render(id: string, focus = true) {
       backButton.className = "task-back-button";
       backButton.addEventListener("click", leaveEntryEditor);
       copy.prepend(backButton);
+      rulesBackButton = backButton;
       rulesPage.openEditor();
+      syncRulesBackButton();
     } else {
       const actions = main.querySelector<HTMLElement>(".page-head-actions")!;
       actions.append(rulesPage.addButton);

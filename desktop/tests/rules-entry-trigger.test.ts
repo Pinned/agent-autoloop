@@ -143,7 +143,6 @@ test("editing a timed entry shows the cron, saves it, and never sends types", ()
     assert.equal(f.id("frequency").value, "daily");
     f.id("time").value = "08:30";
     f.form().emit("submit");
-    f.button("保存到本机中台").click();
     assert.equal(f.inputs.length, 1);
     const saved = (f.inputs[0] as { entries: unknown[] }).entries[0] as Record<string, unknown>;
     assert.equal(saved.cron, "30 8 * * *");
@@ -173,7 +172,6 @@ test("visual schedule generates a weekly cron and preserves mounted controls", (
     f.id("to").value = "a";
     f.id("cwd").value = "/work/y";
     f.form().emit("submit");
-    f.button("保存到本机中台").click();
     assert.equal(f.inputs.length, 1, f.text());
     assert.equal((f.inputs[0] as { entries: { cron?: string }[] }).entries.at(-1)?.cron, "30 8 * * 1,3");
   }));
@@ -222,7 +220,6 @@ test("a complex existing schedule is read-only while other fields remain editabl
       assert.equal(f.id("frequency").parentElement?.hidden, true);
       f.id("name").value = "新名称";
       f.form().emit("submit");
-      f.button("保存到本机中台").click();
       assert.equal(f.inputs.length, 1);
       assert.equal((f.inputs[0] as { entries: { cron: string; name: string }[] }).entries[0].cron, "0 9 1 * 1");
       assert.equal((f.inputs[0] as { entries: { name: string }[] }).entries[0].name, "新名称");
@@ -247,7 +244,6 @@ test("a new entry can be timed: the switch asks for a cron instead of types", ()
     f.id("interval").value = "5";
     f.id("prompt").value = "检查运行状态";
     f.form().emit("submit");
-    f.button("保存到本机中台").click();
     assert.equal(f.inputs.length, 1);
     const added = (f.inputs[0] as { entries: unknown[] }).entries.at(-1) as Record<string, unknown>;
     assert.equal(added.cron, "*/5 * * * *");
@@ -261,12 +257,10 @@ test("an unchanged timed entry saves nothing; a cron-only change is a real chang
     const editButtons = all(f.body).filter((node) => node.tag === "button" && node.textContent === "编辑");
     editButtons[0].click();
     f.form().emit("submit");
-    f.button("保存到本机中台").click();
     assert.equal(f.inputs.length, 0);
     editButtons[0].click();
     f.id("time").value = "09:15";
     f.form().emit("submit");
-    f.button("保存到本机中台").click();
     assert.equal(f.inputs.length, 1);
   }));
 

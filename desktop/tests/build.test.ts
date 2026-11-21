@@ -427,8 +427,9 @@ test("the automation page edits the hub's own entries through the versioned rule
   assert.match(read("../src/renderer/navigation.ts"), /管理本机事件与定时规则；其他规则在中台网页控制台修改/);
   assert.match(view, /rules-empty/);
   assert.doesNotMatch(view, /只编辑本机入口；其他规则在中台网页控制台修改/);
-  // The editor subpage's head states the save semantics in one short line, not a lecture.
-  assert.match(app, /新增直接保存到本机中台；已有规则确认修改后，在列表保存。/);
+  // The editor subpage's head states the unified direct save semantics in one short line.
+  assert.match(app, /配置触发条件与执行信息，保存后立即写入本机中台。/);
+  assert.match(app, /rulesPage\.editorTitle\(\)/);
   assert.doesNotMatch(view, /\bfetch\(|WebSocket|ipcRenderer/);
   // The save carries the version it started from; the hub refuses a stale one, and the review
   // barrier routes the discard button through discardAndReload.

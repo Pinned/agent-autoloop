@@ -2576,27 +2576,38 @@ main:has(#task-subpage:not([hidden])) {
 }
 .rule-footer {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  align-items: center;
+  flex-direction: column;
   gap: 10px;
   padding: 18px 26px;
 }
-.rule-footer .setup-error {
+.rule-footer-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+.rule-footer-primary,
+.rule-footer-danger {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.rule-footer .setup-error,
+.rule-review-note {
   margin: 0;
-  flex: 1 1 240px;
+  font-size: 12px;
 }
 .rule-cancel {
   background: transparent;
   color: var(--muted);
 }
-.rule-cancel:hover {
+.rule-cancel:hover:not(:disabled) {
   color: var(--text);
   background: var(--panel);
 }
 .rule-submit {
-  border-color: var(--blue);
-  background: var(--accent-bg);
   font-weight: 600;
   padding: 8px 18px;
 }
