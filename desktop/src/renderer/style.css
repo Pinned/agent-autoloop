@@ -2981,23 +2981,26 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
 .business-tasks-panel .selection-badge { border: 0; background: #2f8553; color: white; line-height: 16px; }
 .business-operation-dialog {
   width: min(540px, calc(100vw - 32px));
-  padding: 20px;
+  padding: 20px 22px;
   max-height: calc(100dvh - 32px);
   overflow-y: auto;
   box-sizing: border-box;
-  border: 1px solid var(--soft);
-  border-radius: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
   background: var(--panel);
-  color: var(--ink);
-  box-shadow: 0 24px 80px #17243c26;
+  color: var(--text);
+  box-shadow: 0 24px 80px color-mix(in srgb, var(--text) 16%, transparent);
 }
-.business-operation-dialog::backdrop { background: #17243c40; }
+.business-operation-dialog::backdrop {
+  background: color-mix(in srgb, var(--bg) 62%, transparent);
+}
 .business-operation-dialog > section { border: 0; padding: 0; }
 .business-dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-.business-operation-dialog h3 { font-size: 18px; margin: 0; }
-.business-dialog-close { width: 36px; height: 36px; flex-shrink: 0; padding: 0; border: 0; background: transparent; font-size: 24px; line-height: 1; }
-.business-dialog-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
-.business-operation-dialog textarea { display: block; }
+.business-operation-dialog h3 { font-size: 16px; font-weight: 600; margin: 0; color: var(--text); }
+.business-dialog-close { width: 32px; height: 32px; flex-shrink: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 20px; line-height: 1; }
+.business-dialog-close:hover:not(:disabled) { background: var(--panel2); color: var(--text); }
+.business-dialog-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 12px; }
+.business-operation-dialog textarea { display: block; min-height: 100px; }
 .business-operation-dialog select { margin-bottom: 10px; }
 @media (max-width: 900px) {
   .business-tasks-panel .tasks-detail-head { padding-left: 12px; padding-right: 24px; }
@@ -3688,7 +3691,36 @@ main:has(.settings-subpage-panel) {
 .business-round-note { flex: 1; font-size: 12px; color: #849080; }
 .business-tasks-panel .business-header-actions .business-run-actions { margin: 0; padding: 0; }
 .business-tasks-panel .business-refresh-snapshot { background: none; border: 0; padding: 7px 4px; font-size: 12px; color: #627998; }
-.business-tasks-panel .business-correct-toggle { background: #fff; border-color: #dce2eb; color: #465974; padding: 8px 13px; font-size: 12px; border-radius: 7px; }
+.business-tasks-panel .business-correct-toggle {
+  background: var(--panel);
+  border-color: var(--border);
+  color: var(--text);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 7px;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.business-tasks-panel .business-correct-toggle:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--blue);
+}
+.business-tasks-panel .business-correct-toggle[data-has-draft="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  color: var(--blue);
+}
+.business-tasks-panel .business-correct-toggle[data-has-draft="true"]::after {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+}
 @media (max-width: 650px) {
   .business-header-actions { flex-wrap: wrap; }
   .business-round-note { flex-basis: 100%; }
@@ -3701,19 +3733,164 @@ main:has(.settings-subpage-panel) {
 .business-adjustments {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 12px;
+  align-items: center;
+  gap: 8px;
 }
 .business-current-progress {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  margin: 0 0 16px;
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text);
 }
-.business-task-operations { gap: 24px; }
+.business-current-progress[data-transition="true"] {
+  padding: 9px 12px;
+  border-radius: 7px;
+  border-left: 3px solid var(--amber);
+  background: color-mix(in srgb, var(--amber) 8%, var(--panel));
+  color: var(--amber);
+  font-weight: 500;
+}
+.business-task-operations {
+  align-items: center;
+  gap: 8px;
+}
+.business-tasks-panel .business-detail-actions button {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 7px;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.business-tasks-panel .business-action-primary {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--blue);
+  font-weight: 600;
+}
+.business-tasks-panel .business-action-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 18%, var(--panel));
+}
+.business-tasks-panel .business-pause-action {
+  background: var(--panel);
+  border-color: var(--border);
+  color: var(--text);
+}
+.business-tasks-panel .business-pause-action:hover:not(:disabled) {
+  background: var(--panel2);
+}
+.business-tasks-panel .business-pause-action[data-armed="true"] {
+  border-color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 12%, var(--panel));
+  color: var(--amber);
+  font-weight: 600;
+}
+.business-tasks-panel .business-complete-action {
+  background: var(--panel);
+  border-color: var(--border);
+  color: var(--text);
+}
+.business-tasks-panel .business-complete-action:hover:not(:disabled),
+.business-tasks-panel .business-complete-action[aria-expanded="true"] {
+  border-color: var(--green);
+  background: color-mix(in srgb, var(--green) 10%, var(--panel));
+  color: var(--green);
+}
 .business-tasks-panel .business-danger-action {
   background: transparent;
   border-color: transparent;
   color: var(--red);
+}
+.business-tasks-panel .business-danger-action:hover:not(:disabled),
+.business-tasks-panel .business-danger-action[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--red) 40%, transparent);
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+}
+.business-tasks-panel .business-action-success {
+  border-color: var(--green);
+  background: color-mix(in srgb, var(--green) 14%, var(--panel));
+  color: var(--green);
+  font-weight: 600;
+}
+.business-tasks-panel .business-action-success:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--green) 20%, var(--panel));
+}
+.business-tasks-panel .business-action-danger {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 12%, var(--panel));
+  color: var(--red);
+  font-weight: 600;
+}
+.business-tasks-panel .business-action-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--red) 18%, var(--panel));
+}
+.business-tasks-panel .business-action-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+.business-tasks-panel .business-action-ghost:hover:not(:disabled) {
+  background: var(--panel2);
+  color: var(--text);
+}
+.business-inline-panel {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel2);
+}
+.business-inline-panel-complete {
+  border-color: color-mix(in srgb, var(--green) 36%, var(--border));
+  background: color-mix(in srgb, var(--green) 4%, var(--panel2));
+}
+.business-inline-panel-danger {
+  border-color: color-mix(in srgb, var(--red) 36%, var(--border));
+  background: color-mix(in srgb, var(--red) 4%, var(--panel2));
+}
+.business-inline-panel-note {
+  flex: 1 0 100%;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.business-inline-panel textarea {
+  flex: 1 0 100%;
+  min-height: 72px;
+  margin: 2px 0 4px;
+}
+.business-action-status {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.business-action-status[data-tone="warning"] {
+  padding: 8px 12px;
+  border-radius: 6px;
+  border-left: 3px solid var(--amber);
+  background: color-mix(in srgb, var(--amber) 8%, var(--panel));
+  color: var(--amber);
+}
+.business-operation-explanation {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.business-reread-button {
+  margin-top: 8px;
+  font-size: 12px;
+  padding: 6px 12px;
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--blue);
+  font-weight: 500;
 }
 .business-decisions select { width: 100%; margin: 12px 0; }
 .business-decisions textarea { width: 100%; min-height: 90px; }
@@ -3726,7 +3903,20 @@ main:has(.settings-subpage-panel) {
   margin: 22px 40px 28px 62px;
   min-width: 0;
 }
-.business-operation-title { margin: 0 0 16px; font-size: 15px; }
+.business-tasks-panel .tasks-detail-page > .business-current[data-mode="decision"] {
+  border-color: color-mix(in srgb, var(--amber) 45%, var(--border));
+  background: color-mix(in srgb, var(--amber) 3%, var(--panel));
+}
+.business-operation-title {
+  margin: 0 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.3px;
+}
+.business-current[data-mode="decision"] .business-operation-title {
+  color: var(--amber);
+}
 .business-current .business-decisions > h3 { display: none; }
 .business-current .business-decision { padding: 18px; border: 1px solid #eadfca; border-radius: 9px; background: var(--bg); margin-bottom: 16px; min-width: 0; overflow-wrap: anywhere; }
 .business-answer-options { border: 0; padding: 0; margin: 16px 0; min-width: 0; }

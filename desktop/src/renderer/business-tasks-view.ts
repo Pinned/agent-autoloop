@@ -254,46 +254,81 @@ export function mountBusinessTasksView(
     timelineStatus = el("p", "", "muted");
   const readDetail = button("重新读取此任务", () => controller.refreshDetail()),
     timelineMore = button("加载更早的处理记录", () => controller.moreTimeline());
-  const actionStatus = el("p", "", "rules-status");
+  readDetail.className = "business-reread-button";
+  const actionStatus = el("p", "", "rules-status business-action-status");
   actionStatus.setAttribute("role", "status");
   let stopControls = el("section"),
     memoControls = el("section", "", "business-correction"),
     feedbackControls = el("section", "", "business-feedback"),
     stoppingText = el("p");
+  let disarmPause: (() => void) | undefined;
   const taskCancelControls = el("section", "", "business-stop-controls");
-  const taskCancelForm = el("section", "", "business-correction");
+  const taskCancelForm = el("section", "", "business-inline-panel business-inline-panel-danger");
   taskCancelForm.hidden = true;
   const cancelReason = el("textarea");
   cancelReason.maxLength = 1000;
   cancelReason.setAttribute("aria-label", "取消任务原因");
   cancelReason.placeholder = "说明为什么不再需要这件任务";
+  const taskCompleteControls = el("section", "", "business-complete-controls");
+  const taskCompleteForm = el("section", "", "business-inline-panel business-inline-panel-complete");
+  taskCompleteForm.hidden = true;
+  const completeReason = el("textarea");
+  completeReason.maxLength = 1000;
+  completeReason.setAttribute("aria-label", "本人验收原因");
+  completeReason.placeholder = "说明验收完成的原因";
+  function resetInlineOperations(except?: "pause" | "complete" | "cancel") {
+    if (except !== "complete") {
+      taskCompleteForm.hidden = true;
+      completeTask.setAttribute("aria-expanded", "false");
+    }
+    if (except !== "cancel") {
+      taskCancelForm.hidden = true;
+      cancelTask.setAttribute("aria-expanded", "false");
+    }
+    if (except !== "pause") disarmPause?.();
+  }
   const cancelTask = button("取消任务", () => {
-    taskCancelForm.hidden = taskCompleteForm.hidden = true;
-    taskCancelForm.hidden = false;
-    cancelReason.focus();
+    const opening = taskCancelForm.hidden;
+    resetInlineOperations(opening ? "cancel" : undefined);
+    taskCancelForm.hidden = !opening;
+    cancelTask.setAttribute("aria-expanded", String(opening));
+    if (opening) cancelReason.focus();
   });
-  const confirmTaskCancel = button("确认取消整件任务", () => {
+  cancelTask.setAttribute("aria-expanded", "false");
+  const submitCancelTask = () => {
     const task = controller.detail?.task;
-    if (task?.kind !== "task" || !cancelReason.value.trim()) return;
+    if (confirmTaskCancel.disabled || task?.kind !== "task" || !cancelReason.value.trim()) return;
     controller.submitAction({
       version: 1,
       action: "cancelTask",
       taskId: task.id,
       input: { reason: cancelReason.value },
     });
-  });
+  };
+  const confirmTaskCancel = button("确认取消整件任务", submitCancelTask);
+  confirmTaskCancel.className = "business-action-danger";
   const keepTask = button("保留任务", () => {
     taskCancelForm.hidden = true;
+    cancelTask.setAttribute("aria-expanded", "false");
+    cancelTask.focus();
+  });
+  keepTask.className = "business-action-ghost";
+  cancelReason.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      taskCancelForm.hidden = true;
+      cancelTask.setAttribute("aria-expanded", "false");
+      cancelTask.focus();
+    } else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      submitCancelTask();
+    }
   });
   taskCancelForm.append(
-    el(
-      "p",
-      "这会阻止整件任务继续执行，取消排队与复查。正在执行的先停止，全部确认退出后才收尾提问并释放本任务占用；状态不确定时仍保持取消中。历史和原回答保留，不算成功完成。",
-      "muted",
-    ),
+    el("p", "这会停止当前执行、取消排队与复查；历史和原回答保留，不算成功完成。", "business-inline-panel-note"),
     cancelReason,
-    confirmTaskCancel,
     keepTask,
+    confirmTaskCancel,
   );
   taskCancelControls.append(cancelTask);
   cancelTask.className = "business-danger-action";
@@ -302,32 +337,50 @@ export function mountBusinessTasksView(
     if (cancelTaskKey) controller.drafts.set(`${cancelTaskKey}/cancel`, cancelReason.value);
     update();
   });
-  const taskCompleteControls = el("section", "", "business-complete-controls");
-  const taskCompleteForm = el("section", "", "business-correction");
-  taskCompleteForm.hidden = true;
-  const completeReason = el("textarea");
-  completeReason.maxLength = 1000;
-  completeReason.setAttribute("aria-label", "本人验收原因");
-  completeReason.placeholder = "说明验收完成的原因";
   const completeTask = button("本人确认完成", () => {
-    taskCancelForm.hidden = true;
-    taskCompleteForm.hidden = false;
-    completeReason.focus();
+    const opening = taskCompleteForm.hidden;
+    resetInlineOperations(opening ? "complete" : undefined);
+    taskCompleteForm.hidden = !opening;
+    completeTask.setAttribute("aria-expanded", String(opening));
+    if (opening) completeReason.focus();
   });
-  const confirmTaskComplete = button("确认完成任务", () => {
+  completeTask.className = "business-complete-action";
+  completeTask.setAttribute("aria-expanded", "false");
+  const submitCompleteTask = () => {
     const task = controller.detail?.task;
-    if (task?.kind !== "task" || !completeReason.value.trim()) return;
+    if (confirmTaskComplete.disabled || task?.kind !== "task" || !completeReason.value.trim()) return;
     controller.submitAction({
       version: 1,
       action: "completeTask",
       taskId: task.id,
       input: { reason: completeReason.value },
     });
-  });
+  };
+  const confirmTaskComplete = button("确认完成任务", submitCompleteTask);
+  confirmTaskComplete.className = "business-action-success";
   const keepTaskActive = button("暂不完成", () => {
     taskCompleteForm.hidden = true;
+    completeTask.setAttribute("aria-expanded", "false");
+    completeTask.focus();
   });
-  taskCompleteForm.append(completeReason, confirmTaskComplete, keepTaskActive);
+  keepTaskActive.className = "business-action-ghost";
+  completeReason.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      taskCompleteForm.hidden = true;
+      completeTask.setAttribute("aria-expanded", "false");
+      completeTask.focus();
+    } else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      submitCompleteTask();
+    }
+  });
+  taskCompleteForm.append(
+    el("p", "确认完成仅记录本人验收结论，不触发新的执行。", "business-inline-panel-note"),
+    completeReason,
+    keepTaskActive,
+    confirmTaskComplete,
+  );
   taskCompleteControls.append(completeTask);
   let completeTaskKey = "";
   completeReason.addEventListener("input", () => {
@@ -680,8 +733,12 @@ export function mountBusinessTasksView(
     content.replaceChildren(header, ...fields);
     if (submit) {
       submit.className = "setup-primary";
+      const dismiss = button("暂不提交", closeDialog);
+      dismiss.className = "business-action-ghost";
+      dismiss.dataset.dialogDismiss = "true";
+      dismiss.title = "关闭弹窗，保留草稿";
       const actions = el("div", "", "business-dialog-actions");
-      actions.append(submit);
+      actions.append(dismiss, submit);
       content.append(actions);
     }
     content.append(actionStatus, readDetail);
@@ -715,7 +772,8 @@ export function mountBusinessTasksView(
   detailPage.append(detailHead, current, processContent);
   let correctionOpen = false;
   let correctionReceiptAtOpen = 0;
-  const correctionToggle = button("提交更正", () => {
+  const correctionToggle = button("更正任务", () => {
+    resetInlineOperations();
     correctionOpen = true;
     correctionReceiptAtOpen = controller.correctionReceipt;
     update();
@@ -843,7 +901,7 @@ export function mountBusinessTasksView(
     form.append(choices, text, send, validation);
     return send;
   }
-  function draftArea(key: string, label: string) {
+  function draftArea(key: string, label: string, onInput?: (value: string) => void) {
     const area = el("textarea");
     area.value = controller.drafts.get(key) ?? "";
     area.maxLength = 4000;
@@ -853,6 +911,7 @@ export function mountBusinessTasksView(
       controller.drafts.set(key, area.value);
       for (const peer of root.querySelectorAll<HTMLTextAreaElement>("textarea"))
         if (peer !== area && peer.dataset.draftKey === key) peer.value = area.value;
+      onInput?.(area.value);
     });
     return area;
   }
@@ -1322,6 +1381,7 @@ export function mountBusinessTasksView(
     );
     const transition = ["pausing", "cancelling"].includes(task.state) ? labels[task.state] : "";
     setText(progress, transition || task.latestProgress || "");
+    progress.dataset.transition = String(Boolean(transition));
     progress.hidden = !progress.textContent;
     decisions.hidden = timeline.hidden = diagnosis.hidden = false;
     setText(title, taskTitle(task));
@@ -1386,10 +1446,12 @@ export function mountBusinessTasksView(
       decisionMore.hidden = !task.decisions.hasMore;
     }
     setText(actionStatus, controller.actionMessage);
+    actionStatus.dataset.tone = controller.mustReread ? "warning" : controller.actionBusy ? "info" : "ok";
     if (cancelTaskKey !== task.key) {
       cancelTaskKey = task.key;
       cancelReason.value = controller.drafts.get(`${task.key}/cancel`) ?? "";
       taskCancelForm.hidden = true;
+      cancelTask.setAttribute("aria-expanded", "false");
     }
     taskCancelControls.hidden =
       controller.compatibility ||
@@ -1407,6 +1469,7 @@ export function mountBusinessTasksView(
       completeTaskKey = task.key;
       completeReason.value = controller.drafts.get(`${task.key}/complete`) ?? "";
       taskCompleteForm.hidden = true;
+      completeTask.setAttribute("aria-expanded", "false");
     }
     taskCompleteControls.hidden =
       controller.compatibility ||
@@ -1433,8 +1496,14 @@ export function mountBusinessTasksView(
               : "",
     );
     operationExplanation.hidden = !operationExplanation.textContent;
-    if (taskCancelControls.hidden) taskCancelForm.hidden = true;
-    if (taskCompleteControls.hidden) taskCompleteForm.hidden = true;
+    if (taskCancelControls.hidden) {
+      taskCancelForm.hidden = true;
+      cancelTask.setAttribute("aria-expanded", "false");
+    }
+    if (taskCompleteControls.hidden) {
+      taskCompleteForm.hidden = true;
+      completeTask.setAttribute("aria-expanded", "false");
+    }
     const syncAnswerControl = (control: HTMLButtonElement) => {
       const question = task.decisions.items.find((card) => String(card.id) === control.dataset.cardId);
       setText(control, question?.state === "open" ? "提交回答" : "已回答");
@@ -1458,6 +1527,7 @@ export function mountBusinessTasksView(
     if (nextRunKey !== runFormsKey && !keepCorrection) {
       runFormsKey = nextRunKey;
       correctionOpen = false;
+      disarmPause = undefined;
       runActions.replaceChildren();
       memoControls.replaceChildren();
       roundOperations.replaceChildren();
@@ -1469,21 +1539,20 @@ export function mountBusinessTasksView(
           explanation.hidden = true;
           let armed = false;
           const disarm = button("暂不暂停", () => {
-            armed = false;
-            stop.textContent = "暂停任务";
-            explanation.hidden = disarm.hidden = true;
+            disarmPause?.();
           });
+          disarm.className = "business-action-ghost";
           disarm.hidden = true;
           const stop = button("暂停任务", () => {
             if (!armed) {
+              resetInlineOperations("pause");
               armed = true;
               stop.textContent = "确认暂停";
+              stop.dataset.armed = "true";
               explanation.hidden = disarm.hidden = false;
               return;
             }
-            armed = false;
-            stop.textContent = "暂停任务";
-            explanation.hidden = disarm.hidden = true;
+            disarmPause?.();
             controller.submitAction({
               version: 1,
               action: "pauseTask",
@@ -1491,27 +1560,54 @@ export function mountBusinessTasksView(
               input: { reason: "本人暂停任务" },
             });
           });
-          const resume = button("恢复执行", () =>
-            controller.submitAction({ version: 1, action: "resumeTask", taskId: task.id, input: {} }),
-          );
+          stop.className = "business-pause-action";
+          stop.dataset.armed = "false";
+          disarmPause = () => {
+            armed = false;
+            stop.textContent = "暂停任务";
+            stop.dataset.armed = "false";
+            explanation.hidden = disarm.hidden = true;
+          };
+          const resume = button("恢复执行", () => {
+            resetInlineOperations();
+            controller.submitAction({ version: 1, action: "resumeTask", taskId: task.id, input: {} });
+          });
+          resume.className = "business-action-primary";
           stop.dataset.taskControl = "pause";
           resume.dataset.taskControl = "resume";
           resume.hidden = !data.actions?.resumeTask;
           stop.hidden = !data.actions?.pauseTask;
-          stopGroup.append(stop, resume, disarm, explanation);
+          stopGroup.append(resume, stop, disarm, explanation);
           stopControls = stopGroup;
           roundOperations.replaceChildren(stoppingText, stopControls);
         }
         {
-          const text = draftArea(`${task.key}/memo/${run.id}`, "更正说明");
+          const submitMemo = () => {
+            if (memoSubmit.disabled || !text.value.trim()) return;
+            controller.submitAction({ version: 1, action: "memo", runId: run.id, input: { text: text.value } });
+          };
+          const memoSubmit = button("提交更正", submitMemo);
+          memoSubmit.dataset.dialogSubmit = "memo";
+          const text = draftArea(`${task.key}/memo/${run.id}`, "更正说明", (value) => {
+            correctionToggle.dataset.hasDraft = String(Boolean(value.trim()));
+            memoSubmit.disabled =
+              !value.trim() ||
+              !controller.runReady ||
+              !controller.detailFresh ||
+              controller.actionBusy ||
+              controller.mustReread ||
+              controller.detailBusy ||
+              !!controller.detailError;
+          });
+          text.placeholder = "说明需要调整的要求、方向或补充信息";
+          text.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault();
+              submitMemo();
+            }
+          });
           runActions.append(correctionToggle);
-          memoControls.append(
-            el("h3", "更正说明"),
-            text,
-            button("提交更正", () =>
-              controller.submitAction({ version: 1, action: "memo", runId: run.id, input: { text: text.value } }),
-            ),
-          );
+          memoControls.append(el("h3", "更正说明"), text, memoSubmit);
         }
       }
     }
@@ -1530,30 +1626,51 @@ export function mountBusinessTasksView(
         option.value = kind;
         rating.append(option);
       }
-      const text = draftArea(`${task.key}/feedback/${feedbackId}`, "验收反馈说明");
+      const submitFeedback = () => {
+        if (feedbackSubmit.disabled || !text.value.trim()) return;
+        controller.submitAction({
+          version: 1,
+          action: "feedback",
+          runId: feedbackId,
+          input: { kind: rating.value as (typeof FEEDBACK_KINDS)[number], text: text.value },
+        });
+      };
+      const feedbackSubmit = button("记录反馈", submitFeedback);
+      feedbackSubmit.dataset.dialogSubmit = "feedback";
+      const text = draftArea(`${task.key}/feedback/${feedbackId}`, "验收反馈说明", (value) => {
+        feedbackSubmit.disabled =
+          !value.trim() ||
+          !controller.detailFresh ||
+          controller.actionBusy ||
+          controller.mustReread ||
+          controller.detailBusy ||
+          !!controller.detailError;
+      });
+      text.placeholder = "写下交付评价或需要改进的具体点";
+      text.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+          event.preventDefault();
+          submitFeedback();
+        }
+      });
       rating.value = controller.drafts.get(`${task.key}/rating/${feedbackId}`) ?? FEEDBACK_KINDS[0];
       rating.addEventListener("change", () => controller.drafts.set(`${task.key}/rating/${feedbackId}`, rating.value));
-      feedbackControls.replaceChildren(
-        el("h3", "交付反馈"),
-        rating,
-        text,
-        button("记录反馈", () =>
-          controller.submitAction({
-            version: 1,
-            action: "feedback",
-            runId: feedbackId,
-            input: { kind: rating.value as (typeof FEEDBACK_KINDS)[number], text: text.value },
-          }),
-        ),
-      );
+      feedbackControls.replaceChildren(el("h3", "交付反馈"), rating, text, feedbackSubmit);
     }
-    for (const control of feedbackControls.querySelectorAll("button"))
+    const feedbackText = feedbackControls.querySelectorAll<HTMLTextAreaElement>("textarea")[0];
+    for (const control of feedbackControls.querySelectorAll("button")) {
+      if (control.dataset.dialogDismiss === "true") {
+        control.disabled = controller.actionBusy || controller.mustReread;
+        continue;
+      }
       control.disabled =
+        (control.dataset.dialogSubmit === "feedback" && !feedbackText?.value.trim()) ||
         !controller.detailFresh ||
         controller.actionBusy ||
         controller.mustReread ||
         controller.detailBusy ||
         !!controller.detailError;
+    }
     stoppingText.hidden = !run?.stopping || !["claimed", "unknown"].includes(run.state);
     const taskCancelled = task.kind === "task" && ["cancelling", "cancelled"].includes(task.state);
     stopControls.hidden =
@@ -1575,9 +1692,13 @@ export function mountBusinessTasksView(
       dismissDialog();
     setText(correctionToggle, "更正任务");
     correctionToggle.setAttribute("aria-expanded", String(correctionOpen));
+    correctionToggle.dataset.hasDraft = String(
+      Boolean(run && (controller.drafts.get(`${task.key}/memo/${run.id}`) ?? "").trim()),
+    );
     memoControls.hidden = !correctionOpen;
     decisions.hidden = !task.decisions.items.length && !task.decisions.hasMore;
     progress.hidden ||= waitingForAnswer;
+    current.dataset.mode = openQuestions.length || waitingForAnswer ? "decision" : "ordinary";
     setText(operationTitle, openQuestions.length ? "待你回答" : "任务操作");
     adjustments.hidden = correctionToggle.hidden && stopControls.hidden && stoppingText.hidden;
     actionBar.hidden = adjustments.hidden && taskCompleteControls.hidden && taskCancelControls.hidden;
@@ -1589,18 +1710,25 @@ export function mountBusinessTasksView(
       !controller.actionMessage &&
       !controller.mustReread;
     if (!feedbackControls.dataset.runId || !operationDialog.open) feedbackControls.hidden = true;
+    const memoText = memoControls.querySelectorAll<HTMLTextAreaElement>("textarea")[0];
     for (const control of [
       ...roundOperations.querySelectorAll("button"),
       ...runActions.querySelectorAll("button"),
       ...memoControls.querySelectorAll("button"),
-    ])
+    ]) {
+      if (control.dataset.dialogDismiss === "true") {
+        control.disabled = controller.actionBusy || controller.mustReread;
+        continue;
+      }
       control.disabled =
+        (control.dataset.dialogSubmit === "memo" && !memoText?.value.trim()) ||
         !controller.runReady ||
         !controller.detailFresh ||
         controller.actionBusy ||
         controller.mustReread ||
         controller.detailBusy ||
         !!controller.detailError;
+    }
     if (timelineTaskKey !== task.key) {
       timelineTaskKey = task.key;
       timelineRows.clear();

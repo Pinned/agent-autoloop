@@ -2371,3 +2371,193 @@ test("background detail update keeps session controls mounted and preserves acti
     globalThis.clearTimeout = originalClear;
   }
 });
+
+// Prevent simultaneous inline confirmation panels or stuck pause arming when switching actions,
+// and ensure toggles collapse cleanly while preserving drafts and keyboard shortcuts.
+test("operation entries toggle cleanly, stay mutually exclusive, and support Escape/Cmd+Enter", async () => {
+  const writes: unknown[] = [];
+  const run = {
+    id: 2,
+    rule: "r",
+    agent: "a",
+    state: "claimed",
+    attempts: 1,
+    createdAt: null,
+    claimedAt: null,
+    finishedAt: null,
+    notBefore: null,
+    summary: "",
+    error: "",
+    stopping: false,
+    usage: null,
+    truncated: false,
+  };
+  const page = { items: [], hasMore: false, nextCursor: null };
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      for (let i = 0; i < 4; i++) await flush();
+      const pause = all(root).find((x) => x.tag === "button" && x.textContent === "暂停任务")!;
+      const complete = all(root).find((x) => x.tag === "button" && x.textContent === "本人确认完成")!;
+      const cancel = all(root).find((x) => x.tag === "button" && x.textContent === "取消任务")!;
+      const confirmComplete = all(root).find((x) => x.tag === "button" && x.textContent === "确认完成任务")!;
+      const confirmCancel = all(root).find((x) => x.tag === "button" && x.textContent === "确认取消整件任务")!;
+      const completeForm = all(root).find((x) => x.children.includes(confirmComplete))!;
+      const cancelForm = all(root).find((x) => x.children.includes(confirmCancel))!;
+      assert.equal(complete.attributes.get("aria-expanded"), "false");
+      assert.equal(cancel.attributes.get("aria-expanded"), "false");
+
+      // Arm pause, then opening complete must disarm pause.
+      pause.fire();
+      assert.equal(pause.textContent, "确认暂停");
+      assert.equal(pause.dataset.armed, "true");
+      complete.fire();
+      assert.equal(pause.textContent, "暂停任务");
+      assert.equal(pause.dataset.armed, "false");
+      assert.equal(completeForm.hidden, false);
+      assert.equal(complete.attributes.get("aria-expanded"), "true");
+
+      // Typing draft then toggling complete closed preserves draft.
+      const completeInput = completeForm.children.find((x) => x.tag === "textarea")!;
+      completeInput.value = "验收通过";
+      completeInput.listeners.get("input")?.();
+      complete.fire();
+      assert.equal(completeForm.hidden, true);
+      assert.equal(complete.attributes.get("aria-expanded"), "false");
+
+      // Reopen complete and press Escape to collapse without clearing draft.
+      complete.fire();
+      assert.equal(completeForm.hidden, false);
+      assert.equal(completeInput.value, "验收通过");
+      completeInput.listeners.get("keydown")?.({ key: "Escape", preventDefault() {} });
+      assert.equal(completeForm.hidden, true);
+      assert.equal(complete.attributes.get("aria-expanded"), "false");
+      assert.equal(completeInput.value, "验收通过");
+
+      // Opening cancel closes complete; arming pause closes cancel.
+      cancel.fire();
+      assert.equal(cancelForm.hidden, false);
+      assert.equal(cancel.attributes.get("aria-expanded"), "true");
+      assert.equal(completeForm.hidden, true);
+      pause.fire();
+      assert.equal(cancelForm.hidden, true);
+      assert.equal(cancel.attributes.get("aria-expanded"), "false");
+      assert.equal(pause.textContent, "确认暂停");
+
+      // Opening correction dialog disarms pause.
+      all(root)
+        .find((x) => x.className === "business-correct-toggle")!
+        .fire();
+      assert.equal(pause.textContent, "暂停任务");
+      assert.equal(pause.dataset.armed, "false");
+      const dialog = all(root).find((x) => x.tag === "dialog")!;
+      const dismissBtn = all(dialog).find((x) => x.tag === "button" && x.textContent === "暂不提交")!;
+      assert.ok(dismissBtn, "dialog must provide a clear cancel button alongside primary submit");
+      const memoSubmit = all(dialog).find((x) => x.className === "setup-primary")!;
+      assert.equal(memoSubmit.disabled, true, "empty correction cannot be submitted");
+      const memoInput = all(dialog).find((x) => x.tag === "textarea")!;
+      memoInput.value = "调整方向";
+      memoInput.listeners.get("input")?.();
+      assert.equal(memoSubmit.disabled, false);
+      dismissBtn.fire();
+      assert.equal(dialog.open, false);
+      assert.equal(
+        all(root).find((x) => x.className === "business-correct-toggle")!.dataset.hasDraft,
+        "true",
+        "correction toggle should indicate an unsaved draft",
+      );
+
+      // Cmd+Enter in complete form submits directly when valid.
+      complete.fire();
+      completeInput.listeners.get("keydown")?.({ key: "Enter", metaKey: true, preventDefault() {} });
+      assert.equal(writes.length, 1);
+      assert.deepEqual(writes[0], {
+        version: 1,
+        action: "completeTask",
+        taskId: 1,
+        input: { reason: "验收通过" },
+      });
+    },
+    { ...item, state: "active", decisions: { items: [], hasMore: false } },
+    { run, association: { kind: "unavailable" }, events: page, cards: page, relatedRuns: page },
+    {
+      detailRead: async () => ({
+        ok: true,
+        data: {
+          task: { ...item, state: "active", decisions: { items: [], hasMore: false } },
+          timeline: { items: [], hasMore: false, nextBefore: null },
+          actions: {
+            cancelTask: true,
+            completeTask: true,
+            pauseTask: true,
+            resumeTask: true,
+            correctTask: true,
+            completionBlocker: null,
+          },
+        },
+      }),
+      taskAction: async (input) => {
+        writes.push(input);
+        return new Promise(() => {});
+      },
+    },
+  );
+});
+
+// Prevent flat visual hierarchy or broken color tokens in the operation card and dialogs.
+test("operation controls carry semantic classes, mode attributes and valid theme tokens", async () => {
+  const run = {
+    id: 2,
+    rule: "r",
+    agent: "a",
+    state: "cancelled",
+    attempts: 1,
+    createdAt: null,
+    claimedAt: null,
+    finishedAt: null,
+    notBefore: null,
+    summary: "",
+    error: "",
+    stopping: true,
+    usage: null,
+    truncated: false,
+  };
+  const page = { items: [], hasMore: false, nextCursor: null };
+  await withView(
+    async (controller, root) => {
+      controller.open("task:1");
+      for (let i = 0; i < 4; i++) await flush();
+      const current = all(root).find((x) => x.className === "business-current")!;
+      assert.equal(current.dataset.mode, "ordinary");
+      const progress = all(current).find((x) => x.className === "business-current-progress")!;
+      assert.equal(progress.dataset.transition, "true");
+      const resume = all(root).find((x) => x.tag === "button" && x.textContent === "恢复执行")!;
+      assert.ok(resume.className.includes("business-action-primary"));
+      const confirmComplete = all(root).find((x) => x.tag === "button" && x.textContent === "确认完成任务")!;
+      assert.ok(confirmComplete.className.includes("business-action-success"));
+      const confirmCancel = all(root).find((x) => x.tag === "button" && x.textContent === "确认取消整件任务")!;
+      assert.ok(confirmCancel.className.includes("business-action-danger"));
+    },
+    { ...item, state: "pausing", decisions: { items: [], hasMore: false } },
+    { run, association: { kind: "unavailable" }, events: page, cards: page, relatedRuns: page },
+    {
+      detailRead: async () => ({
+        ok: true,
+        data: {
+          task: { ...item, state: "pausing", decisions: { items: [], hasMore: false } },
+          timeline: { items: [], hasMore: false, nextBefore: null },
+          actions: {
+            cancelTask: true,
+            completeTask: true,
+            pauseTask: false,
+            resumeTask: true,
+            correctTask: true,
+            completionBlocker: null,
+          },
+        },
+      }),
+    },
+  );
+  const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
+  assert.doesNotMatch(css, /var\(--ink\)/, "operation dialog must use valid --text token");
+});
