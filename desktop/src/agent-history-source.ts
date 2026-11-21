@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { readClaudeHistory } from "../../plugins/claude/history.ts";
+import { readAgyHistory } from "../../plugins/agy/history.ts";
 import { emptyHistory, localHistoryScope, readHistoryFile, type HistoryAssociation } from "../../worker/history.ts";
 import type { AgentHistoryInput, AgentHistoryResponse } from "./agent-history-contract.ts";
 import type { Config } from "../../host/config.ts";
@@ -9,7 +10,7 @@ export function createAgentHistorySource(options: {
   home: string;
   owned(): boolean;
   readConfig(home: string): unknown;
-  local?(): { home: string; claudeRoot: string } | null;
+  local?(): { home: string; claudeRoot: string; agyRoot?: string } | null;
   readRun(
     runId: number,
     canRead: () => boolean,
@@ -32,7 +33,13 @@ export function createAgentHistorySource(options: {
         }
         const local =
           options.local?.() ??
-          (options.owned() ? { home: options.home, claudeRoot: path.join(options.home, ".claude") } : null);
+          (options.owned()
+            ? {
+                home: options.home,
+                claudeRoot: path.join(options.home, ".claude"),
+                agyRoot: path.join(options.home, ".gemini/antigravity-cli"),
+              }
+            : null);
         if (!local) {
           result.page = emptyHistory("unsupported");
           return result;
@@ -42,7 +49,11 @@ export function createAgentHistorySource(options: {
           return result;
         const current = () => {
           const next = options.local?.() ?? (options.owned() ? local : null);
-          return next?.home === local.home && next.claudeRoot === local.claudeRoot;
+          return (
+            next?.home === local.home &&
+            next.claudeRoot === local.claudeRoot &&
+            (next.agyRoot ?? undefined) === (local.agyRoot ?? undefined)
+          );
         };
         const scope = localHistoryScope(local.home, config.url, config.worker.key);
         const run = await options.readRun(request.runId, canRead);
@@ -71,7 +82,13 @@ export function createAgentHistorySource(options: {
           association.launches.length > 8
         )
           return result;
-        if (association.use !== "claude") {
+        const reader =
+          association.use === "claude"
+            ? { fn: readClaudeHistory, root: local.claudeRoot }
+            : association.use === "agy" && local.agyRoot
+              ? { fn: readAgyHistory, root: local.agyRoot }
+              : null;
+        if (!reader) {
           result.page = emptyHistory("unsupported");
           return result;
         }
@@ -109,8 +126,8 @@ export function createAgentHistorySource(options: {
           result.page = emptyHistory("changed");
           return result;
         }
-        result.page = readClaudeHistory({
-          root: local.claudeRoot,
+        result.page = reader.fn({
+          root: reader.root,
           cwd: launch.cwd,
           session: launch.session,
           inputHash: launch.inputHash,

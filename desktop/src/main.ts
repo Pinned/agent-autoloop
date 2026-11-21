@@ -400,7 +400,7 @@ if (ownsAppLock)
           if (boot.attach()?.getState().status !== "running") return null;
           const home = desktopCliHome(process.env);
           readDesktopCliHistoryConfig(home, decision.port);
-          return { home, claudeRoot: join(homedir(), ".claude") };
+          return { home, claudeRoot: join(homedir(), ".claude"), agyRoot: join(homedir(), ".gemini/antigravity-cli") };
         },
         readConfig: (home) => {
           const decision = boot.decision();

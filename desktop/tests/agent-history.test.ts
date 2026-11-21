@@ -250,3 +250,49 @@ test("history IPC rejects paths and revoked lease responses", async () => {
   assert.equal(released, 1);
   assert.equal((await ipc.read({}, [{ runId: 1, path: "/secret" }])).page.status, "unavailable");
 });
+
+test("history source reads agy transcript from local agyRoot", async () => {
+  const home = realpathSync(mkdtempSync(path.join(tmpdir(), "history-source-agy-")));
+  const session = "22222222-2222-4222-8222-222222222222";
+  try {
+    writeFileSync(path.join(home, "hub.db"), "fixture database identity");
+    mkdirSync(path.join(home, "worker/history"), { recursive: true });
+    mkdirSync(path.join(home, `.gemini/antigravity-cli/brain/${session}/.system_generated/logs`), { recursive: true });
+    writeFileSync(
+      path.join(home, "worker/history/1-1.json"),
+      JSON.stringify({
+        version: 1,
+        scope: localHistoryScope(home, "http://hub", "private-key"),
+        run: 1,
+        attempt: 1,
+        task: 1,
+        agent: "agy-full",
+        use: "agy",
+        launches: [{ cwd: "/work", session }],
+      }),
+    );
+    writeFileSync(
+      path.join(home, `.gemini/antigravity-cli/brain/${session}/.system_generated/logs/transcript.jsonl`),
+      JSON.stringify({
+        step_index: 0,
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-11-21T02:19:59Z",
+        content: "agy 已执行完成",
+      }) + "\n",
+    );
+    const source = createAgentHistorySource({
+      home,
+      owned: () => true,
+      readConfig: () => ({ url: "http://hub", hub: {}, worker: { name: "local", key: "private-key" } }),
+      readRun: async (id) => ({ id, agent: "agy-full", attempts: 0, state: "done" }),
+    });
+    const res = await source.read({ runId: 1 }, () => true);
+    assert.equal(res.page.status, "available");
+    assert.equal(res.page.items.length, 1);
+    assert.equal(res.page.items[0].text, "agy 已执行完成");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});

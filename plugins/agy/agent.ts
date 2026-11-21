@@ -3,6 +3,7 @@
 import { homedir } from "node:os";
 import path from "node:path";
 import { findProgram, tail, type Adapter, type Turn, type Usage } from "../../worker/agents.ts";
+import { readAgyHistory } from "./history.ts";
 
 const MODE = { read: "plan", edit: "accept-edits", full: "auto" } as const;
 
@@ -21,6 +22,11 @@ function usageOf(raw: any): Usage | undefined {
 }
 
 export default {
+  history: {
+    reference: (turn) =>
+      turn.command?.length ? null : { cwd: path.resolve(turn.cwd), session: turn.resume ?? turn.session },
+    read: readAgyHistory,
+  },
   command: (turn) => [
     ...launcher(turn),
     "--output-format",

@@ -262,6 +262,22 @@ export function createWorker({
     return { summary: observe(), connection: { ...connection } };
   }
 
+  function syncHistorySession(entry: Entry, adapter: Adapter, session: string | undefined) {
+    if (!session || !historyScope || !adapter.history) return;
+    try {
+      const existing = JSON.parse(
+        readHistoryFile(HOME, `worker/history/${entry.run}-${entry.attempt}.json`, 0, 16384).bytes.toString("utf8"),
+      ) as HistoryAssociation;
+      if (existing.scope !== historyScope || !Array.isArray(existing.launches) || !existing.launches.length) return;
+      const last = existing.launches[existing.launches.length - 1];
+      if (last.session === session) return;
+      existing.launches[existing.launches.length - 1] = { ...last, session };
+      saveHistoryAssociation(HOME, existing);
+    } catch {
+      /* Missing or unsafe association is ignored; launch already attempted recording it. */
+    }
+  }
+
   /** Starts a turn of the agent: a process that outlives this one, leaving its output and exit code in files. */
   function launch(entry: Entry, adapter: Adapter, prompt: string) {
     if (closing) {
@@ -412,7 +428,10 @@ export function createWorker({
     const seen = read(entry, adapter, entry.finishedAt ? 0 : (entry.completedCode ?? code));
     entry.usage = addUsage(entry.usage, seen.usage);
     const session = seen.session ?? (entry.turn > 0 && adapter.link ? entry.session : undefined);
-    if (seen.session) entry.session = seen.session;
+    if (seen.session) {
+      entry.session = seen.session;
+      syncHistorySession(entry, adapter, seen.session);
+    }
     const usage = entry.usage && { usage: entry.usage };
     const known = session && { session };
     if (entry.why === "cancel") {
@@ -526,6 +545,7 @@ export function createWorker({
       return conclude(entry, adapter, existsSync(exit) ? Number(readFileSync(exit, "utf8").trim()) : null);
     }
     const seen = read(entry, adapter, null);
+    if (seen.session) syncHistorySession(entry, adapter, seen.session);
     const session = seen.session ?? (adapter.link ? (entry.resume ?? entry.session) : undefined);
     if (session && session !== entry.told) {
       try {

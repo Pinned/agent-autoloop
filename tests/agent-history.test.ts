@@ -15,6 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { readClaudeHistory } from "../plugins/claude/history.ts";
+import { readAgyHistory } from "../plugins/agy/history.ts";
 import { historyScope, saveHistoryAssociation } from "../worker/history.ts";
 // Dispatch-looking text must never acquire trusted task-input attribution without a matching launch hash.
 test("user string and array attribution requires the trusted launch hash", () => {
@@ -222,5 +223,80 @@ test("history refuses traversal, symlink directories, missing files and invalid 
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test("agy history reads user, assistant, tool-call and tool-result while excluding thinking and system rows", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "history-agy-"));
+  try {
+    mkdirSync(path.join(root, `brain/${session}/.system_generated/logs`), { recursive: true });
+    const prompt = "中台派发：处理任务";
+    const rows = [
+      {
+        step_index: 0,
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        status: "DONE",
+        created_at: "2026-11-21T02:19:55Z",
+        content: `<USER_REQUEST>\n${prompt}\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nnow\n</ADDITIONAL_METADATA>`,
+      },
+      {
+        step_index: 1,
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-11-21T02:19:56Z",
+        thinking: "internal reasoning must not leak",
+        tool_calls: [{ name: "run_command", args: { CommandLine: "ls" } }],
+      },
+      {
+        step_index: 2,
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-11-21T02:19:57Z",
+        content: "file-a\nfile-b",
+      },
+      {
+        step_index: 3,
+        source: "SYSTEM",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-11-21T02:19:58Z",
+        content: "system notice must not leak",
+      },
+      {
+        step_index: 4,
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-11-21T02:19:59Z",
+        content: "已完成",
+      },
+    ];
+    writeFileSync(
+      path.join(root, `brain/${session}/.system_generated/logs/transcript.jsonl`),
+      rows.map((row) => JSON.stringify(row)).join("\n") + "\n",
+    );
+    const inputHash = createHash("sha256").update(prompt).digest("hex");
+    const page1 = readAgyHistory({ root, cwd: "/work", session, inputHash, limit: 2 });
+    assert.equal(page1.status, "available");
+    assert.equal(page1.hasMore, true);
+    assert.equal(page1.items.length, 2);
+    assert.equal(page1.items[0].role, "task-input");
+    assert.equal(page1.items[0].text, prompt);
+    assert.equal(page1.items[1].kind, "tool-call");
+    assert.equal(page1.items[1].name, "run_command");
+    const page2 = readAgyHistory({ root, cwd: "/work", session, inputHash, cursor: page1.cursor!, limit: 5 });
+    assert.equal(page2.status, "available");
+    assert.equal(page2.hasMore, false);
+    assert.equal(page2.items.length, 2);
+    assert.equal(page2.items[0].kind, "tool-result");
+    assert.equal(page2.items[0].text, "file-a\nfile-b");
+    assert.equal(page2.items[1].role, "assistant");
+    assert.equal(page2.items[1].text, "已完成");
+    assert.equal(readAgyHistory({ root, cwd: "/work", session: "../../secret" }).status, "unavailable");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
