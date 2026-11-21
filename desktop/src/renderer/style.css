@@ -1474,7 +1474,9 @@ main:has(#task-subpage:not([hidden])) {
 }
 .business-stop-controls p {
   flex-basis: 100%;
-  margin: 0;
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
 }
 .business-tasks-panel .business-decision {
   padding: 20px;
@@ -3925,6 +3927,12 @@ main:has(.settings-subpage-panel) {
 .business-tasks-panel .tasks-detail-page > .business-current[data-mode="decision"] {
   border-color: color-mix(in srgb, var(--amber) 45%, var(--border));
   background: color-mix(in srgb, var(--amber) 3%, var(--panel));
+}
+:root[data-theme="dark"] .business-tasks-panel .tasks-detail-page > .business-current {
+  border-color: var(--border);
+}
+:root[data-theme="dark"] .business-tasks-panel .business-header-description {
+  color: var(--muted);
 }
 .business-operation-title {
   margin: 0 0 12px;

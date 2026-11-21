@@ -2612,4 +2612,14 @@ test("live decision form highlights recommended option, clears validation on inp
   );
   const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
   assert.doesNotMatch(css, /var\(--accent-soft\)/, "checked option must use valid --accent-bg token");
+  assert.match(
+    css,
+    /:root\[data-theme="dark"\] \.business-tasks-panel \.tasks-detail-page > \.business-current\s*\{[^}]*border-color:\s*var\(--border\);/,
+    "dark theme must override the light hardcoded operation card border",
+  );
+  assert.match(
+    css,
+    /:root\[data-theme="dark"\] \.business-tasks-panel \.business-header-description\s*\{[^}]*color:\s*var\(--muted\);/,
+    "dark theme must keep original requirement description readable",
+  );
 });
