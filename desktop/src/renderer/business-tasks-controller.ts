@@ -171,9 +171,12 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void,
   let pageIndex = 0;
   let active = false;
   let poll: ReturnType<typeof setTimeout> | undefined;
+  function completedDetail() {
+    return selectedKey !== null && detail?.task.state === "completed";
+  }
   function schedule() {
     clearTimeout(poll);
-    if (active && allowed)
+    if (active && allowed && !completedDetail())
       poll = setTimeout(() => {
         if (selectedKey) {
           if (!actionBusy) readDetail(false, true);
@@ -265,6 +268,7 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void,
           else detail = { ...detail!, timeline: { ...timeline, items: merged } };
         } else {
           detail = response.data as BusinessTaskDetail;
+          if (completedDetail()) clearTimeout(poll);
           if (!preserveUncertain && detailFresh) drafts.delete(`${selectedKey}/uncertain`);
           mustReread = drafts.get(`${selectedKey}/uncertain`) === "yes";
           if (!preserveUncertain && detailFresh) mustReread = false;
@@ -429,8 +433,9 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void,
       error = "";
       detailError = "";
       // Reconnection is not acknowledgement of an uncertain write.
-      if (selectedKey) readDetail(false, true);
-      else readList();
+      if (selectedKey) {
+        if (!completedDetail()) readDetail(false, true);
+      } else readList();
     }
     schedule();
     notify();
@@ -519,7 +524,7 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void,
       if (active === next) return;
       active = next;
       if (!active) pendingList = false;
-      if (active && selectedKey && !actionBusy) readDetail(false, true);
+      if (active && selectedKey && !actionBusy && !completedDetail()) readDetail(false, true);
       if (active && !selectedKey) {
         if (listInFlight) pendingList = true;
         else readList(false, true);
@@ -528,8 +533,9 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void,
     },
     verifyForeground() {
       if (!active || !allowed || actionBusy) return;
-      if (selectedKey) readDetail(false, true);
-      else readList(false, true);
+      if (selectedKey) {
+        if (!completedDetail()) readDetail(false, true);
+      } else readList(false, true);
     },
     refresh: () => readList(),
     more: () => readList(true),

@@ -370,6 +370,7 @@ export function mountBusinessTasksView(
     const page = history.rounds.get(id ?? 0)?.page;
     if (
       !sessionActive ||
+      data?.task.state === "completed" ||
       id === null ||
       history.busy.has(id) ||
       page?.hasMore ||

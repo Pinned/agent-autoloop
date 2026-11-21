@@ -145,6 +145,42 @@ test("visible list polling stops in details while detail queries continue", asyn
   await flush();
   assert.equal(reads, afterOpen + 3);
 });
+test("completed details stop automatic reads but allow explicit refresh", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let reads = 0;
+  let state = "active";
+  const controller = createRendererBusinessTasks(
+    {
+      businessTasksRead: async () => {
+        reads++;
+        return {
+          ok: true,
+          data: { task: { ...item(1), state }, timeline: { items: [], hasMore: false, nextBefore: null } },
+        } as never;
+      },
+    },
+    () => {},
+  );
+  controller.setActive(true);
+  await flush();
+  controller.open("task:1");
+  await flush();
+  state = "completed";
+  t.mock.timers.tick(5000);
+  await flush();
+  assert.equal(controller.detail?.task.state, "completed");
+  const completedReads = reads;
+  t.mock.timers.tick(5000);
+  controller.setActive(false);
+  controller.setActive(true);
+  controller.verifyForeground();
+  await flush();
+  assert.equal(reads, completedReads);
+  controller.refreshDetail();
+  await flush();
+  assert.equal(reads, completedReads + 1);
+  controller.dispose();
+});
 test("polls do not overlap and a failed refresh retains the admitted page", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   let reads = 0;
