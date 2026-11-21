@@ -827,12 +827,17 @@ export function mountSettingsView(
         let pairingToken = 0;
         const closePairing = () => {
           pairingToken++;
+          void options.channelBridge?.cancelBindFeishu?.();
           if (typeof (pairingDialog as HTMLDialogElement).close === "function" && pairingDialog.open) {
             (pairingDialog as HTMLDialogElement).close();
           } else {
             pairingDialog.hidden = true;
           }
         };
+        pairingDialog.addEventListener("cancel", (event) => {
+          event.preventDefault();
+          closePairing();
+        });
         closeDialogBtn.addEventListener("click", closePairing);
         dialogFooter.append(closeDialogBtn);
         pairingDialog.append(dialogTitle, dialogHint, pairingRow, dialogState, dialogFooter);

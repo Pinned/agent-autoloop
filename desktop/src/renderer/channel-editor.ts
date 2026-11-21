@@ -19,6 +19,7 @@ export type ChannelBridge = {
   save(input: ChannelConfigSaveInput): Promise<ChannelConfigSaveResponse>;
   remove(input: ChannelConfigRemoveInput): Promise<ChannelConfigRemoveResponse>;
   bindFeishu(input: ChannelFeishuBindInput): Promise<ChannelFeishuBindResponse>;
+  cancelBindFeishu?(): Promise<void>;
   test(input: ChannelTestInput): Promise<ChannelTestResponse>;
 };
 

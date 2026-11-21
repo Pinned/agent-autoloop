@@ -127,3 +127,16 @@ test("parseHelperStdout ignores SDK info logs on stdout and extracts the marked 
   const noisy = `[info]: [ 'ws connect success' ]\n[info]: [ 'receive message' ]\nCHANNEL_HELPER_RESULT:{"ok":true,"openId":"ou_real"}\n`;
   assert.deepEqual(parseHelperStdout(noisy), { ok: true, openId: "ou_real" });
 });
+
+test("cancelBindFeishu aborts an in-flight pairing listener immediately", async () => {
+  const home = mkdtempSync(join(dir, "home-"));
+  writeFileSync(join(home, "config.json"), JSON.stringify({ url: "http://127.0.0.1:4040", channels: {} }));
+  const source = createChannelConfigSource({
+    home,
+    runHelper: async () => await new Promise<Record<string, unknown>>(() => {}),
+  });
+  const pending = source.bindFeishu({ appId: "cli_1", appSecret: "sec_1", pairingCode: "123456" });
+  source.cancelBindFeishu();
+  const res = await pending;
+  assert.deepEqual(res, { version: 1, ok: false, message: "已取消配对" });
+});

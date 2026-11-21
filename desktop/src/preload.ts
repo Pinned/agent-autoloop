@@ -38,6 +38,7 @@ const bridge = Object.freeze<DesktopBridge>({
   channelConfigSave: (input) => ipcRenderer.invoke("desktop:channel-config:save", input),
   channelConfigRemove: (input) => ipcRenderer.invoke("desktop:channel-config:remove", input),
   channelFeishuBind: (input) => ipcRenderer.invoke("desktop:channel-config:feishu-bind", input),
+  channelFeishuCancel: () => ipcRenderer.invoke("desktop:channel-config:feishu-cancel"),
   channelTest: (input) => ipcRenderer.invoke("desktop:channel-config:test", input),
   onRuntimeEvent: (listener) => {
     const receiving = (_event: unknown, payload: unknown) => {

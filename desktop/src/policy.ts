@@ -74,6 +74,7 @@ export const channels = Object.freeze({
   channelConfigSave: "desktop:channel-config:save",
   channelConfigRemove: "desktop:channel-config:remove",
   channelFeishuBind: "desktop:channel-config:feishu-bind",
+  channelFeishuCancel: "desktop:channel-config:feishu-cancel",
   channelTest: "desktop:channel-config:test",
   // Main-to-renderer push only; the renderer never invokes this channel.
   runtimeEvent: "desktop:runtime:event",
@@ -173,6 +174,8 @@ export interface DesktopBridge {
   channelFeishuBind(
     input: import("../../host/desktop-channel-contract.ts").ChannelFeishuBindInput,
   ): Promise<import("../../host/desktop-channel-contract.ts").ChannelFeishuBindResponse>;
+  /** Cancel an in-flight Feishu pairing listener. */
+  channelFeishuCancel(): Promise<void>;
   /** Send a test notification through the configured channel. */
   channelTest(
     input: import("../../host/desktop-channel-contract.ts").ChannelTestInput,

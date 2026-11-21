@@ -60,6 +60,7 @@ test("IPC exposes only themes, window actions, the six fixed setup operations, t
     "desktop:agent-history:read",
     "desktop:business-tasks:read",
     "desktop:channel-config:feishu-bind",
+    "desktop:channel-config:feishu-cancel",
     "desktop:channel-config:get",
     "desktop:channel-config:remove",
     "desktop:channel-config:save",

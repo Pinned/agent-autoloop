@@ -1011,6 +1011,11 @@ if (ownsAppLock)
         if (blocked) return { version: 1, ok: false, message: blocked.message };
         return await channelConfig.bindFeishu(args[0]);
       });
+      ipcMain.handle(channels.channelFeishuCancel, (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        if (args.length !== 0) return;
+        channelConfig.cancelBindFeishu();
+      });
       ipcMain.handle(channels.channelTest, async (event, ...args: unknown[]) => {
         assertSender(event, window.webContents, page);
         if (args.length !== 1) return { version: 1, ok: false, message: "参数无效" };
@@ -1133,7 +1138,7 @@ if (ownsAppLock)
             result.runtimeEventSeen !== false ||
             result.navigateSeen !== false ||
             result.bridge.join(",") !==
-              "agentHistory,businessTasksRead,channelConfigGet,channelConfigRemove,channelConfigSave,channelFeishuBind,channelTest,completeSetup,copyLaunchCommand,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,pickWorkingDir,rulesCasGet,rulesCasPut,runtimeGet,runtimeReconnect,runtimeStart,runtimeStop,runtimeUseEmbedded,setTheme,settingsGet,settingsPut,setupConnect,setupStatus,taskAction,taskCreate,taskDetail,taskDraftNamespace,taskEntries,taskList,tasksGet,todayState,window,workersGet,workersLocal" ||
+              "agentHistory,businessTasksRead,channelConfigGet,channelConfigRemove,channelConfigSave,channelFeishuBind,channelFeishuCancel,channelTest,completeSetup,copyLaunchCommand,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,pickWorkingDir,rulesCasGet,rulesCasPut,runtimeGet,runtimeReconnect,runtimeStart,runtimeStop,runtimeUseEmbedded,setTheme,settingsGet,settingsPut,setupConnect,setupStatus,taskAction,taskCreate,taskDetail,taskDraftNamespace,taskEntries,taskList,tasksGet,todayState,window,workersGet,workersLocal" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||

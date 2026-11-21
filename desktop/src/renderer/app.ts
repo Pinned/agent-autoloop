@@ -593,6 +593,7 @@ settingsPage = mountSettingsView(settings, {
     save: (input) => window.desktop.channelConfigSave(input),
     remove: (input) => window.desktop.channelConfigRemove(input),
     bindFeishu: (input) => window.desktop.channelFeishuBind(input),
+    cancelBindFeishu: () => window.desktop.channelFeishuCancel(),
     test: (input) => window.desktop.channelTest(input),
   },
   editorChanged: (open) => {

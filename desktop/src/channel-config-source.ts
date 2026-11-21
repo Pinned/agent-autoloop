@@ -199,6 +199,51 @@ export function createChannelConfigSource(options: ChannelConfigSourceOptions) {
 
   const createKey = options.createKey ?? defaultCreateKey;
   const runHelper = options.runHelper ?? defaultRunHelper;
+  let activeBindAbort: AbortController | null = null;
+
+  async function runBindHelper(input: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> {
+    if (options.runHelper) {
+      return await new Promise<Record<string, unknown>>((resolve, reject) => {
+        if (signal.aborted) return reject(new Error("已取消配对"));
+        const onAbort = () => reject(new Error("已取消配对"));
+        signal.addEventListener("abort", onAbort, { once: true });
+        options.runHelper!(input).then(
+          (res) => {
+            signal.removeEventListener("abort", onAbort);
+            resolve(res);
+          },
+          (err) => {
+            signal.removeEventListener("abort", onAbort);
+            reject(err);
+          },
+        );
+      });
+    }
+    if (!options.runtimeResources) throw new Error("缺少内置运行时资源");
+    const { nodePath, helperPath } = await options.runtimeResources();
+    const stdout = await new Promise<string>((resolve, reject) => {
+      const child = execImpl(
+        nodePath,
+        ["--disable-warning=ExperimentalWarning", helperPath],
+        {
+          cwd: options.home,
+          env: { ...process.env, AGENT_AUTOLOOP_HOME: options.home },
+          timeout: 65_000,
+          maxBuffer: 256 * 1024,
+          signal,
+        },
+        (err, out, stderr) => {
+          if (signal.aborted) reject(new Error("已取消配对"));
+          else if (err && !out?.trim()) reject(new Error(stderr?.trim() || err.message || "飞书操作无响应"));
+          else resolve(out);
+        },
+      );
+      child.stdin?.on("error", () => {});
+      child.stdin?.end(JSON.stringify(input));
+    });
+    if (!stdout.trim()) throw new Error("飞书操作无响应");
+    return parseHelperStdout(stdout);
+  }
 
   function buildChannelRecord(
     input: ChannelConfigSaveInput,
@@ -324,7 +369,15 @@ export function createChannelConfigSource(options: ChannelConfigSourceOptions) {
       }
     },
 
+    cancelBindFeishu(): void {
+      activeBindAbort?.abort();
+      activeBindAbort = null;
+    },
+
     async bindFeishu(rawInput: unknown): Promise<ChannelFeishuBindResponse> {
+      activeBindAbort?.abort();
+      const abort = new AbortController();
+      activeBindAbort = abort;
       try {
         const input = parseChannelFeishuBindInput(rawInput);
         let appSecret = input.appSecret;
@@ -334,13 +387,16 @@ export function createChannelConfigSource(options: ChannelConfigSourceOptions) {
           if (isNonEmptyString(existing?.appSecret)) appSecret = existing.appSecret.trim();
         }
         if (!appSecret) return { version: 1, ok: false, message: "请先填写 App Secret" };
-        const result = await runHelper({
-          action: "feishu-bind",
-          appId: input.appId,
-          appSecret,
-          domain: input.domain ?? "feishu",
-          ...(input.pairingCode && { pairingCode: input.pairingCode }),
-        });
+        const result = await runBindHelper(
+          {
+            action: "feishu-bind",
+            appId: input.appId,
+            appSecret,
+            domain: input.domain ?? "feishu",
+            ...(input.pairingCode && { pairingCode: input.pairingCode }),
+          },
+          abort.signal,
+        );
         if (result.ok === true && typeof result.openId === "string" && result.openId.trim()) {
           const userName =
             typeof result.userName === "string" && result.userName.trim() ? result.userName.trim() : undefined;
@@ -358,6 +414,8 @@ export function createChannelConfigSource(options: ChannelConfigSourceOptions) {
         };
       } catch (error) {
         return { version: 1, ok: false, message: error instanceof Error ? error.message : String(error) };
+      } finally {
+        if (activeBindAbort === abort) activeBindAbort = null;
       }
     },
 
