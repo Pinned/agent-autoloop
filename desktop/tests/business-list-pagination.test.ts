@@ -1,4 +1,5 @@
-// Failure modes: pages accumulate, refresh loses its cursor, or background polls outlive the visible list.
+// Failure modes: pages accumulate, refresh loses its cursor, background polls outlive the visible list,
+// or silent detail polls flash busy/runReady, wipe loaded timeline pages, blink errors, or drop actions.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createRendererBusinessTasks } from "../src/renderer/business-tasks-controller.ts";
@@ -334,4 +335,260 @@ test("restoring visibility queues one fresh query without overlapping the old re
   await flush();
   assert.equal(reads, 2);
   c.dispose();
+});
+
+// Silent detail polls must not flash busy/runReady or notify when nothing changed on the hub.
+test("silent detail background polls suppress no-op notifications and keep runReady stable", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let notifications = 0;
+  let detailPending: ((v: unknown) => void) | undefined;
+  let runPending: ((v: unknown) => void) | undefined;
+  let progress = "正在处理";
+  const detailPayload = () => ({
+    ok: true,
+    data: {
+      task: { ...item(1), latestRunId: 2, latestProgress: progress },
+      timeline: { items: [], hasMore: false, nextBefore: null },
+      actions: { cancelTask: true, completeTask: true, correctTask: true, completionBlocker: null },
+    },
+  });
+  const runPayload = {
+    version: 1,
+    ok: true,
+    data: {
+      run: {
+        id: 2,
+        rule: "r",
+        agent: "claude",
+        state: "claimed",
+        attempts: 1,
+        createdAt: null,
+        claimedAt: null,
+        finishedAt: null,
+        notBefore: null,
+        summary: "",
+        error: "",
+        stopping: false,
+        usage: null,
+        truncated: false,
+      },
+      association: { kind: "unavailable" },
+      events: { items: [], hasMore: false, nextCursor: null },
+      cards: { items: [], hasMore: false, nextCursor: null },
+      relatedRuns: { items: [], hasMore: false, nextCursor: null },
+    },
+  };
+  const controller = createRendererBusinessTasks(
+    {
+      businessTasksRead: () =>
+        new Promise((resolve) => {
+          detailPending = resolve;
+        }) as never,
+      taskDetail: () =>
+        new Promise((resolve) => {
+          runPending = resolve;
+        }) as never,
+    },
+    () => {
+      notifications++;
+    },
+  );
+  controller.open("task:1");
+  detailPending!(detailPayload());
+  await flush();
+  runPending!(runPayload);
+  await flush();
+  assert.equal(controller.detailFresh, true);
+  assert.equal(controller.runReady, true);
+  controller.setActive(true);
+  // Activation triggers a silent background verification; busy and runReady must stay calm.
+  assert.equal(controller.detailBusy, false);
+  assert.equal(controller.runReady, true);
+  const before = notifications;
+  detailPending!(detailPayload());
+  await flush();
+  assert.equal(controller.detailBusy, false);
+  assert.equal(controller.runReady, true);
+  runPending!(runPayload);
+  await flush();
+  assert.equal(notifications, before, "identical silent refresh must not trigger a view update");
+
+  // Next 5s poll with real progress change updates cleanly without flashing busy or runReady.
+  progress = "已完成第一步";
+  t.mock.timers.tick(5000);
+  assert.equal(controller.detailBusy, false);
+  assert.equal(controller.runReady, true);
+  assert.equal(notifications, before);
+  detailPending!(detailPayload());
+  await flush();
+  assert.equal(controller.detail?.task.latestProgress, "已完成第一步");
+  assert.equal(controller.runReady, true);
+  assert.equal(notifications, before + 1);
+  runPending!(runPayload);
+  await flush();
+  assert.equal(notifications, before + 1, "unchanged run diagnosis must not emit an extra update");
+  controller.dispose();
+});
+
+// Background detail refreshes must retain already-loaded older timeline pages instead of truncating back to page 1.
+test("silent detail background poll preserves contiguous older timeline pages", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const fact = (seq: number, text = `记录 ${seq}`) => ({
+    seq,
+    kind: "started",
+    at: null,
+    runId: 2,
+    eventId: null,
+    cardId: null,
+    feedbackId: null,
+    text,
+    truncated: false,
+  });
+  let head = [fact(4), fact(3)];
+  const controller = createRendererBusinessTasks(
+    {
+      businessTasksRead: async (request) => {
+        if (request.operation === "timeline") {
+          return {
+            ok: true,
+            data: { items: [fact(2), fact(1)], hasMore: true, nextBefore: 1 },
+          } as never;
+        }
+        return {
+          ok: true,
+          data: {
+            task: item(1),
+            timeline: { items: head, hasMore: true, nextBefore: head.at(-1)!.seq },
+          },
+        } as never;
+      },
+    },
+    () => {},
+  );
+  controller.open("task:1");
+  await flush();
+  controller.moreTimeline();
+  await flush();
+  assert.deepEqual(
+    controller.detail?.timeline.items.map((x) => x.seq),
+    [4, 3, 2, 1],
+  );
+  assert.equal(controller.detail?.timeline.nextBefore, 1);
+
+  controller.setActive(true);
+  await flush();
+  head = [fact(5), fact(4, "更新后的记录 4"), fact(3)];
+  t.mock.timers.tick(5000);
+  await flush();
+  assert.deepEqual(
+    controller.detail?.timeline.items.map((x) => x.seq),
+    [5, 4, 3, 2, 1],
+  );
+  assert.equal(controller.detail?.timeline.items[1].text, "更新后的记录 4");
+  assert.equal(controller.detail?.timeline.hasMore, true);
+  assert.equal(controller.detail?.timeline.nextBefore, 1);
+  controller.dispose();
+});
+
+// Repeated failed background polls must not clear and re-flash the error banner on every cycle.
+test("silent detail background poll keeps error stable across retries and clears on recovery", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let notifications = 0;
+  let pending: ((v: unknown) => void) | undefined;
+  const controller = createRendererBusinessTasks(
+    {
+      businessTasksRead: () =>
+        new Promise((resolve) => {
+          pending = resolve;
+        }) as never,
+    },
+    () => {
+      notifications++;
+    },
+  );
+  controller.open("task:1");
+  pending!({ ok: true, data: { task: item(1), timeline: { items: [], hasMore: false, nextBefore: null } } });
+  await flush();
+  controller.setActive(true);
+  pending!({ ok: false, error: "unavailable" });
+  await flush();
+  assert.equal(controller.detailError, "unavailable");
+  const afterError = notifications;
+
+  t.mock.timers.tick(5000);
+  assert.equal(controller.detailError, "unavailable", "starting a silent retry must not clear the visible error");
+  assert.equal(notifications, afterError);
+  pending!({ ok: false, error: "unavailable" });
+  await flush();
+  assert.equal(controller.detailError, "unavailable");
+  assert.equal(notifications, afterError, "same repeated failure must not trigger redundant flicker");
+
+  t.mock.timers.tick(5000);
+  pending!({ ok: true, data: { task: item(1), timeline: { items: [], hasMore: false, nextBefore: null } } });
+  await flush();
+  assert.equal(controller.detailError, "");
+  assert.equal(notifications, afterError + 1);
+  controller.dispose();
+});
+
+// A background poll in flight must not silently drop a user's action click or overwrite post-write state.
+test("user action during an in-flight silent detail poll succeeds and fences the stale poll", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const detailResolvers: ((v: unknown) => void)[] = [];
+  let writes = 0;
+  const controller = createRendererBusinessTasks(
+    {
+      businessTasksRead: (request) => {
+        if (request.operation === "list")
+          return Promise.resolve({ ok: true, data: { items: [], hasMore: false, nextBefore: null } }) as never;
+        return new Promise((resolve) => {
+          detailResolvers.push(resolve);
+        }) as never;
+      },
+      taskAction: async () => {
+        writes++;
+        return { version: 1, ok: true, action: "completeTask", taskId: 1, result: { status: "completed" } } as never;
+      },
+    },
+    () => {},
+  );
+  controller.open("task:1");
+  detailResolvers.shift()!({
+    ok: true,
+    data: {
+      task: item(1),
+      timeline: { items: [], hasMore: false, nextBefore: null },
+      actions: { cancelTask: true, completeTask: true, completionBlocker: null },
+    },
+  });
+  await flush();
+  controller.setActive(true);
+  // Silent poll is now in flight (detailResolvers[0]).
+  assert.equal(detailResolvers.length, 1);
+  controller.submitAction({ version: 1, action: "completeTask", taskId: 1, input: { reason: "验收完成" } });
+  assert.equal(writes, 1, "in-flight silent poll must not block user writes");
+  await flush();
+  // Resolve the stale pre-action poll: it must be discarded and trigger the queued post-write reread.
+  detailResolvers.shift()!({
+    ok: true,
+    data: {
+      task: { ...item(1), state: "active" },
+      timeline: { items: [], hasMore: false, nextBefore: null },
+      actions: { cancelTask: true, completeTask: true, completionBlocker: null },
+    },
+  });
+  await flush();
+  assert.equal(detailResolvers.length, 1, "confirmed write must still run its authoritative reread");
+  detailResolvers.shift()!({
+    ok: true,
+    data: {
+      task: { ...item(1), state: "completed" },
+      timeline: { items: [], hasMore: false, nextBefore: null },
+      actions: { cancelTask: false, completeTask: false, completionBlocker: null },
+    },
+  });
+  await flush();
+  assert.equal(controller.detail?.task.state, "completed");
+  assert.equal(controller.mustReread, false);
+  controller.dispose();
 });

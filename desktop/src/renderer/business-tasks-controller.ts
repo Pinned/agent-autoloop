@@ -150,8 +150,30 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void,
   let ruleNames: string[] = [];
   let listInFlight = false,
     pendingList = false;
+  let detailFlight: object | null = null,
+    pendingDetail: "refresh" | "more" | null = null;
   let businessScope = false;
   let ruleCapability: boolean | undefined;
+  function mergeBackgroundTimeline(previous: BusinessTaskDetail | null, fresh: BusinessTaskDetail): BusinessTaskDetail {
+    if (
+      !previous ||
+      previous.task.key !== fresh.task.key ||
+      !fresh.timeline.items.length ||
+      !previous.timeline.items.length
+    )
+      return fresh;
+    const freshOldest = fresh.timeline.items[fresh.timeline.items.length - 1].seq;
+    // Only splice older already-loaded pages when they connect contiguously with the refreshed head.
+    if (previous.timeline.items[0].seq < freshOldest) return fresh;
+    const older = previous.timeline.items.filter((x) => x.seq < freshOldest);
+    if (!older.length) return fresh;
+    const merged = [...fresh.timeline.items, ...older];
+    if (merged.length > 1000 || jsonBytes(merged) > 1024 * 1024) return fresh;
+    return {
+      ...fresh,
+      timeline: { items: merged, hasMore: previous.timeline.hasMore, nextBefore: previous.timeline.nextBefore },
+    };
+  }
   async function readBusiness(request: BusinessRequest, current: () => boolean) {
     if (bridge.taskDraftNamespace) await syncNamespace();
     const raw = await bridge.businessTasksRead(request);
@@ -179,7 +201,7 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void,
     if (active && allowed && !completedDetail())
       poll = setTimeout(() => {
         if (selectedKey) {
-          if (!actionBusy) readDetail(false, true);
+          if (!actionBusy) readDetail(false, true, true);
         } else readList(false, true);
         schedule();
       }, 5000);
@@ -242,23 +264,57 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void,
       finish(undefined);
     }
   }
-  function readDetail(more = false, preserveUncertain = false) {
-    if (!selectedKey || !allowed || detailBusy || (more && !detail?.timeline.hasMore)) return;
+  function readDetail(more = false, preserveUncertain = false, silent = false) {
+    if (!selectedKey || !allowed || (more && !detail?.timeline.hasMore)) return;
+    const background = silent && !more && detail !== null && detailFresh;
+    if (detailFlight !== null) {
+      if (!background) {
+        pendingDetail = more ? "more" : "refresh";
+        if (!detailBusy) {
+          detailBusy = true;
+          detailError = "";
+          notify();
+        }
+      }
+      return;
+    }
     const key = businessTaskKey(selectedKey),
-      generation = ++detailGeneration;
+      generation = ++detailGeneration,
+      flight = {};
     const request: BusinessRequest = more
       ? { operation: "timeline", input: { key, before: detail!.timeline.nextBefore!, limit: 20 } }
       : { operation: "detail", input: { key } };
-    detailBusy = true;
-    detailError = "";
-    notify();
+    detailFlight = flight;
+    if (!background) {
+      detailBusy = true;
+      detailError = "";
+      notify();
+    }
+    const drainPending = () => {
+      if (!pendingDetail || !allowed || !selectedKey || detailFlight !== null) return;
+      const next = pendingDetail;
+      pendingDetail = null;
+      readDetail(next === "more", false, false);
+    };
     const finish = (raw: unknown) => {
-      if (generation !== detailGeneration || selectedKey !== key || !allowed) return;
+      if (detailFlight === flight) detailFlight = null;
+      if (generation !== detailGeneration || selectedKey !== key || !allowed) {
+        drainPending();
+        return;
+      }
+      const prevBusy = detailBusy;
+      const prevError = detailError;
+      const prevDetailJson = background && detail ? JSON.stringify(detail) : "";
+      const prevMustReread = mustReread;
+      const prevActionMessage = actionMessage;
+      const wasFresh = detailFresh;
+      let runStateChanged = false;
       detailBusy = false;
       try {
         const response = parseBusinessResponse(raw, request);
         if (!response.ok) detailError = response.error;
         else if (more) {
+          detailError = "";
           const timeline = response.data as BusinessTimeline;
           const merged = [
             ...detail!.timeline.items,
@@ -267,19 +323,31 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void,
           if (merged.length > 1000 || jsonBytes(merged) > 1024 * 1024) detailError = "处理记录已达到保留上限。";
           else detail = { ...detail!, timeline: { ...timeline, items: merged } };
         } else {
-          detail = response.data as BusinessTaskDetail;
+          detailError = "";
+          const incoming = response.data as BusinessTaskDetail;
+          detail = background ? mergeBackgroundTimeline(detail, incoming) : incoming;
           if (completedDetail()) clearTimeout(poll);
           if (!preserveUncertain && detailFresh) drafts.delete(`${selectedKey}/uncertain`);
           mustReread = drafts.get(`${selectedKey}/uncertain`) === "yes";
           if (!preserveUncertain && detailFresh) mustReread = false;
           if (actionMessage === "已提交，正在核对任务的最新状态。") actionMessage = "已核对最新任务状态。";
           detailFresh = true;
-          readRun(detail.task.latestRunId, generation);
+          runStateChanged = readRun(detail.task.latestRunId, generation, background);
         }
       } catch {
         detailError = "业务任务字段缺失或处理记录不完整。";
       }
-      notify();
+      const changedState =
+        !background ||
+        prevBusy ||
+        detailError !== prevError ||
+        mustReread !== prevMustReread ||
+        actionMessage !== prevActionMessage ||
+        !wasFresh ||
+        runStateChanged ||
+        (detailError === "" && JSON.stringify(detail) !== prevDetailJson);
+      if (changedState) notify();
+      drainPending();
     };
     try {
       void readBusiness(request, () => generation === detailGeneration && selectedKey === key && allowed).then(
@@ -290,30 +358,41 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void,
       finish(undefined);
     }
   }
-  function readRun(id: number | null, generation: number) {
-    runReady = false;
-    if (run?.run.id !== id || !bridge.taskDetail) run = null;
-    if (!id || !bridge.taskDetail) return;
+  function readRun(id: number | null, generation: number, silent = false): boolean {
+    const keepReady = silent && id !== null && runReady && run?.run.id === id && !!bridge.taskDetail;
+    const prevReady = runReady;
+    const prevRun = run;
+    if (!keepReady) {
+      runReady = false;
+      if (run?.run.id !== id || !bridge.taskDetail) run = null;
+    }
+    if (!id || !bridge.taskDetail) return prevReady !== runReady || prevRun !== run;
     const request = { operation: "detail" as const, runId: id };
     const finish = (raw: unknown) => {
       if (!allowed || generation !== detailGeneration || detail?.task.latestRunId !== id) return;
-      run = null;
+      const beforeReady = runReady;
+      const beforeJson = run ? JSON.stringify(run) : "";
+      let nextRun: RunDetail | null = null;
+      let nextReady = false;
       try {
         const response = parseTaskHistoryResponse(raw, request);
         if (response.ok) {
-          run = response.data;
-          runReady = true;
+          nextRun = response.data;
+          nextReady = true;
         }
       } catch {
         /* No permission inferred from malformed diagnosis. */
       }
-      notify();
+      run = nextRun;
+      runReady = nextReady;
+      if (!silent || beforeReady !== runReady || (run ? JSON.stringify(run) : "") !== beforeJson) notify();
     };
     try {
       void Promise.resolve(bridge.taskDetail(request)).then(finish, () => finish(undefined));
     } catch {
       finish(undefined);
     }
+    return prevReady !== runReady || prevRun !== run;
   }
   function submitAction(raw: DesktopTaskActionInput) {
     if (!allowed || !detailFresh || detailBusy || !detail || actionBusy || mustReread || !bridge.taskAction) return;
@@ -362,6 +441,8 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void,
     }
     const key = selectedKey,
       token = {};
+    // Fence any in-flight background poll so a pre-write snapshot cannot land after submission starts.
+    ++detailGeneration;
     actionToken = token;
     drafts.set(`${selectedKey}/uncertain`, "yes");
     actionBusy = true;
@@ -422,6 +503,8 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void,
     ++detailGeneration;
     busy = false;
     detailBusy = false;
+    detailFlight = null;
+    pendingDetail = null;
     runReady = false;
     detailFresh = false;
     allowed = next;
@@ -524,7 +607,7 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void,
       if (active === next) return;
       active = next;
       if (!active) pendingList = false;
-      if (active && selectedKey && !actionBusy && !completedDetail()) readDetail(false, true);
+      if (active && selectedKey && !actionBusy && !completedDetail()) readDetail(false, true, true);
       if (active && !selectedKey) {
         if (listInFlight) pendingList = true;
         else readList(false, true);
@@ -534,7 +617,7 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void,
     verifyForeground() {
       if (!active || !allowed || actionBusy) return;
       if (selectedKey) {
-        if (!completedDetail()) readDetail(false, true);
+        if (!completedDetail()) readDetail(false, true, true);
       } else readList(false, true);
     },
     refresh: () => readList(),
@@ -566,6 +649,8 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void,
       busy = false;
       ++detailGeneration;
       detailBusy = false;
+      detailFlight = null;
+      pendingDetail = null;
       detail = null;
       run = null;
       detailFresh = false;
@@ -581,6 +666,8 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void,
       selectedKey = null;
       detail = null;
       detailBusy = false;
+      detailFlight = null;
+      pendingDetail = null;
       detailError = "";
       run = null;
       ++listGeneration;
@@ -593,6 +680,8 @@ export function createRendererBusinessTasks(bridge: Bridge, changed: () => void,
       active = false;
       allowed = false;
       pendingList = false;
+      detailFlight = null;
+      pendingDetail = null;
       clearTimeout(poll);
       ++listGeneration;
       ++detailGeneration;
