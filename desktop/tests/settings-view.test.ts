@@ -1,5 +1,6 @@
 // Settings must not nest a page frame or duplicate the shell title, including after returning from editing.
-// Agent editing must be a subpage, never an inline disclosure; updates must retain its input nodes.
+// Agent, source, and channel editing share one unified in-page subpage paradigm without inline disclosures;
+// updates must retain input nodes, and deleting an entry requires two-step arming confirmation.
 // The settings page shows only the groups this machine can actually change. A pure worker does
 // not own the hub's sources or notification channels: offering those tabs would promise a save
 // the hub refuses. The row has to follow the role while the page stays mounted, because the
@@ -16,6 +17,7 @@ class TestElement {
   id = "";
   hidden = false;
   disabled = false;
+  open = false;
   type = "";
   value = "";
   checked = false;
@@ -294,7 +296,7 @@ test("editing one row turns only that row into a form and locks the rest of the 
   click(find(f.root, "编辑")!);
   // The row's form exists; the group's other affordances wait for the session to end.
   assert.ok(byId(f.root, "settings-agents-0-name"));
-  assert.equal(find(f.root, "添加一项")!.disabled, true);
+  assert.equal(find(f.root, "＋ 添加 Agent")!.disabled, true);
   for (const button of f.tabs.children)
     if (button.dataset.tab !== "agents") assert.equal(button.disabled, true, button.dataset.tab);
   assert.equal(find(f.root, "取消")!.disabled, false);
@@ -304,7 +306,7 @@ test("editing one row turns only that row into a form and locks the rest of the 
     all(f.root).some((node) => node.id === "settings-agents-0-name"),
     false,
   );
-  assert.equal(find(f.root, "添加一项")!.disabled, false);
+  assert.equal(find(f.root, "＋ 添加 Agent")!.disabled, false);
 });
 
 test("a save carries the whole section: this row new, the others at their draft values", async () => {
@@ -339,10 +341,10 @@ test("adding a row appends it to the section on save", async () => {
     f.view.init();
     await flush();
   });
-  click(find(f.root, "添加一项")!);
+  click(find(f.root, "＋ 添加 Agent")!);
   // The fresh row's form opens past the existing entries, with no delete button to misfire.
   assert.ok(byId(f.root, "settings-agents-1-id"));
-  assert.equal(find(f.root, "删除此条"), undefined);
+  assert.equal(find(f.root, "删除"), undefined);
   type(byId(f.root, "settings-agents-1-id")!, "a2");
   type(byId(f.root, "settings-agents-1-name")!, "乙");
   type(byId(f.root, "settings-agents-1-worker")!, "w1");
@@ -361,7 +363,7 @@ test("adding a row appends it to the section on save", async () => {
   );
 });
 
-test("removing a row is an explicit act inside the form, and saves the section without it", async () => {
+test("removing a row requires two-step confirmation inside the subpage, then saves without it", async () => {
   const r = recordingBridge();
   const f = fixture(() => "hub-worker", r.bridge);
   await withDocumentAcross(async () => {
@@ -369,26 +371,34 @@ test("removing a row is an explicit act inside the form, and saves the section w
     await flush();
   });
   click(find(f.root, "编辑")!);
+  // First click arms deletion without sending a save.
+  click(find(f.root, "删除")!);
+  assert.equal(r.puts.length, 0);
+  assert.ok(find(f.root, "确认删除"));
+  assert.ok(find(f.root, "取消删除"));
+  // Cancelling deletion disarms safely.
+  click(find(f.root, "取消删除")!);
+  assert.equal(find(f.root, "确认删除"), undefined);
+  assert.ok(find(f.root, "删除"));
+  // Second arm + confirm actually submits the removal.
+  click(find(f.root, "删除")!);
   await withDocumentAcross(async () => {
-    find(f.root, "删除此条")!.click();
+    find(f.root, "确认删除")!.click();
     await flush();
   });
+  assert.equal(r.puts.length, 1);
   assert.deepEqual(r.puts[0].value, []);
 });
 
-test("Agent edit and add use a subpage and keep the same inputs during updates", async () => {
+test("Agent edit and add use the unified subpage and keep the same inputs during updates", async () => {
   const f = fixture(() => "hub-worker", loadedBridge());
   await withDocumentAcross(async () => {
     f.view.init();
     await flush();
   });
   click(find(f.root, "编辑")!);
-  const page = all(f.root).find((node) => node.className === "settings-agent-subpage");
+  const page = all(f.root).find((node) => node.className === "settings-subpage");
   assert.ok(page);
-  assert.equal(
-    all(page).some((node) => node.tagName === "details"),
-    false,
-  );
   assert.ok(find(page, "← 返回"));
   const name = byId(f.root, "settings-agents-0-name")!;
   type(name, "尚未保存");
@@ -398,11 +408,11 @@ test("Agent edit and add use a subpage and keep the same inputs during updates",
   click(find(page, "← 返回")!);
   assert.equal(byId(f.root, "settings-agents-0-name"), undefined);
   assert.equal(f.tabs.children.find((node) => node.className.includes("active"))!.dataset.tab, "agents");
-  click(find(f.root, "添加一项")!);
-  assert.ok(all(f.root).find((node) => node.className === "settings-agent-subpage"));
+  click(find(f.root, "＋ 添加 Agent")!);
+  assert.ok(all(f.root).find((node) => node.className === "settings-subpage"));
 });
 
-test("settings groups have no outer card or duplicate page title", async () => {
+test("settings groups have no outer card, duplicate page title, or redundant standing intro", async () => {
   const f = fixture(() => "hub-worker", loadedBridge());
   await withDocumentAcross(async () => {
     f.view.init();
@@ -415,11 +425,88 @@ test("settings groups have no outer card or duplicate page title", async () => {
       all(f.root).some((node) => node.tagName === "h2" && node.textContent === "设置"),
       false,
     );
-    assert.ok(f.root.textContent.includes("配置在别处被改动时"));
+    assert.equal(f.root.textContent.includes("配置在别处被改动时"), false);
   }
 });
 
-test("Agent subpages stay frameless and group identity separately from runtime fields", async () => {
+test("toolbar shows contextual add action on list tabs, rows wrap copy for grid alignment, and empty lists show empty state", async () => {
+  const emptyListBridge: SettingsBridge = {
+    settingsGet: async () => ({
+      version: 1,
+      ok: true,
+      data: { ...snapshot(), agents: [], sources: [], channels: [] },
+    }),
+    settingsPut: async () => ({ version: 1, ok: false, error: { code: "unavailable", message: "不可用" } }),
+  };
+  const loaded = fixture(() => "hub-worker", loadedBridge());
+  await withDocumentAcross(async () => {
+    loaded.view.init();
+    await flush();
+  });
+  const addButton = byId(loaded.root, "settings-add")!;
+  assert.ok(addButton);
+  assert.equal(addButton.hidden, false);
+  assert.equal(addButton.textContent, "＋ 添加 Agent");
+  // Row wraps title and metadata inside .entry-copy so .entry-actions aligns on the right column.
+  const row = all(loaded.root).find((node) => node.className.split(" ").includes("settings-row"))!;
+  assert.ok(row);
+  assert.deepEqual(
+    row.children.map((node) => node.className),
+    ["entry-copy", "entry-actions"],
+  );
+  assert.ok(row.textContent.includes("可编辑"));
+  // Switching to connection/general hides the contextual add button.
+  click(loaded.tabs.children.find((node) => node.dataset.tab === "sources")!);
+  assert.equal(addButton.hidden, false);
+  assert.equal(addButton.textContent, "＋ 添加来源");
+  click(loaded.tabs.children.find((node) => node.dataset.tab === "channels")!);
+  assert.equal(addButton.hidden, false);
+  assert.equal(addButton.textContent, "＋ 添加通知通道");
+  click(loaded.tabs.children.find((node) => node.dataset.tab === "connection")!);
+  assert.equal(addButton.hidden, true);
+  click(loaded.tabs.children.find((node) => node.dataset.tab === "general")!);
+  assert.equal(addButton.hidden, true);
+
+  // Empty lists show a dashed empty state with an inline add button.
+  const empty = fixture(() => "hub-worker", emptyListBridge);
+  await withDocumentAcross(async () => {
+    empty.view.init();
+    await flush();
+  });
+  const emptyBox = all(empty.root).find((node) => node.className.split(" ").includes("settings-empty"))!;
+  assert.ok(emptyBox);
+  assert.ok(emptyBox.textContent.includes("暂无 Agent"));
+  assert.ok(find(emptyBox, "＋ 添加 Agent"));
+});
+
+test("read error shows a retry button and clicking it reloads configuration", async () => {
+  let reads = 0;
+  const f = fixture(() => "hub-worker", {
+    settingsGet: async () => {
+      reads++;
+      return reads === 1
+        ? { version: 1, ok: false, error: { code: "error", message: "无法读取本机设置或确认连接配置，请检查后再试。" } }
+        : { version: 1, ok: true, data: snapshot() };
+    },
+    settingsPut: async () => ({ version: 1, ok: false, error: { code: "unavailable", message: "不可用" } }),
+  });
+  await withDocumentAcross(async () => {
+    f.view.init();
+    await flush();
+  });
+  const retry = byId(f.root, "settings-retry")!;
+  assert.ok(retry);
+  assert.equal(retry.hidden, false);
+  await withDocumentAcross(async () => {
+    retry.click();
+    await flush();
+  });
+  assert.equal(reads, 2);
+  assert.equal(retry.hidden, true);
+  assert.ok(all(f.root).some((node) => node.textContent === "甲"));
+});
+
+test("Agent subpages stay frameless, separate core fields from collapsible advanced options, and open advanced for command", async () => {
   const f = fixture(() => "hub-worker", loadedBridge());
   await withDocumentAcross(async () => {
     f.view.init();
@@ -427,17 +514,17 @@ test("Agent subpages stay frameless and group identity separately from runtime f
   });
   for (const [action, index, title] of [
     ["编辑", 0, "编辑 Agent"],
-    ["添加一项", 1, "添加 Agent"],
+    ["＋ 添加 Agent", 1, "添加 Agent"],
   ] as const) {
     click(find(f.root, action)!);
-    assert.equal(f.root.className, "settings-panel settings-agent-subpage-panel");
-    const page = all(f.root).find((node) => node.className === "settings-agent-subpage")!;
+    assert.equal(f.root.className, "settings-panel settings-subpage-panel");
+    const page = all(f.root).find((node) => node.className === "settings-subpage")!;
     const header = page.querySelector(".tasks-detail-head")!;
     assert.deepEqual(
       header.children.map((node) => node.textContent),
       ["← 返回", title],
     );
-    const groups = page.children.filter((node) => node.className === "settings-agent-group");
+    const groups = page.children.filter((node) => node.className === "settings-form-group");
     assert.deepEqual(
       groups.map((group) => group.children[0].textContent),
       ["基本信息", "运行配置"],
@@ -452,34 +539,59 @@ test("Agent subpages stay frameless and group identity separately from runtime f
       all(groups[1])
         .filter((node) => node.id)
         .map((node) => node.id),
-      ["worker", "use", "access", "model", "effort", "command", "timeout"].map(
-        (key) => `settings-agents-${index}-${key}`,
-      ),
+      ["worker", "use", "access"].map((key) => `settings-agents-${index}-${key}`),
     );
+    const advanced = page.children.find((node) => node.tagName === "details")!;
+    assert.ok(advanced);
+    assert.equal(advanced.open, false);
+    assert.deepEqual(
+      all(advanced)
+        .filter((node) => node.id)
+        .map((node) => node.id),
+      ["model", "effort", "timeout", "command"].map((key) => `settings-agents-${index}-${key}`),
+    );
+    // Switching use to "command" automatically reveals advanced options so command is visible.
+    type(byId(f.root, `settings-agents-${index}-use`)!, "command");
+    assert.equal(advanced.open, true);
     click(find(page, "← 返回")!);
     assert.equal(f.root.className, "settings-panel");
   }
 });
 
-test("source and channel editors keep their original inline disclosure shape", async () => {
-  const f = fixture(() => "hub-worker", loadedBridge());
+test("source and channel editors share the unified frameless subpage paradigm", async () => {
+  const r = recordingBridge();
+  const f = fixture(() => "hub-worker", r.bridge);
   await withDocumentAcross(async () => {
     f.view.init();
     await flush();
   });
-  for (const section of ["sources", "channels"]) {
+  for (const [section, editTitle, addButtonText, addTitle] of [
+    ["sources", "编辑来源", "＋ 添加来源", "添加来源"],
+    ["channels", "编辑通知通道", "＋ 添加通知通道", "添加通知通道"],
+  ] as const) {
     click(f.tabs.children.find((node) => node.dataset.tab === section)!);
     click(find(f.root, "编辑")!);
+    assert.equal(f.root.className, "settings-panel settings-subpage-panel");
+    const page = all(f.root).find((node) => node.className === "settings-subpage")!;
+    assert.ok(page);
+    assert.equal(byId(page, "settings-editor-title")!.textContent, editTitle);
+    assert.ok(byId(page, `settings-${section}-0-name`));
+    click(find(page, "← 返回")!);
     assert.equal(f.root.className, "settings-panel");
-    const details = all(f.root).find((node) => node.tagName === "details")!;
-    assert.ok(details);
-    assert.ok(byId(details, `settings-${section}-0-name`));
-    assert.equal(
-      all(f.root).some((node) => node.className === "settings-agent-group"),
-      false,
-    );
-    click(find(f.root, "取消")!);
+    click(find(f.root, addButtonText)!);
+    assert.equal(byId(f.root, "settings-editor-title")!.textContent, addTitle);
+    click(find(f.root, "← 返回")!);
   }
+  // Channel answerers can be added as chips or saved directly from pending input text.
+  click(f.tabs.children.find((node) => node.dataset.tab === "channels")!);
+  click(find(f.root, "编辑")!);
+  type(byId(f.root, "settings-channels-0-answerers")!, "ou_a, ou_b");
+  await withDocumentAcross(async () => {
+    find(f.root, "保存")!.click();
+    await flush();
+  });
+  assert.equal(r.puts.length, 1);
+  assert.deepEqual(r.puts[0].value, [{ id: "chat", name: "聊天", answerers: ["ou_a", "ou_b"] }]);
 });
 
 test("Agent save barriers retain the grouped draft and never resend or return", async () => {
@@ -512,12 +624,13 @@ test("Agent save barriers retain the grouped draft and never resend or return", 
       find(f.root, "← 返回")!.click();
       assert.equal(puts, 1);
       assert.ok(byId(f.root, name.id));
-      assert.ok(find(f.root, "丢弃草稿并重新读取"));
+      const discard = byId(f.root, "settings-discard")!;
+      assert.equal(discard.hidden, false);
     });
   }
 });
 
-test("an invalid row is named in the form, never sent", async () => {
+test("an invalid row shows a specific Chinese field message in the form, never sent", async () => {
   const r = recordingBridge();
   const f = fixture(() => "hub-worker", r.bridge);
   await withDocumentAcross(async () => {
@@ -527,10 +640,112 @@ test("an invalid row is named in the form, never sent", async () => {
   click(find(f.root, "编辑")!);
   type(byId(f.root, "settings-agents-0-id")!, "A");
   withDocument(() => find(f.root, "保存")!.click());
-  // The contract refused the row at the keystroke's save; the form stays with the typed values.
+  // The form catches invalid id with a clear human-readable message before touching the bridge.
   assert.equal(r.puts.length, 0);
   assert.ok(byId(f.root, "settings-agents-0-id"), "the form is still open");
   const error = all(f.root).find((node) => node.className.split(" ").includes("setup-error") && !node.hidden);
   assert.ok(error, "the refusal is on screen");
-  assert.equal(error!.textContent, "设置数据无效");
+  assert.match(error!.textContent, /标识.*小写字母/);
+});
+
+test("general tab uses segmented theme control and direct-manipulation global settings without extra edit step", async () => {
+  const chosenThemes: string[] = [];
+  let currentTheme: "system" | "light" | "dark" = "system";
+  const r = recordingBridge();
+  const host = new TestElement("main");
+  let view!: ReturnType<typeof mountSettingsView>;
+  withDocument(() => {
+    view = mountSettingsView(createRendererSettings(r.bridge), {
+      role: () => "hub-worker",
+      legacyConfig: () => false,
+      theme: () => currentTheme,
+      setTheme: (next) => {
+        currentTheme = next;
+        chosenThemes.push(next);
+      },
+      openSetup: () => {},
+    });
+  });
+  const root = view.root as unknown as TestElement;
+  host.append(root);
+  const tabs = all(root).find((node) => node.className.split(" ").includes("settings-tabs"))!;
+  await withDocumentAcross(async () => {
+    view.init();
+    await flush();
+  });
+
+  click(tabs.children.find((node) => node.dataset.tab === "general")!);
+  // Theme uses a 3-way segmented control with zero redundant hint text.
+  assert.equal(root.textContent.includes("跟随系统，或固定为浅色、深色"), false);
+  const darkButton = find(root, "深色")!;
+  assert.ok(darkButton);
+  assert.equal(find(root, "跟随系统")!.attributes.get("aria-pressed"), "true");
+  click(darkButton);
+  assert.deepEqual(chosenThemes, ["dark"]);
+  assert.equal(darkButton.attributes.get("aria-pressed"), "true");
+
+  // Timezone and askFirst are directly editable without clicking an extra "编辑" button.
+  assert.equal(find(root, "编辑"), undefined);
+  const tzInput = byId(root, "settings-timezone")!;
+  const askInput = byId(root, "settings-ask-first")!;
+  const generalActions = byId(root, "settings-general-actions")!;
+  assert.ok(tzInput);
+  assert.ok(askInput);
+  assert.equal(generalActions.hidden, true);
+  assert.equal(tzInput.value, "Asia/Shanghai");
+
+  // Typing immediately opens the draft without replacing the focused input node and reveals save/cancel.
+  type(tzInput, "UTC");
+  assert.equal(byId(root, "settings-timezone"), tzInput);
+  assert.equal(generalActions.hidden, false);
+  type(askInput, "删数据 停服");
+
+  await withDocumentAcross(async () => {
+    find(root, "保存")!.click();
+    await flush();
+  });
+  assert.equal(r.puts.length, 1);
+  assert.equal(r.puts[0].section, "settings");
+  assert.deepEqual(r.puts[0].value, { timezone: "UTC", askFirst: ["删数据", "停服"] });
+  assert.equal(byId(root, "settings-general-actions")!.hidden, true);
+});
+
+test("general tab hides hub settings for a pure worker without hub snapshot", () => {
+  const f = fixture(() => "worker");
+  click(f.tabs.children.find((node) => node.dataset.tab === "general")!);
+  assert.ok(find(f.root, "跟随系统"));
+  assert.equal(byId(f.root, "settings-timezone"), undefined);
+  assert.equal(f.root.textContent.includes("尚未读取到本机配置"), false);
+});
+
+test("connection tab renders structured role badge and scannable key commands without filler prose", () => {
+  let setupOpened = 0;
+  const host = new TestElement("main");
+  let view!: ReturnType<typeof mountSettingsView>;
+  withDocument(() => {
+    view = mountSettingsView(createRendererSettings(emptyBridge), {
+      role: () => "hub-worker",
+      legacyConfig: () => false,
+      theme: () => "system",
+      setTheme: () => {},
+      openSetup: () => {
+        setupOpened++;
+      },
+    });
+  });
+  const root = view.root as unknown as TestElement;
+  host.append(root);
+  const tabs = all(root).find((node) => node.className.split(" ").includes("settings-tabs"))!;
+  click(tabs.children.find((node) => node.dataset.tab === "connection")!);
+  assert.ok(root.textContent.includes("中台＋执行机"));
+  assert.equal(root.textContent.includes("可以直接修改上方的配置"), false);
+  const codes = all(root)
+    .filter((node) => node.tagName === "code")
+    .map((node) => node.textContent);
+  assert.equal(codes.length, 3);
+  assert.ok(codes.some((line) => line.includes("agent-autoloop key new")));
+  assert.ok(codes.some((line) => line.includes("agent-autoloop key list")));
+  assert.ok(codes.some((line) => line.includes("agent-autoloop key remove")));
+  click(find(root, "查看本机配置状态")!);
+  assert.equal(setupOpened, 1);
 });

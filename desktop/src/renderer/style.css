@@ -3118,24 +3118,35 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
   .sidebar nav button.active,
   .new-task-button.active,
   .settings-tab.active,
+  .settings-segmented button.active,
   .task-detail-tabs button[aria-pressed="true"],
   .task-title-route-bar:focus-within,
   .task-editor-box:focus-within {
     outline: 2px solid Highlight;
   }
 }
-/* The settings page: the groups are horizontal pills in the sidebar's activation language, and
-   only the body swaps. The row states its own direction — never again inherited from a nav
-   default outside the page. */
+/* The settings page: toolbar pairs horizontal pill tabs with the active tab's primary action,
+   and only the body swaps. The row states its own direction — never inherited from sidebar nav. */
+.settings-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+}
 .settings-tabs {
   display: flex;
   flex-direction: row;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  margin-top: 16px;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 10px;
+}
+.settings-add-button {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
 }
 .settings-tab {
   font: inherit;
@@ -3145,6 +3156,10 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
   border: 1px solid transparent;
   border-radius: 999px;
   padding: 5px 12px;
+}
+.settings-tab:hover:not(:disabled):not(.active) {
+  color: var(--text);
+  background: var(--panel2);
 }
 .settings-tab.active {
   color: var(--text);
@@ -3158,11 +3173,42 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
 .settings-body {
   margin-top: 16px;
 }
-/* Agent editors share the dispatch workspace without changing the other settings tabs. */
-main:has(.settings-agent-subpage-panel) {
+.settings-recovery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.settings-row {
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.settings-row:hover {
+  background: color-mix(in srgb, var(--panel2) 55%, var(--panel));
+}
+.settings-id-tag {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--panel2);
+  border: 1px solid var(--soft);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+.settings-empty {
+  padding: 40px 24px;
+}
+.settings-empty h3 {
+  margin: 0 0 14px;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--muted);
+}
+/* Resource editors (Agent, Source, Channel) share one unified frameless subpage workspace. */
+main:has(.settings-subpage-panel) {
   padding: 14px 20px 16px;
 }
-.settings-agent-subpage-panel {
+.settings-subpage-panel {
   width: 100%;
   min-width: 0;
   max-width: none;
@@ -3171,44 +3217,316 @@ main:has(.settings-agent-subpage-panel) {
   border: 0;
   background: transparent;
 }
-.settings-agent-subpage-panel .settings-body {
+.settings-subpage-panel .settings-body {
   margin-top: 0;
 }
-.settings-agent-subpage {
+.settings-subpage {
   min-width: 0;
 }
-.settings-agent-group {
+.settings-form-group {
   min-width: 0;
-  padding: 14px;
+  padding: 16px 18px;
   margin-bottom: 14px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 9px;
+  background: var(--panel);
+}
+.settings-form-group h3 {
+  margin: 0 0 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.settings-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+.settings-form-grid .setup-field {
+  align-content: start;
+}
+.settings-form-grid .setup-field > span,
+.settings-chip-field > label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.settings-form-grid .setup-field input,
+.settings-form-grid .setup-field select,
+.settings-form-grid .setup-field textarea,
+.settings-chip-input-row input {
+  width: 100%;
+  font: inherit;
+  color: var(--text);
   background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
 }
-.settings-agent-group h3 {
-  margin: 0 0 12px;
-  font-size: 15px;
-  font-weight: 650;
+.settings-form-grid .setup-field textarea {
+  resize: vertical;
+  min-height: 64px;
 }
-.settings-agent-group .setup-field + .setup-field {
-  margin-top: 12px;
+.settings-mono-input {
+  font-family: var(--mono);
+}
+.settings-span2 {
+  grid-column: 1 / -1;
+}
+.settings-advanced {
+  min-width: 0;
+  padding: 14px 18px;
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel);
+}
+.settings-advanced > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  list-style: none;
+}
+.settings-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+.settings-advanced > summary::before {
+  content: "▸";
+  color: var(--muted);
+  font-size: 11px;
+  transition: transform 0.12s ease;
+}
+.settings-advanced[open] > summary::before {
+  transform: rotate(90deg);
+}
+.settings-advanced[open] > summary {
+  margin-bottom: 14px;
+}
+.settings-advanced-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel2);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.settings-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.settings-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel2);
+  font-size: 12px;
+  color: var(--text);
+}
+.settings-chip-remove {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 2px;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.settings-chip-remove:hover {
+  color: var(--red);
+}
+.settings-chip-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-chip-input-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.settings-chip-add {
+  flex: none;
+  padding: 7px 12px;
+  font-size: 12px;
+}
+.settings-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--soft);
+  border-radius: 6px;
+  background: var(--panel2);
+  cursor: pointer;
+}
+.settings-switch-row > span {
+  font-size: 13px;
+  color: var(--text);
+}
+.settings-switch-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+}
+.settings-form-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  margin-top: 18px;
+}
+.settings-form-primary,
+.settings-form-danger {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.settings-delete-button {
+  color: var(--red);
+  border-color: transparent;
+  background: transparent;
+}
+.settings-delete-button:hover:not(:disabled) {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 8%, transparent);
 }
 .settings-body .entry-list {
   margin-top: 0;
 }
-.settings-item > summary {
-  cursor: pointer;
+.settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.settings-inline-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+}
+.settings-inline-label {
+  font-size: 13px;
+  color: var(--text);
+}
+.settings-segmented {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel2);
+  gap: 2px;
+}
+.settings-segmented button {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 5px 12px;
+}
+.settings-segmented button:hover:not(.active):not(:disabled) {
+  color: var(--text);
+}
+.settings-segmented button.active {
+  background: var(--panel);
+  border-color: var(--border);
+  color: var(--text);
   font-weight: 600;
 }
-.settings-item .setup-field {
+.settings-general-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--soft);
+}
+.settings-dirty-hint {
+  font-size: 12px;
+  margin-right: auto;
+}
+.settings-conn-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+.settings-conn-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.settings-conn-title h3 {
+  margin: 0;
+}
+.settings-role-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel2);
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--text);
+}
+.settings-conn-note,
+.settings-cred-note {
   margin-top: 12px;
+  font-size: 12px;
 }
-.settings-theme {
-  margin-bottom: 14px;
+.settings-cmd-list {
+  margin: 12px 0 0;
+  border: 1px solid var(--soft);
+  border-radius: 7px;
+  background: var(--panel2);
+  overflow: hidden;
 }
-#settings-discard {
-  display: inline-block;
-  margin-top: 10px;
+.settings-cmd-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--soft);
+}
+.settings-cmd-row:last-child {
+  border-bottom: 0;
+}
+.settings-cmd-row dt {
+  font-size: 12px;
+  color: var(--muted);
+}
+.settings-cmd-row dd {
+  margin: 0;
+  min-width: 0;
+}
+.settings-cmd-row code {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}
+@media (max-width: 650px) {
+  .settings-form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 /* The confirmed task detail has its own palette; shared list tokens must not tint its records. */
 .business-tasks-panel .tasks-detail-head > .business-header-description { margin-top: 22px; }

@@ -645,12 +645,13 @@ test("every page's scope note gets its own spacing, not only the rules panel's",
   assert.match(css, /\.panel > \.rules-intro\s*\{/);
   // Two notes in a row are separate facts, so they must not collapse into one block.
   assert.match(css, /\.rules-intro \+ \.rules-intro\s*\{[^}]*margin-top:\s*\d+px/);
-  // The views that pair a title with a note really do use these containers. The automation page
-  // left this pattern when it shed its standing instruction line; its boundary moved to the page
-  // head, so it must not quietly grow a second note again either.
-  for (const view of ["tasks-view", "settings-view", "workers-view", "local-reading-view", "local-summary-view"])
+  // The views that pair a title with a note really do use these containers. The automation and
+  // settings pages left this pattern when they shed their standing instruction lines, so they must
+  // not quietly grow redundant intro notes again.
+  for (const view of ["tasks-view", "workers-view", "local-reading-view", "local-summary-view"])
     assert.match(read(`../src/renderer/${view}.ts`), /rules-intro/);
   assert.doesNotMatch(read("../src/renderer/rules-cas-view.ts"), /rules-intro/);
+  assert.doesNotMatch(read("../src/renderer/settings-view.ts"), /rules-intro/);
 });
 
 test("first-run reads answer from files before the runtime exists", () => {

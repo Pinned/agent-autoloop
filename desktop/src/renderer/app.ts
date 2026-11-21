@@ -464,8 +464,7 @@ function report(error: unknown) {
 function applyTheme(state: ThemeState) {
   theme = state;
   document.documentElement.dataset.theme = state.effective;
-  const select = document.querySelector<HTMLSelectElement>("#theme");
-  if (select) select.value = state.preference;
+  if (currentPage === "settings") settingsPage?.update();
 }
 // The settings page is app-level too: a draft survives navigation, and a refused or unconfirmed
 // save stays visible until the owner re-reads and reviews it.
@@ -483,11 +482,11 @@ settingsPage = mountSettingsView(settings, {
   // A stopped machine still knows what it was set up as; the launch record stands in for the
   // runtime until it reports a role of its own.
   role: () => currentRole(),
-  agentEditorChanged: (open) => {
+  editorChanged: (open) => {
     if (currentPage !== "settings") return;
     const head = main.querySelector<HTMLElement>(".page-head");
     if (head) head.hidden = open;
-    main.setAttribute("aria-labelledby", open ? "settings-agent-title" : "page-title");
+    main.setAttribute("aria-labelledby", open ? "settings-editor-title" : "page-title");
   },
   legacyConfig: () => setup.launch?.completion === "legacy",
   theme: () => theme.preference,
