@@ -28,6 +28,9 @@ node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 24 ? 0 : 1)
 mkdir -p -m 700 "$ROOT"
 chmod 700 "$ROOT"
 if [ -d "$APP/.git" ]; then git -C "$APP" pull --ff-only --quiet; else git clone --quiet --depth 1 -- "$REPO" "$APP"; fi
+if [ -f "$APP/plugins/feishu/package.json" ] && command -v npm >/dev/null 2>&1; then
+  npm install --prefix "$APP/plugins/feishu" --omit=dev --no-audit --no-fund >/dev/null 2>&1 || true
+fi
 
 # Only a folder that's on PATH makes `agent-autoloop` work, and an agent-autoloop that isn't this one is someone else's to keep.
 place_link() {

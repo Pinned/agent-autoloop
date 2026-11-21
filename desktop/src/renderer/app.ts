@@ -588,6 +588,13 @@ settingsPage = mountSettingsView(settings, {
   // A stopped machine still knows what it was set up as; the launch record stands in for the
   // runtime until it reports a role of its own.
   role: () => currentRole(),
+  channelBridge: {
+    get: () => window.desktop.channelConfigGet(),
+    save: (input) => window.desktop.channelConfigSave(input),
+    remove: (input) => window.desktop.channelConfigRemove(input),
+    bindFeishu: (input) => window.desktop.channelFeishuBind(input),
+    test: (input) => window.desktop.channelTest(input),
+  },
   editorChanged: (open) => {
     if (currentPage !== "settings") return;
     const head = main.querySelector<HTMLElement>(".page-head");

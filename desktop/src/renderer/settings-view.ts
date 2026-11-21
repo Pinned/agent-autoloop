@@ -14,6 +14,17 @@ import {
   type DesktopSettingsSource,
 } from "../../../host/desktop-settings-contract.ts";
 import { createRendererSettings } from "./settings-controller.ts";
+import type { ChannelPreset, LocalChannelConfigSummary } from "../../../host/desktop-channel-contract.ts";
+import {
+  buildChannelSavePayload,
+  channelStatusLabel,
+  feishuChecklistNode,
+  inferPresetFromId,
+  isLocalhostUrl,
+  presetLabel,
+  renderPresetPicker,
+  type ChannelBridge,
+} from "./channel-editor.ts";
 
 type Settings = ReturnType<typeof createRendererSettings>;
 
@@ -26,6 +37,7 @@ export type SettingsViewOptions = {
   setTheme(theme: Theme): void;
   openSetup(): void;
   editorChanged?(open: boolean): void;
+  channelBridge?: ChannelBridge;
 };
 
 type Tab = "agents" | "sources" | "channels" | "connection" | "general";
@@ -150,6 +162,32 @@ export function mountSettingsView(
 } {
   let tab: Tab = "agents";
   let editing: Editing | null = null;
+  let localChannels = new Map<string, LocalChannelConfigSummary>();
+  let localPublicUrl: string | undefined;
+  let localChannelUnavailable: string | null = null;
+  let localChannelLoading = false;
+
+  function refreshLocalChannels() {
+    if (!options.channelBridge || localChannelLoading) return;
+    localChannelLoading = true;
+    void Promise.resolve(options.channelBridge.get())
+      .then((res) => {
+        if (res.ok) {
+          localChannels = new Map(res.data.channels.map((ch) => [ch.id, ch]));
+          localPublicUrl = res.data.publicUrl;
+          localChannelUnavailable = null;
+        } else {
+          localChannelUnavailable = res.error.message;
+        }
+      })
+      .catch(() => {
+        localChannelUnavailable = "无法读取本机通道配置";
+      })
+      .finally(() => {
+        localChannelLoading = false;
+        if (tab === "channels" && !editing) renderTab();
+      });
+  }
   // The current tab's interactive buttons, so a state change (a save in flight, a review barrier)
   // can lock them without rebuilding the form and losing the typed values. Three kinds: a list
   // entry point (locked while any session is open), a form action (locked only by real work, not
@@ -380,11 +418,27 @@ export function mountSettingsView(
     if (!draft || draft.section !== section) return;
     const entries = draft.value as unknown as readonly Record<string, unknown>[];
     const fresh = rowIndex === null || rowIndex >= entries.length;
-    const row = fresh
+    const row: Row = fresh
       ? section === "agents"
         ? { id: "", name: "", worker: "", use: "", access: "edit" }
-        : { id: "", name: "" }
+        : section === "channels" && options.channelBridge
+          ? { id: "", name: "", _presetChosen: false }
+          : { id: "", name: "" }
       : rowOf(entries[rowIndex]);
+    if (!fresh && section === "channels" && options.channelBridge) {
+      const id = String(row.id ?? "");
+      const local = localChannels.get(id);
+      const preset = local?.preset ?? inferPresetFromId(id);
+      row._presetChosen = true;
+      row._preset = preset;
+      row.appId = local?.appId ?? "";
+      row.appSecret = "";
+      row.user = local?.user ?? "";
+      row.domain = local?.domain ?? "feishu";
+      row.url = local?.url ?? "";
+      row.body = local?.body ?? "";
+      row._hasSecret = Boolean(local?.hasSecret);
+    }
     editing = { section, rowIndex: fresh ? entries.length : rowIndex!, row, fresh };
     renderTab();
   }
@@ -527,6 +581,22 @@ export function mountSettingsView(
     header.append(back, heading);
     container.append(header);
 
+    if (session.section === "channels" && options.channelBridge && row._presetChosen !== true) {
+      const existingIds = draftEntries().map((item) => String(item.id ?? ""));
+      container.append(
+        renderPresetPicker(existingIds, (meta, suggestedId) => {
+          row._presetChosen = true;
+          row._preset = meta.preset;
+          row.id = suggestedId;
+          row.name = meta.defaultName;
+          row.links = Boolean(meta.defaultLinks);
+          row.domain = "feishu";
+          renderTab();
+        }),
+      );
+      return container;
+    }
+
     const idPlaceholders: Record<ListSection, string> = {
       agents: "如 claude-main",
       sources: "如 github、shop",
@@ -624,6 +694,219 @@ export function mountSettingsView(
       adapterInput.addEventListener("input", set("adapter"));
       basicFields.push(field("适配器", adapterInput, true));
       container.append(formCard("基本信息", basicFields));
+    } else if (options.channelBridge) {
+      const preset = (String(row._preset || "") as ChannelPreset) || inferPresetFromId(String(row.id ?? ""));
+      if (localChannelUnavailable) {
+        const notice = document.createElement("p");
+        notice.className = "muted";
+        notice.textContent = `${localChannelUnavailable}（当前仅保存名称与应答人等规则设置）`;
+        container.append(notice);
+      }
+
+      if (preset === "desktop") {
+        container.append(formCard("基本信息", [field("名称", nameInput), field("标识", idInput)]));
+        const hint = document.createElement("p");
+        hint.className = "muted";
+        hint.textContent = "会在本机系统右上角弹出通知提醒，无需填写外部账号。保存后会自动生成密钥并启用。";
+        container.append(formCard("通知说明", [hint], false));
+      } else if (preset === "feishu") {
+        container.append(feishuChecklistNode());
+        const appIdInput = input(`${prefix}-appid`, String(row.appId ?? ""), "如 cli_a1b2c3d4e5f6");
+        appIdInput.className = "settings-mono-input";
+        appIdInput.addEventListener("input", set("appId"));
+
+        const secretInput = input(
+          `${prefix}-appsecret`,
+          String(row.appSecret ?? ""),
+          row._hasSecret ? "已保存（留空表示不修改）" : "输入飞书 App Secret",
+        );
+        secretInput.type = "password";
+        secretInput.className = "settings-mono-input";
+        secretInput.addEventListener("input", set("appSecret"));
+        const toggleSecret = button("显示");
+        toggleSecret.addEventListener("click", () => {
+          const masked = secretInput.type === "password";
+          secretInput.type = masked ? "text" : "password";
+          toggleSecret.textContent = masked ? "隐藏" : "显示";
+        });
+        const secretWrap = document.createElement("div");
+        secretWrap.className = "channel-inline-row";
+        secretWrap.append(secretInput, toggleSecret);
+
+        const userInput = input(`${prefix}-user`, String(row.user ?? ""), "如 ou_xxx（或点击右侧配对获取）");
+        userInput.className = "settings-mono-input";
+        userInput.addEventListener("input", set("user"));
+
+        const pairingBox = document.createElement("div");
+        pairingBox.className = "channel-pairing-box settings-span2";
+        pairingBox.hidden = true;
+        const pairingHint = document.createElement("span");
+        pairingHint.className = "muted";
+        pairingHint.textContent = "请在飞书里给这个机器人发送下面 6 位配对码（60 秒内有效）：";
+        const pairingRow = document.createElement("div");
+        pairingRow.className = "channel-pairing-row";
+        const pairingDigits = document.createElement("code");
+        pairingDigits.className = "channel-pairing-code";
+        const copyCodeBtn = button("复制配对码");
+        copyCodeBtn.addEventListener("click", () => {
+          const code = pairingDigits.textContent ?? "";
+          if (code && navigator.clipboard?.writeText) {
+            void navigator.clipboard.writeText(code).then(() => {
+              copyCodeBtn.textContent = "已复制";
+              setTimeout(() => (copyCodeBtn.textContent = "复制配对码"), 1500);
+            });
+          }
+        });
+        pairingRow.append(pairingDigits, copyCodeBtn);
+        pairingBox.append(pairingHint, pairingRow);
+
+        const bindStatus = document.createElement("p");
+        bindStatus.className = "channel-test-status settings-span2";
+        bindStatus.hidden = true;
+
+        const bindBtn = button("配对获取 Open ID");
+        bindBtn.disabled = Boolean(localChannelUnavailable);
+        bindBtn.addEventListener("click", () => {
+          if (!options.channelBridge) return;
+          const bytes = new Uint32Array(1);
+          crypto.getRandomValues(bytes);
+          const pairingCode = String(100000 + (bytes[0] % 900000));
+          pairingDigits.textContent = pairingCode;
+          pairingBox.hidden = false;
+          bindBtn.disabled = true;
+          bindBtn.textContent = "等待配对…";
+          bindStatus.className = "channel-test-status settings-span2";
+          bindStatus.textContent = "正在等待飞书机器人收到配对码…";
+          bindStatus.hidden = false;
+          void options.channelBridge
+            .bindFeishu({
+              id: String(row.id ?? "").trim() || undefined,
+              appId: String(row.appId ?? "").trim(),
+              appSecret: String(row.appSecret ?? "").trim() || undefined,
+              domain: row.domain === "lark" ? "lark" : "feishu",
+              pairingCode,
+            })
+            .then((res) => {
+              if (res.ok) {
+                pairingBox.hidden = true;
+                row.user = res.openId;
+                userInput.value = res.openId;
+                if (!String(row.answerers ?? "").trim()) {
+                  row.answerers = res.openId;
+                }
+                bindStatus.className = "channel-test-status ok settings-span2";
+                bindStatus.textContent = `配对成功，已自动绑定：${res.openId}`;
+              } else {
+                bindStatus.className = "channel-test-status error settings-span2";
+                bindStatus.textContent = res.message;
+              }
+            })
+            .catch((err) => {
+              bindStatus.className = "channel-test-status error settings-span2";
+              bindStatus.textContent = err instanceof Error ? err.message : "配对失败";
+            })
+            .finally(() => {
+              bindBtn.disabled = Boolean(localChannelUnavailable);
+              bindBtn.textContent = "配对获取 Open ID";
+            });
+        });
+        const userWrap = document.createElement("div");
+        userWrap.className = "channel-inline-row";
+        userWrap.append(userInput, bindBtn);
+
+        container.append(formCard("基本信息", basicFields));
+        container.append(
+          formCard("飞书应用凭据", [
+            field("App ID", appIdInput),
+            field("App Secret", secretWrap),
+            field("接收人 Open ID", userWrap, true),
+            pairingBox,
+            bindStatus,
+          ]),
+        );
+
+        const answerersField = chipField({
+          id: `${prefix}-answerers`,
+          label: "允许回答的人（默认包含接收人）",
+          placeholder: "输入 Open ID 后回车添加",
+          initial: String(row.answerers ?? ""),
+          onChange: (serialized) => {
+            row.answerers = serialized;
+          },
+        });
+        const domainSelect = select(`${prefix}-domain`, ["feishu", "lark"], String(row.domain || "feishu"), {
+          feishu: "飞书国内版 (open.feishu.cn)",
+          lark: "Lark 国际版 (open.larksuite.com)",
+        });
+        domainSelect.addEventListener("change", () => (row.domain = domainSelect.value));
+        const advanced = document.createElement("details");
+        advanced.className = "settings-advanced";
+        const advSummary = document.createElement("summary");
+        advSummary.textContent = "更多选项（权限与国际版）";
+        const advBody = document.createElement("div");
+        advBody.className = "settings-form-grid";
+        advBody.append(answerersField, field("服务区域", domainSelect));
+        advanced.append(advSummary, advBody);
+        container.append(advanced);
+      } else if (
+        preset === "dingtalk" ||
+        preset === "wecom" ||
+        preset === "slack" ||
+        preset === "discord" ||
+        preset === "webhook"
+      ) {
+        container.append(formCard("基本信息", basicFields));
+        const urlInput = input(`${prefix}-url`, String(row.url ?? ""), "https://...");
+        urlInput.className = "settings-mono-input";
+        urlInput.addEventListener("input", set("url"));
+
+        const linksRow = document.createElement("label");
+        linksRow.className = "settings-switch-row settings-span2";
+        const linksLabel = document.createElement("span");
+        linksLabel.textContent = "发送卡片回答链接（群机器人推荐开启）";
+        const links = checkbox(`${prefix}-links`, row.links === true);
+        links.addEventListener("change", () => (row.links = links.checked));
+        linksRow.append(linksLabel, links);
+
+        const webhookFields: HTMLElement[] = [field("Webhook 地址", urlInput, true), linksRow];
+        if (preset === "webhook") {
+          const bodyInput = textarea(
+            `${prefix}-body`,
+            String(row.body ?? ""),
+            '留空默认 {"text":"{text}"}，支持 {text} 占位符',
+          );
+          bodyInput.className = "settings-mono-input";
+          bodyInput.addEventListener("input", set("body"));
+          webhookFields.push(field("自定义 JSON 模板", bodyInput, true));
+        }
+        if (isLocalhostUrl(localPublicUrl)) {
+          const urlHint = document.createElement("p");
+          urlHint.className = "muted settings-span2";
+          urlHint.textContent =
+            "提示：当前仅本机可访问；如需在手机上点开卡片链接回答，请在 config.json 配置 hub.publicUrl。";
+          webhookFields.push(urlHint);
+        }
+        container.append(formCard(`${presetLabel(preset)}配置`, webhookFields));
+      } else {
+        container.append(formCard("基本信息", basicFields));
+        const answerersField = chipField({
+          id: `${prefix}-answerers`,
+          label: "应答人",
+          placeholder: "输入应答人后回车添加",
+          initial: String(row.answerers ?? ""),
+          onChange: (serialized) => {
+            row.answerers = serialized;
+          },
+        });
+        const linksRow = document.createElement("label");
+        linksRow.className = "settings-switch-row settings-span2";
+        const linksLabel = document.createElement("span");
+        linksLabel.textContent = "发送卡片链接";
+        const links = checkbox(`${prefix}-links`, row.links === true);
+        links.addEventListener("change", () => (row.links = links.checked));
+        linksRow.append(linksLabel, links);
+        container.append(formCard("通知配置", [answerersField, linksRow]));
+      }
     } else {
       container.append(formCard("基本信息", basicFields));
       const answerersField = chipField({
@@ -650,13 +933,53 @@ export function mountSettingsView(
     error.setAttribute("role", "alert");
     error.hidden = true;
 
+    const testStatus = document.createElement("p");
+    testStatus.className = "channel-test-status";
+    testStatus.hidden = true;
+
     const footer = document.createElement("div");
     footer.className = "settings-form-footer";
     const primaryActions = document.createElement("div");
     primaryActions.className = "settings-form-primary";
-    const save = button("保存", true);
+    const save = button(session.section === "channels" && options.channelBridge ? "保存并启用" : "保存", true);
     const cancel = button("取消");
     save.addEventListener("click", () => {
+      if (session.section === "channels" && options.channelBridge && !localChannelUnavailable) {
+        const preset = (String(row._preset || "") as ChannelPreset) || inferPresetFromId(String(row.id ?? ""));
+        if (preset === "feishu" && !String(row.answerers ?? "").trim() && String(row.user ?? "").trim()) {
+          row.answerers = String(row.user).trim();
+        }
+        try {
+          compose();
+        } catch (failure) {
+          error.textContent = failure instanceof Error ? failure.message : "设置内容无效";
+          error.hidden = false;
+          return;
+        }
+        error.hidden = true;
+        save.disabled = true;
+        save.textContent = "保存中…";
+        void options.channelBridge
+          .save(buildChannelSavePayload(preset, row))
+          .then((res) => {
+            if (!res.ok) {
+              error.textContent = res.error.message;
+              error.hidden = false;
+              save.disabled = false;
+              save.textContent = "保存并启用";
+              return;
+            }
+            localChannels.set(res.data.channel.id, res.data.channel);
+            if (commit(error, compose)) controller.save();
+          })
+          .catch((err) => {
+            error.textContent = err instanceof Error ? err.message : "保存通道配置失败";
+            error.hidden = false;
+            save.disabled = false;
+            save.textContent = "保存并启用";
+          });
+        return;
+      }
       if (!commit(error, compose)) return;
       controller.save();
     });
@@ -664,6 +987,43 @@ export function mountSettingsView(
     register(save, "act");
     register(cancel, "cancel");
     primaryActions.append(save, cancel);
+
+    if (session.section === "channels" && options.channelBridge && !localChannelUnavailable) {
+      const testBtn = button("发送测试通知");
+      testBtn.addEventListener("click", () => {
+        const preset = (String(row._preset || "") as ChannelPreset) || inferPresetFromId(String(row.id ?? ""));
+        const id = String(row.id ?? "").trim();
+        if (!id) {
+          testStatus.className = "channel-test-status error";
+          testStatus.textContent = "请先填写通道标识";
+          testStatus.hidden = false;
+          return;
+        }
+        testBtn.disabled = true;
+        testBtn.textContent = "发送中…";
+        testStatus.hidden = true;
+        const payload = buildChannelSavePayload(preset, row);
+        void options
+          .channelBridge!.test(payload)
+          .then((res) => {
+            testStatus.className = res.ok ? "channel-test-status ok" : "channel-test-status error";
+            testStatus.textContent = res.message;
+            testStatus.hidden = false;
+          })
+          .catch((err) => {
+            testStatus.className = "channel-test-status error";
+            testStatus.textContent = err instanceof Error ? err.message : "发送测试通知失败";
+            testStatus.hidden = false;
+          })
+          .finally(() => {
+            testBtn.disabled = false;
+            testBtn.textContent = "发送测试通知";
+          });
+      });
+      register(testBtn, "act");
+      primaryActions.append(testBtn);
+    }
+
     footer.append(primaryActions);
 
     if (!session.fresh) {
@@ -691,6 +1051,12 @@ export function mountSettingsView(
         }
         removeArmed = false;
         syncRemove();
+        if (session.section === "channels" && options.channelBridge && !localChannelUnavailable) {
+          const removedId = String(row.id ?? "").trim();
+          if (removedId) {
+            void options.channelBridge.remove({ id: removedId }).then(() => localChannels.delete(removedId));
+          }
+        }
         if (!commit(error, () => composeRemoval(session))) return;
         controller.save();
       });
@@ -700,7 +1066,7 @@ export function mountSettingsView(
       footer.append(dangerActions);
     }
 
-    container.append(error, footer);
+    container.append(error, testStatus, footer);
     return container;
   }
 
@@ -722,6 +1088,16 @@ export function mountSettingsView(
     id.className = "settings-id-tag";
     id.textContent = String(entry.id ?? "");
     head.append(name, id);
+    if (section === "channels" && options.channelBridge) {
+      const local = localChannels.get(String(entry.id ?? ""));
+      const statusPill = channelStatusLabel(local);
+      if (statusPill) {
+        const pill = document.createElement("span");
+        pill.className = `channel-status-pill ${statusPill.tone}`;
+        pill.textContent = statusPill.text;
+        head.append(pill);
+      }
+    }
     const parts: string[] = [];
     if ("worker" in entry) {
       parts.push(
@@ -1022,6 +1398,7 @@ export function mountSettingsView(
   }
 
   function renderTab() {
+    if (tab === "channels") refreshLocalChannels();
     buttons = [];
     themeButtons = [];
     generalActionsEl = null;

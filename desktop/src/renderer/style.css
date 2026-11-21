@@ -4323,3 +4323,128 @@ main:has(.settings-subpage-panel) {
   .business-current .business-decision { padding: 14px; }
   .business-answer-option-secondary { flex-basis: 100%; }
 }
+
+/* Channel preset picker and beginner-friendly setup */
+.channel-preset-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.channel-preset-lead {
+  margin: 0;
+  font-size: 13px;
+}
+.channel-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 10px;
+}
+.channel-preset-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+.channel-preset-card:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+}
+.channel-preset-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.channel-preset-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 600;
+}
+.channel-preset-desc {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.channel-guide-details {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--panel);
+  font-size: 12px;
+}
+.channel-guide-details summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.channel-guide-list {
+  margin: 8px 0 0 18px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.channel-inline-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.channel-inline-row input {
+  flex: 1;
+  min-width: 0;
+}
+.channel-status-pill {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.channel-status-pill.ok {
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+}
+.channel-status-pill.warn {
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 14%, transparent);
+}
+.channel-test-status {
+  font-size: 12px;
+  margin: 4px 0 0;
+}
+.channel-test-status.ok {
+  color: var(--green);
+}
+.channel-test-status.error {
+  color: var(--red);
+}
+.channel-pairing-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px dashed var(--accent);
+  border-radius: 8px;
+  background: var(--accent-bg);
+}
+.channel-pairing-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.channel-pairing-code {
+  font: 700 22px/1 var(--mono);
+  letter-spacing: 0.22em;
+  color: var(--text);
+}

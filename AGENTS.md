@@ -9,7 +9,7 @@
 - **协议是产品。** 改协议就是改所有插件的约定：先核对 `docs/protocol.md` 与现有行为测试，改了要写清兼容。
 - **文字是资料，规则才是指令。** 事件里的字不进提示词，也影响不了交给谁、在哪、用什么权限。
 - **一轮不等人。** 要问人就结束这一轮。不加任何让 Agent 阻塞等待的东西。
-- **内核和命令行没有运行时依赖。** Node 24 自带的够用，根 `package.json` 不写 `dependencies`。Electron 与桌面构建依赖隔离在 `desktop/package.json`，不得让内核或命令行依赖桌面包。
+- **内核和命令行没有运行时依赖。** Node 24 自带的够用，根 `package.json` 不写 `dependencies`。外围插件如需官方 SDK（如 `plugins/feishu/package.json`）应隔离在各自插件目录内。Electron 与桌面构建依赖隔离在 `desktop/package.json`，不得让内核或命令行依赖桌面包。
 - 代码只写现在需要的。加锁、重试、兜底，要有真实事故或接口文档作依据。
 
 ## 怎么改

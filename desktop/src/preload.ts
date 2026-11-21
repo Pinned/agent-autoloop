@@ -34,6 +34,11 @@ const bridge = Object.freeze<DesktopBridge>({
   rulesCasPut: (input) => ipcRenderer.invoke("desktop:rules:cas:put", input),
   settingsGet: () => ipcRenderer.invoke("desktop:settings:get"),
   settingsPut: (input) => ipcRenderer.invoke("desktop:settings:put", input),
+  channelConfigGet: () => ipcRenderer.invoke("desktop:channel-config:get"),
+  channelConfigSave: (input) => ipcRenderer.invoke("desktop:channel-config:save", input),
+  channelConfigRemove: (input) => ipcRenderer.invoke("desktop:channel-config:remove", input),
+  channelFeishuBind: (input) => ipcRenderer.invoke("desktop:channel-config:feishu-bind", input),
+  channelTest: (input) => ipcRenderer.invoke("desktop:channel-config:test", input),
   onRuntimeEvent: (listener) => {
     const receiving = (_event: unknown, payload: unknown) => {
       listener(payload as never);

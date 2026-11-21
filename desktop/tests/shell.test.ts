@@ -59,6 +59,11 @@ test("IPC exposes only themes, window actions, the six fixed setup operations, t
   assert.deepEqual(Object.values(channels).sort(), [
     "desktop:agent-history:read",
     "desktop:business-tasks:read",
+    "desktop:channel-config:feishu-bind",
+    "desktop:channel-config:get",
+    "desktop:channel-config:remove",
+    "desktop:channel-config:save",
+    "desktop:channel-config:test",
     "desktop:cwd:pick",
     "desktop:launch:copy-command",
     "desktop:navigate",

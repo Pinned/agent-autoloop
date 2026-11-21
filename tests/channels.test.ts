@@ -14,7 +14,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import feishu, { render } from "../plugins/feishu/channel.ts";
+import feishu, { matchesPairingMessage, render, type FeishuTransport } from "../plugins/feishu/channel.ts";
 import webhook from "../plugins/webhook/channel.ts";
 import github from "../plugins/github/source.ts";
 import type { Card } from "../host/channels.ts";
@@ -85,77 +85,39 @@ test("a card shows its options while it's open, and what became of it after", ()
   assert.match(said({ ...base, kind: "notice", state: "closed", options: [], result: "已处理" }), /已处理/);
 });
 
-test("feishu CLI calls leave the HTTP loop available", async () => {
-  let requests = 0;
-  const server = createServer((_req, res) => {
-    requests++;
-    res.end("ok");
-  });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const lark = join(dir, "async-lark");
-  writeFileSync(
-    lark,
-    `#!${process.execPath}
-if (process.argv[2] === 'event') { setInterval(() => {}, 1000); }
-else {
-  (async () => {
-    if (process.argv[2] !== 'auth') for await (const chunk of process.stdin) {}
-    await fetch(${JSON.stringify(url)}, { signal: AbortSignal.timeout(2000) });
-    console.log(JSON.stringify({ ok: true, identities: { user: { openId: 'ou_me' } }, data: { message_id: 'om_5' } }));
-  })().catch(() => process.exit(1));
-}
-`,
-    { mode: 0o755 },
+test("feishu pairing code matcher accepts exact 6-digit text and group mentions, rejects others", () => {
+  assert.equal(
+    matchesPairingMessage({ message_type: "text", content: JSON.stringify({ text: "482910" }) }, "482910"),
+    true,
   );
-  const stop = new AbortController();
-  const cards = [base, { ...base, version: 2, ref: "om_5" }];
-  let delivered = 0;
-  const failed: unknown[] = [];
-  const hub = {
-    async nextCard() {
-      const card = cards.shift() ?? null;
-      if (!card) stop.abort();
-      return { card };
-    },
-    async delivered() {
-      delivered++;
-    },
-    async failed(...args: unknown[]) {
-      failed.push(args);
-    },
-  };
-  try {
-    await feishu({ hub: hub as any, options: { lark }, log: () => {}, signal: stop.signal });
-    assert.deepEqual(failed, []);
-    assert.equal(delivered, 2);
-    assert.equal(requests, 3, "user lookup, send and patch each allowed HTTP to respond");
-  } finally {
-    stop.abort();
-    server.closeAllConnections();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-  }
+  assert.equal(
+    matchesPairingMessage({ message_type: "text", content: JSON.stringify({ text: "@_user_1  482910 " }) }, "482910"),
+    true,
+  );
+  assert.equal(
+    matchesPairingMessage({ message_type: "text", content: JSON.stringify({ text: "hello" }) }, "482910"),
+    false,
+  );
+  assert.equal(
+    matchesPairingMessage({ message_type: "text", content: JSON.stringify({ text: "482911" }) }, "482910"),
+    false,
+  );
+  assert.equal(
+    matchesPairingMessage({ message_type: "image", content: JSON.stringify({ text: "482910" }) }, "482910"),
+    false,
+  );
+  assert.equal(matchesPairingMessage({ message_type: "text", content: "not-json" }, "482910"), false);
 });
 
-test("feishu: sends once per card, updates in place, reports failure, and only real clicks count", async () => {
-  const log = join(dir, "lark.log");
-  const lark = join(dir, "lark-cli");
-  // A stand-in for lark-cli: records each call; `event consume` prints two clicks and waits to be stopped.
-  writeFileSync(
-    lark,
-    `#!/bin/sh
-echo "$*" >> "${log}"
-case "$*" in
-  *"event consume"*)
-    echo '{"action_value":"{\\"card\\":5,\\"choice\\":1}","operator_id":"ou_me","message_id":"om_5"}'
-    echo '{"action_value":"{\\"other\\":1}","operator_id":"ou_me","message_id":"om_5"}'
-    exec sleep 30 ;;
-  *fail-me*) exit 1 ;;
-  *) cat > /dev/null; echo '{"ok":true,"data":{"message_id":"om_5"}}' ;;
-esac
-`,
+test("feishu rejects missing credentials when no custom transport is supplied", async () => {
+  const stop = new AbortController();
+  await assert.rejects(
+    () => feishu({ hub: {} as any, options: {}, log: () => {}, signal: stop.signal }),
+    /appId.*appSecret.*user/,
   );
-  chmodSync(lark, 0o755);
+});
+
+test("feishu SDK transport sends once per card, updates in place, reports failure, and closes listener on abort", async () => {
   const stop = new AbortController();
   const cards: (Card | null)[] = [
     base,
@@ -163,10 +125,50 @@ esac
     { ...base, id: 6, title: "fail-me", ref: null },
   ];
   const calls: unknown[][] = [];
+  const sent: Array<{ cardId: number; user: string; content: string }> = [];
+  const patched: Array<{ ref: string; content: string }> = [];
+  let closed = false;
   let answered!: () => void;
   const clickHandled = new Promise<void>((resolve) => {
     answered = resolve;
   });
+  const transport: FeishuTransport = {
+    async sendCard(cardId, user, content) {
+      sent.push({ cardId, user, content });
+      if (content.includes("fail-me")) throw new Error("send failed");
+      return "om_5";
+    },
+    async updateCard(ref, content) {
+      patched.push({ ref, content });
+    },
+    async listen(onCardAction, signal) {
+      await onCardAction({
+        operator: { open_id: "ou_me" },
+        context: { open_message_id: "om_5" },
+        action: { value: { card: 5, choice: 1 } },
+      });
+      await onCardAction({
+        operator: { open_id: "ou_me" },
+        context: { open_message_id: "om_5" },
+        action: { value: { other: 1 } },
+      });
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) {
+          closed = true;
+          resolve();
+          return;
+        }
+        signal.addEventListener(
+          "abort",
+          () => {
+            closed = true;
+            resolve();
+          },
+          { once: true },
+        );
+      });
+    },
+  };
   const hub = {
     async nextCard() {
       if (cards.length) return { card: cards.shift()! };
@@ -188,23 +190,12 @@ esac
       return { changed: true };
     },
   };
-  // A card that can't be sent: lark-cli is told to fail by the words in it.
-  writeFileSync(
-    lark,
-    readFileSync(lark, "utf8").replace(
-      "*fail-me*) exit 1 ;;",
-      '*+messages-send*) body=$(cat); case "$body" in *fail-me*) exit 1 ;; esac; echo \'{"ok":true,"data":{"message_id":"om_5"}}\' ;;',
-    ),
-  );
-  await feishu({ hub: hub as any, options: { user: "ou_me", lark }, log: () => {}, signal: stop.signal });
-  const lines = readFileSync(log, "utf8").trim().split("\n");
-  const sends = lines.filter((l) => l.includes("+messages-send"));
-  assert.ok(sends[0].includes("--idempotency-key agent-autoloop-card-5"), "the key doesn't change with the version");
-  assert.ok(sends[0].includes("--user-id ou_me"));
-  assert.ok(
-    lines.some((l) => l.includes("messages patch --message-id om_5")),
-    "an update changes the message that was sent",
-  );
+  await feishu({ hub: hub as any, options: { user: "ou_me", transport }, log: () => {}, signal: stop.signal });
+  assert.equal(closed, true);
+  assert.equal(sent[0].cardId, 5);
+  assert.equal(sent[0].user, "ou_me");
+  assert.equal(patched.length, 1);
+  assert.equal(patched[0].ref, "om_5");
   assert.deepEqual(
     calls.find((c) => c[0] === "delivered" && c[2] === 1),
     ["delivered", 5, 1, "om_5"],
@@ -227,24 +218,24 @@ test(
   "feishu forms forward combined answers and identities, reject bad submissions, and leave duplicates to the hub",
   { timeout: 15_000 },
   async () => {
-    const event = (value: unknown, form: unknown = {}, extra: object = {}) =>
-      JSON.stringify({
-        action_value: JSON.stringify(value),
-        form_value: JSON.stringify(form),
-        action_tag: "button",
-        action_name: "submit",
-        operator_id: "ou_other",
-        message_id: "om_other",
-        ...extra,
-      });
-    const combined = event({ card: 5, submit: true }, { choice: "1", text: "先备份\n再处理" });
-    const lines = [
+    const sdkEvent = (value: unknown, form: unknown = {}, extra: Record<string, unknown> = {}) => ({
+      operator: { open_id: "operator_id" in extra ? (extra.operator_id as string) : "ou_other" },
+      context: { open_message_id: "message_id" in extra ? (extra.message_id as string) : "om_other" },
+      action: {
+        value,
+        form_value: "form_value" in extra ? extra.form_value : form,
+        tag: (extra.action_tag as string | undefined) ?? "button",
+        name: (extra.action_name as string | undefined) ?? "submit",
+      },
+    });
+    const combined = sdkEvent({ card: 5, submit: true }, { choice: "1", text: "先备份\n再处理" });
+    const events: unknown[] = [
       combined,
       combined,
-      event({ card: 5, submit: true }, { text: "归档" }),
-      event({ card: 5, submit: true }, { choice: "0", text: "" }),
-      event({ card: 5, choice: 1 }),
-      event({ card: 5 }, { choice: "1" }, { action_tag: "select_static", action_name: "choice" }),
+      sdkEvent({ card: 5, submit: true }, { text: "归档" }),
+      sdkEvent({ card: 5, submit: true }, { choice: "0", text: "" }),
+      sdkEvent({ card: 5, choice: 1 }),
+      sdkEvent({ card: 5 }, { choice: "1" }, { action_tag: "select_static", action_name: "choice" }),
       ...[
         {},
         { text: "  " },
@@ -257,20 +248,14 @@ test(
         { text: "ok", admin: true },
         null,
         [],
-      ].map((form) => event({ card: 5, submit: true }, form)),
-      event({ card: 5, submit: true }, { text: "ok" }, { form_value: "not-json-secret" }),
-      event({ card: 5, submit: true }, { text: "ok" }, { action_name: "choice" }),
-      event({ card: 5, submit: true }, { text: "ok" }, { action_tag: "select_static" }),
-      event({ card: 5, submit: true }, { text: "ok" }, { operator_id: null }),
-      event({ card: 5, submit: true }, { text: "ok" }, { message_id: "" }),
+      ].map((form) => sdkEvent({ card: 5, submit: true }, form)),
+      sdkEvent({ card: 5, submit: true }, { text: "ok" }, { form_value: "not-json-secret" }),
+      sdkEvent({ card: 5, submit: true }, { text: "ok" }, { action_name: "choice" }),
+      sdkEvent({ card: 5, submit: true }, { text: "ok" }, { action_tag: "select_static" }),
+      sdkEvent({ card: 5, submit: true }, { text: "ok" }, { operator_id: null }),
+      sdkEvent({ card: 5, submit: true }, { text: "ok" }, { message_id: "" }),
       "not-json-secret",
     ];
-    const lark = join(dir, "form-lark");
-    writeFileSync(
-      lark,
-      `#!${process.execPath}\nif (process.argv[2] === 'event') {\nfor (const line of ${JSON.stringify(lines)}) console.log(line);\nsetInterval(() => {}, 1000);\n}\n`,
-      { mode: 0o755 },
-    );
     const stop = new AbortController();
     const calls: unknown[][] = [];
     const logs: string[] = [];
@@ -278,6 +263,21 @@ test(
     const handled = new Promise<void>((resolve) => {
       finish = resolve;
     });
+    const transport: FeishuTransport = {
+      async sendCard() {
+        return "om_5";
+      },
+      async updateCard() {},
+      async listen(onCardAction, signal) {
+        for (const ev of events) {
+          await onCardAction(ev);
+        }
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) return resolve();
+          signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+      },
+    };
     const hub = {
       async nextCard() {
         await handled;
@@ -293,10 +293,10 @@ test(
     try {
       await feishu({
         hub: hub as any,
-        options: { user: "ou_me", lark },
+        options: { user: "ou_me", transport },
         log: (line) => {
           logs.push(line);
-          if (logs.length === lines.length - 1) finish();
+          if (logs.length === events.length - 1) finish();
         },
         signal: stop.signal,
       });

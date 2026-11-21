@@ -70,6 +70,11 @@ export const channels = Object.freeze({
   rulesCasPut: "desktop:rules:cas:put",
   settingsGet: "desktop:settings:get",
   settingsPut: "desktop:settings:put",
+  channelConfigGet: "desktop:channel-config:get",
+  channelConfigSave: "desktop:channel-config:save",
+  channelConfigRemove: "desktop:channel-config:remove",
+  channelFeishuBind: "desktop:channel-config:feishu-bind",
+  channelTest: "desktop:channel-config:test",
   // Main-to-renderer push only; the renderer never invokes this channel.
   runtimeEvent: "desktop:runtime:event",
   navigate: "desktop:navigate",
@@ -154,6 +159,24 @@ export interface DesktopBridge {
   settingsGet(): Promise<DesktopSettingsGetResponse>;
   /** Save one section only at the rules version it was read at; checked again in main. */
   settingsPut(input: DesktopSettingsInput): Promise<DesktopSettingsPutResponse>;
+  /** Local-only channel config summary (never exposes appSecret or channel keys). */
+  channelConfigGet(): Promise<import("../../host/desktop-channel-contract.ts").ChannelConfigReadResponse>;
+  /** Save local channel config, provisioning key and restarting owned hub if running. */
+  channelConfigSave(
+    input: import("../../host/desktop-channel-contract.ts").ChannelConfigSaveInput,
+  ): Promise<import("../../host/desktop-channel-contract.ts").ChannelConfigSaveResponse>;
+  /** Remove local channel config entry on delete. */
+  channelConfigRemove(
+    input: import("../../host/desktop-channel-contract.ts").ChannelConfigRemoveInput,
+  ): Promise<import("../../host/desktop-channel-contract.ts").ChannelConfigRemoveResponse>;
+  /** Wait for one Feishu message over WS to auto-bind the sender's open_id. */
+  channelFeishuBind(
+    input: import("../../host/desktop-channel-contract.ts").ChannelFeishuBindInput,
+  ): Promise<import("../../host/desktop-channel-contract.ts").ChannelFeishuBindResponse>;
+  /** Send a test notification through the configured channel. */
+  channelTest(
+    input: import("../../host/desktop-channel-contract.ts").ChannelTestInput,
+  ): Promise<import("../../host/desktop-channel-contract.ts").ChannelTestResponse>;
   /** Subscribe to main-pushed runtime state; the returned function unsubscribes. */
   onRuntimeEvent(listener: (event: DesktopRuntimeEvent) => void): () => void;
   /** Subscribe to main-pushed page navigation (tray card and notification clicks). */

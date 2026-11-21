@@ -1,0 +1,9 @@
+{
+  "name": "agent-autoloop-plugin-feishu",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.76.0"
+  }
+}

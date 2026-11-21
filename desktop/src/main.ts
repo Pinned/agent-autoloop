@@ -62,6 +62,7 @@ import { createRulesCasSource } from "./rules-cas-source.ts";
 import { createRulesCasIpc } from "./rules-cas-ipc.ts";
 import { createSettingsSource } from "./settings-source.ts";
 import { createSettingsIpc } from "./settings-ipc.ts";
+import { createChannelConfigSource } from "./channel-config-source.ts";
 import { createLaunchControl, createLaunchStatusRead, safelyAbortLifecycle } from "./launch-control.ts";
 import { LAUNCH_COMMAND } from "./launch-command.ts";
 import { createRuntimePresentation } from "./runtime-presentation.ts";
@@ -462,6 +463,44 @@ if (ownsAppLock)
         assertSender: (event) => assertSender(event, window.webContents, page),
         gate: () => undefined,
       });
+      const channelConfig = createChannelConfigSource({
+        home: runtimeHome,
+        runtimeResources: async () => {
+          const resourcesModule = pathToFileURL(join(layout.toolRoot, "scripts", "runtime.mjs")).href;
+          const { ensureRuntime, runtimeTarget } = (await import(resourcesModule)) as typeof RuntimeResources;
+          const runtime = await ensureRuntime({
+            cacheDir: layout.cacheDir,
+            ...(layout.archiveDir && { download: bundledDownload(layout.archiveDir, runtimeTarget()) }),
+            ownCleanup: () => {},
+          });
+          return {
+            nodePath: runtime.node,
+            entryPath: join(layout.sourcesRoot, "bin", "agent-autoloop.ts"),
+            helperPath: join(layout.sourcesRoot, "host", "desktop-channel-helper.ts"),
+          };
+        },
+        restartHub: async () => {
+          const current = runtimeState();
+          if (current.ownership === "owned" && current.status === "running") {
+            const stopped = await controller.stop();
+            if (!stopped) return false;
+            await controller.start();
+            return true;
+          }
+          return false;
+        },
+      });
+      const channelGate = (): { code: "unavailable" | "no-hub"; message: string } | null => {
+        if (!enabled) return { code: "unavailable", message: "本机运行服务未运行，不能读取或保存通道凭据。" };
+        const current = runtimeState();
+        if (current.status !== "running") {
+          return { code: "unavailable", message: "本机运行服务未运行，不能读取或保存通道凭据。" };
+        }
+        if (current.role !== "hub-worker" || current.ownership !== "owned") {
+          return { code: "no-hub", message: "通道凭据和密钥仅支持在使用应用内置中台时配置。" };
+        }
+        return null;
+      };
       const showSafeError = (message: string) =>
         dialog.showMessageBox(window, {
           type: "error",
@@ -937,6 +976,48 @@ if (ownsAppLock)
       ipcMain.handle(channels.rulesCasPut, (event, ...args: unknown[]) => rulesCas.put(event, args));
       ipcMain.handle(channels.settingsGet, (event, ...args: unknown[]) => settings.get(event, args));
       ipcMain.handle(channels.settingsPut, (event, ...args: unknown[]) => settings.put(event, args));
+      ipcMain.handle(channels.channelConfigGet, (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        if (args.length !== 0) return { version: 1, ok: false, error: { code: "error", message: "参数无效" } };
+        const blocked = channelGate();
+        if (blocked) return { version: 1, ok: false, error: blocked };
+        return channelConfig.read();
+      });
+      ipcMain.handle(channels.channelConfigSave, async (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        if (args.length !== 1) return { version: 1, ok: false, error: { code: "invalid", message: "参数无效" } };
+        const blocked = channelGate();
+        if (blocked) return { version: 1, ok: false, error: blocked };
+        return await channelConfig.save(args[0]);
+      });
+      ipcMain.handle(channels.channelConfigRemove, async (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        if (
+          args.length !== 1 ||
+          !args[0] ||
+          typeof args[0] !== "object" ||
+          typeof (args[0] as { id?: unknown }).id !== "string"
+        ) {
+          return { version: 1, ok: false, error: { code: "invalid", message: "参数无效" } };
+        }
+        const blocked = channelGate();
+        if (blocked) return { version: 1, ok: false, error: blocked };
+        return await channelConfig.remove((args[0] as { id: string }).id);
+      });
+      ipcMain.handle(channels.channelFeishuBind, async (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        if (args.length !== 1) return { version: 1, ok: false, message: "参数无效" };
+        const blocked = channelGate();
+        if (blocked) return { version: 1, ok: false, message: blocked.message };
+        return await channelConfig.bindFeishu(args[0]);
+      });
+      ipcMain.handle(channels.channelTest, async (event, ...args: unknown[]) => {
+        assertSender(event, window.webContents, page);
+        if (args.length !== 1) return { version: 1, ok: false, message: "参数无效" };
+        const blocked = channelGate();
+        if (blocked) return { version: 1, ok: false, message: blocked.message };
+        return await channelConfig.testChannel(args[0]);
+      });
       await window.loadFile(pagePath);
       window.show();
       if (!smoke && !lifecycle) await launch.autoStart();
@@ -1052,7 +1133,7 @@ if (ownsAppLock)
             result.runtimeEventSeen !== false ||
             result.navigateSeen !== false ||
             result.bridge.join(",") !==
-              "agentHistory,businessTasksRead,completeSetup,copyLaunchCommand,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,pickWorkingDir,rulesCasGet,rulesCasPut,runtimeGet,runtimeReconnect,runtimeStart,runtimeStop,runtimeUseEmbedded,setTheme,settingsGet,settingsPut,setupConnect,setupStatus,taskAction,taskCreate,taskDetail,taskDraftNamespace,taskEntries,taskList,tasksGet,todayState,window,workersGet,workersLocal" ||
+              "agentHistory,businessTasksRead,channelConfigGet,channelConfigRemove,channelConfigSave,channelFeishuBind,channelTest,completeSetup,copyLaunchCommand,getTheme,initHub,joinWorker,launchStatus,onNavigate,onRuntimeEvent,pickWorkingDir,rulesCasGet,rulesCasPut,runtimeGet,runtimeReconnect,runtimeStart,runtimeStop,runtimeUseEmbedded,setTheme,settingsGet,settingsPut,setupConnect,setupStatus,taskAction,taskCreate,taskDetail,taskDraftNamespace,taskEntries,taskList,tasksGet,todayState,window,workersGet,workersLocal" ||
             !hardened.sandbox ||
             !hardened.contextIsolation ||
             hardened.nodeIntegration ||

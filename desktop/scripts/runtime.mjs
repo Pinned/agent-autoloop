@@ -18,7 +18,7 @@ import {
 } from "node:fs/promises";
 import { get } from "node:https";
 import { tmpdir } from "node:os";
-import { dirname, join, posix, resolve } from "node:path";
+import { basename, dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 import { execFile } from "node:child_process";
@@ -475,14 +475,17 @@ export async function ensureRuntime(options = {}) {
 
 export async function copySources(source, destination) {
   await safeDirectory(destination, true);
-  async function copy(from, to) {
+  async function copy(from, to, allowNodeModules = false) {
     const stat = await lstat(from);
     if (stat.isSymbolicLink()) throw new Error(`Unsafe source symlink: ${from}`);
     if (stat.isDirectory()) {
       await safeDirectory(to, true);
+      const childAllowNodeModules = allowNodeModules || basename(from) === "plugins";
       for (const name of await readdir(from)) {
-        if (name === "prompt" || name === "node_modules" || name === ".git") continue;
-        await copy(join(from, name), join(to, name));
+        if (name === "prompt" || name === ".git") continue;
+        if (name === "node_modules" && !allowNodeModules) continue;
+        if (name === ".bin" && basename(from) === "node_modules") continue;
+        await copy(join(from, name), join(to, name), childAllowNodeModules);
       }
     } else if (stat.isFile()) await copyFile(from, to, constants.COPYFILE_EXCL);
     else throw new Error(`Unsafe source file: ${from}`);
