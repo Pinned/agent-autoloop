@@ -37,6 +37,8 @@ export function hubClient(url: string, key: string) {
     },
     started: (run: number, token: string, body: { session?: string; link?: string }) =>
       call("POST", `/v1/runs/${run}/started`, { token, body }),
+    checkReceipt: (run: number, token: string, body: unknown) =>
+      call("POST", `/v1/runs/${run}/check-receipt`, { token, body }),
     result: (run: number, token: string, body: unknown) => call("POST", `/v1/runs/${run}/result`, { token, body }),
     // The channel's door.
     nextCard: (wait: number) => call("GET", `/v1/cards/next?wait=${wait}`, { timeout: wait + 30 }),
