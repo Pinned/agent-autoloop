@@ -13,8 +13,19 @@ function element<K extends keyof HTMLElementTagNameMap>(tag: K, text = "", class
 }
 
 /** "最后心跳" is the only remote fact shown; a missing heartbeat is stated, never guessed. */
-function heartbeat(at: string | null): string {
-  return at === null ? "尚未收到心跳" : `最后心跳 ${at}`;
+function heartbeat(at: string | null, nowIso: string): string {
+  if (at === null) return "尚未收到心跳";
+  const time = new Date(at);
+  const now = new Date(nowIso);
+  if (Number.isNaN(time.getTime())) return `最后心跳 ${at}`;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const sameDay =
+    !Number.isNaN(now.getTime()) &&
+    time.getFullYear() === now.getFullYear() &&
+    time.getMonth() === now.getMonth() &&
+    time.getDate() === now.getDate();
+  if (sameDay) return `最后心跳 ${pad(time.getHours())}:${pad(time.getMinutes())}:${pad(time.getSeconds())}`;
+  return `最后心跳 ${time.getFullYear()}-${pad(time.getMonth() + 1)}-${pad(time.getDate())} ${pad(time.getHours())}:${pad(time.getMinutes())}`;
 }
 
 /**
@@ -22,47 +33,49 @@ function heartbeat(at: string | null): string {
  * page shows heartbeats and distribution as reported — no environment probe, no capacity estimate,
  * no remote repair. A worker with no visible agent is simply not part of the hub's own state.
  */
-export function mountWorkersView(root: HTMLElement, control: Controller) {
+export function mountWorkersView(root: HTMLElement, control: Controller, options: { showRefresh?: boolean } = {}) {
+  const showRefresh = options.showRefresh ?? true;
   const section = element("section", "", "panel workers-view");
   section.setAttribute("aria-label", "执行机在线情况");
-  const head = element("div", "", "rules-head");
-  head.append(element("h2", "执行机"));
-  const note = element(
-    "p",
-    "列表来自已配置 Agent 的归属与真实心跳，仅反映中台已知的状态，不含远程环境信息。",
-    "rules-intro muted",
-  );
+  const head = element("div", "", "section-head");
+  head.append(element("h2", "已知执行机"));
+  const refresh = element("button", "刷新", "section-refresh");
+  refresh.type = "button";
+  refresh.hidden = !showRefresh;
+  refresh.addEventListener("click", () => control.refresh());
+  head.append(refresh);
+  const note = element("p", "仅显示中台已知的心跳与任务分布，不含远程环境信息。", "rules-intro muted");
   const status = element("p", "", "rules-status muted");
   status.id = "workers-status";
   status.setAttribute("role", "status");
   status.setAttribute("aria-live", "polite");
-  const actions = element("div", "", "rules-actions");
-  const refresh = element("button", "刷新");
-  refresh.type = "button";
-  refresh.addEventListener("click", () => control.refresh());
-  actions.append(refresh);
   const error = element("p", "", "rules-error");
   error.setAttribute("role", "alert");
   const content = element("div", "", "workers-content");
-  section.append(head, note, status, actions, error, content);
+  section.append(head, note, status, error, content);
   root.append(section);
 
-  function workerGroup(name: string, agents: readonly Agent[]) {
+  function workerGroup(name: string, agents: readonly Agent[], nowIso: string) {
     const group = element("section", "", "workers-group");
     // Sanitised ids can collide across distinct worker names; a label is unique by construction.
     group.setAttribute("aria-label", `执行机 ${name}`);
     const online = agents.some((agent) => agent.online);
+    const local = agents.some((agent) => agent.local);
     const bar = element("div", "", "workers-group-head");
-    const title = element("h3", agents[0].local ? `${name}（本机）` : name);
-    bar.append(title, element("span", online ? "● 在线" : "○ 离线", `workers-badge ${online ? "online" : "offline"}`));
+    const title = element("h3", name);
+    bar.append(title);
+    if (local) bar.append(element("span", "本机", "workers-local-tag"));
+    bar.append(element("span", online ? "● 在线" : "○ 离线", `workers-badge ${online ? "online" : "offline"}`));
     // Presence is per worker; every agent under it shares the same heartbeat.
-    bar.append(element("span", heartbeat(agents[0].seenAt), "muted workers-heartbeat"));
+    const beat = element("span", heartbeat(agents[0].seenAt, nowIso), "muted workers-heartbeat");
+    if (agents[0].seenAt) beat.title = agents[0].seenAt;
+    bar.append(beat);
     group.append(bar);
     const rows = element("ul", "", "run-list");
     for (const agent of agents) {
       const row = element("li", "", "run-line");
       const copy = element("div", "", "run-copy");
-      copy.append(element("strong", agent.name || agent.id), element("span", agent.use, "muted"));
+      copy.append(element("strong", agent.name || agent.id), element("span", agent.use, "workers-agent-use"));
       const counts = [
         agent.totals.running ? `运行 ${agent.totals.running}` : "",
         agent.totals.queued ? `排队 ${agent.totals.queued}` : "",
@@ -77,37 +90,46 @@ export function mountWorkersView(root: HTMLElement, control: Controller) {
     return group;
   }
 
-  function channelRow(channel: Channel) {
+  function channelRow(channel: Channel, nowIso: string) {
     const row = element("li", "", "run-line");
+    const beat = element("span", heartbeat(channel.seenAt, nowIso), "run-note muted");
+    if (channel.seenAt) beat.title = channel.seenAt;
     row.append(
       element("strong", channel.name || channel.id),
       element("span", channel.online ? "● 在线" : "○ 离线", `workers-badge ${channel.online ? "online" : "offline"}`),
-      element("span", heartbeat(channel.seenAt), "run-note muted"),
+      beat,
     );
     return row;
   }
 
   function update() {
     const state = control.state;
+    refresh.hidden = !showRefresh;
     refresh.disabled = control.busy;
     refresh.textContent = control.busy ? "刷新中…" : "刷新";
     error.hidden = true;
     content.replaceChildren();
     content.hidden = state.kind !== "ready";
     if (state.kind === "loading") {
-      status.textContent = "正在读取执行机状态。";
+      status.hidden = false;
+      status.textContent = "正在读取执行机状态…";
+      return;
+    }
+    if (state.kind === "error") {
+      status.hidden = true;
+      status.textContent = "";
+      error.textContent = state.message;
+      error.hidden = false;
       return;
     }
     if (state.kind !== "ready") {
+      status.hidden = false;
       status.textContent = `${control.busy ? "正在刷新 · " : ""}${state.message}`;
-      if (state.kind === "error") {
-        error.textContent = state.message;
-        error.hidden = false;
-      }
       return;
     }
     const snapshot = state.snapshot;
-    status.textContent = `${control.busy ? "正在刷新 · " : ""}数据时间：${snapshot.now}`;
+    status.hidden = !control.busy;
+    status.textContent = control.busy ? "正在刷新…" : "";
 
     const byWorker = new Map<string, Agent[]>();
     for (const agent of snapshot.agents) {
@@ -121,26 +143,30 @@ export function mountWorkersView(root: HTMLElement, control: Controller) {
       return local || left.localeCompare(right);
     });
     const workers = element("div", "", "workers-workers");
-    if (!groups.length)
-      workers.append(element("p", "中台还没有已知的执行机。任一 Agent 领取任务并上报心跳后会出现在这里。", "muted"));
-    for (const [name, agents] of groups) workers.append(workerGroup(name, agents));
+    if (!groups.length) {
+      const empty = element("div", "", "empty");
+      empty.append(element("strong", "暂无已知执行机"), element("p", "配置 Agent 并上报心跳后会显示在这里。", "muted"));
+      workers.append(empty);
+    }
+    for (const [name, agents] of groups) workers.append(workerGroup(name, agents, snapshot.now));
     if (snapshot.agentsTruncated)
       workers.append(
         element("p", `仅展示前 ${snapshot.agents.length} 个 Agent，更多请在中台查看。`, "today-list-note muted"),
       );
 
-    const channels = element("section", "", "workers-channels");
-    channels.append(element("h3", "通道"));
-    const rows = element("ul", "", "run-list");
-    if (!snapshot.channels.length) rows.append(element("li", "没有已登记的通道。", "run-note muted"));
-    for (const channel of snapshot.channels) rows.append(channelRow(channel));
-    channels.append(rows);
-    if (snapshot.channelsTruncated)
-      channels.append(
-        element("p", `仅展示前 ${snapshot.channels.length} 个通道，更多请在中台查看。`, "today-list-note muted"),
-      );
-
-    content.append(workers, channels);
+    content.append(workers);
+    if (snapshot.channels.length) {
+      const channels = element("section", "", "workers-channels");
+      channels.append(element("h3", "通知通道"));
+      const rows = element("ul", "", "run-list");
+      for (const channel of snapshot.channels) rows.append(channelRow(channel, snapshot.now));
+      channels.append(rows);
+      if (snapshot.channelsTruncated)
+        channels.append(
+          element("p", `仅展示前 ${snapshot.channels.length} 个通道，更多请在中台查看。`, "today-list-note muted"),
+        );
+      content.append(channels);
+    }
   }
   update();
   return { update };
