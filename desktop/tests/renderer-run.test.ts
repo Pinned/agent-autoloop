@@ -599,7 +599,182 @@ test("an attached hub hides start and stop instead of disabling them", async () 
   }
 });
 
-test("an owned runtime never hides its own controls", async () => {
+test("an owned runtime shows only contextual controls and hides reconfiguration once configured", async () => {
+  const { mountRunCard } = await import("../src/renderer/run-view.ts");
+  class Node {
+    textContent = "";
+    className = "";
+    hidden = false;
+    disabled = false;
+    id = "";
+    type = "";
+    dataset: Record<string, string> = {};
+    children: Node[] = [];
+    listeners = new Map<string, () => void>();
+    append(...nodes: Node[]) {
+      this.children.push(...nodes);
+    }
+    setAttribute() {}
+    addEventListener(name: string, listener: () => void) {
+      this.listeners.set(name, listener);
+    }
+    click() {
+      if (!this.disabled) this.listeners.get("click")?.();
+    }
+  }
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", { configurable: true, value: { createElement: () => new Node() } });
+  try {
+    const f = fixture();
+    const root = new Node();
+    const view = mountRunCard(root as unknown as HTMLElement, f.controller, () => {}, {
+      setupBusy: () => false,
+      setupLocked: () => false,
+    });
+    const nodes = (node: Node): Node[] => [node, ...node.children.flatMap(nodes)];
+    const findByClass = (name: string) => nodes(root).find((node) => node.className.split(" ").includes(name))!;
+    const startBtn = () => findByClass("run-action-start");
+    const stopBtn = () => findByClass("run-action-stop");
+    const configBtn = () => findByClass("run-action-configure");
+    const hint = () => findByClass("run-hint");
+    const note = () => findByClass("run-note");
+
+    // Stopped: only start is shown; no stop button, no disabled configure button, no standing disclaimers.
+    f.push(pushed(snap({ status: "stopped", ownership: "owned" })));
+    view.update();
+    assert.equal(startBtn().hidden, false);
+    assert.equal(startBtn().disabled, false);
+    assert.equal(stopBtn().hidden, true);
+    assert.equal(configBtn().hidden, true);
+    assert.equal(hint().hidden, true);
+    assert.equal(note().hidden, true);
+    assert.doesNotMatch(hint().textContent, /不提供覆盖或切换角色/);
+
+    // Running: only stop is shown; start and standing note stay hidden.
+    f.push(pushed(snap({ status: "running", role: "hub-worker", ownership: "owned" })));
+    view.update();
+    assert.equal(startBtn().hidden, true);
+    assert.equal(stopBtn().hidden, false);
+    assert.equal(stopBtn().disabled, false);
+    assert.equal(configBtn().hidden, true);
+    assert.equal(hint().hidden, true);
+    assert.equal(note().hidden, true);
+
+    // Failed: both start (retry) and stop (cleanup) are available.
+    f.push(pushed(snap({ status: "failed", ownership: "owned" })));
+    view.update();
+    assert.equal(startBtn().hidden, false);
+    assert.equal(stopBtn().hidden, false);
+    assert.equal(configBtn().hidden, true);
+
+    // Unknown: only stop retry is available.
+    f.push(pushed(snap({ status: "unknown", ownership: "owned" })));
+    view.update();
+    assert.equal(startBtn().hidden, true);
+    assert.equal(stopBtn().hidden, false);
+    assert.equal(configBtn().hidden, true);
+
+    // Unconfigured: only configure is shown.
+    f.push(pushed(snap({ status: "unconfigured", ownership: "owned" })));
+    view.update();
+    assert.equal(configBtn().hidden, false);
+    assert.equal(configBtn().disabled, false);
+    assert.equal(startBtn().hidden, true);
+    assert.equal(stopBtn().hidden, true);
+  } finally {
+    if (previous) Object.defineProperty(globalThis, "document", previous);
+    else Reflect.deleteProperty(globalThis, "document");
+  }
+});
+
+test("stopping a running service uses two-step arming and reveals the drain note only while armed", async () => {
+  const { mountRunCard } = await import("../src/renderer/run-view.ts");
+  class Node {
+    textContent = "";
+    className = "";
+    hidden = false;
+    disabled = false;
+    id = "";
+    type = "";
+    dataset: Record<string, string> = {};
+    children: Node[] = [];
+    listeners = new Map<string, () => void>();
+    append(...nodes: Node[]) {
+      this.children.push(...nodes);
+    }
+    setAttribute() {}
+    addEventListener(name: string, listener: () => void) {
+      this.listeners.set(name, listener);
+    }
+    click() {
+      if (!this.disabled) this.listeners.get("click")?.();
+    }
+  }
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", { configurable: true, value: { createElement: () => new Node() } });
+  try {
+    const f = fixture();
+    const root = new Node();
+    const view = mountRunCard(root as unknown as HTMLElement, f.controller, () => {}, {
+      setupBusy: () => false,
+      setupLocked: () => false,
+    });
+    const nodes = (node: Node): Node[] => [node, ...node.children.flatMap(nodes)];
+    const findByClass = (name: string) => nodes(root).find((node) => node.className.split(" ").includes(name))!;
+    const stopBtn = findByClass("run-action-stop");
+    const cancelBtn = findByClass("run-action-cancel-stop");
+    const note = findByClass("run-note");
+
+    f.push(pushed(snap({ status: "running", role: "hub-worker", ownership: "owned" })));
+    view.update();
+    assert.equal(stopBtn.textContent, "停止本机运行服务");
+    assert.equal(cancelBtn.hidden, true);
+    assert.equal(note.hidden, true);
+
+    // First click arms stop instead of immediately draining a healthy running service.
+    stopBtn.click();
+    assert.deepEqual(f.calls, []);
+    assert.equal(stopBtn.textContent, "确认停止");
+    assert.equal(cancelBtn.hidden, false);
+    assert.equal(note.hidden, false);
+    assert.match(note.textContent, /排空/);
+
+    // Cancel disarms cleanly.
+    cancelBtn.click();
+    assert.deepEqual(f.calls, []);
+    assert.equal(stopBtn.textContent, "停止本机运行服务");
+    assert.equal(cancelBtn.hidden, true);
+    assert.equal(note.hidden, true);
+
+    // Leaving running state disarms automatically.
+    stopBtn.click();
+    assert.equal(stopBtn.textContent, "确认停止");
+    f.push(pushed(snap({ status: "stopped", role: "hub-worker", ownership: "owned" })));
+    view.update();
+    assert.equal(cancelBtn.hidden, true);
+    assert.equal(note.hidden, true);
+
+    // Second click while armed submits the stop request.
+    f.push(pushed(snap({ status: "running", role: "hub-worker", ownership: "owned" })));
+    view.update();
+    stopBtn.click();
+    stopBtn.click();
+    assert.deepEqual(f.calls, ["stop"]);
+    assert.equal(cancelBtn.hidden, true);
+
+    // Non-running recovery/interrupt states still stop on single click.
+    f.gates[0].resolve(ok(snap({ status: "failed", ownership: "owned" })));
+    await flush();
+    view.update();
+    stopBtn.click();
+    assert.deepEqual(f.calls, ["stop", "stop"]);
+  } finally {
+    if (previous) Object.defineProperty(globalThis, "document", previous);
+    else Reflect.deleteProperty(globalThis, "document");
+  }
+});
+
+test("normal successful operation receipts stay quiet when live state matches, while warning receipts stay visible", async () => {
   const { mountRunCard } = await import("../src/renderer/run-view.ts");
   class Node {
     textContent = "";
@@ -620,18 +795,36 @@ test("an owned runtime never hides its own controls", async () => {
   Object.defineProperty(globalThis, "document", { configurable: true, value: { createElement: () => new Node() } });
   try {
     const f = fixture();
-    f.push(pushed(snap({ status: "stopped", ownership: "owned" })));
+    f.push(pushed(snap({ status: "stopped", role: "hub-worker", ownership: "owned" })));
     const root = new Node();
-    mountRunCard(root as unknown as HTMLElement, f.controller, () => {}, {
+    const view = mountRunCard(root as unknown as HTMLElement, f.controller, () => {}, {
       setupBusy: () => false,
       setupLocked: () => false,
     });
     const nodes = (node: Node): Node[] => [node, ...node.children.flatMap(nodes)];
-    const all = nodes(root);
-    for (const label of ["启动运行服务", "停止本机运行服务"]) {
-      const button = all.find((node) => node.textContent === label);
-      assert.equal(button?.hidden, false, label);
-    }
+    const startReceipt = nodes(root).find((node) => node.className.includes("run-receipt-start"))!;
+    const stopReceipt = nodes(root).find((node) => node.className.includes("run-receipt-stop"))!;
+
+    f.controller.start();
+    f.gates[0].resolve(ok(snap({ status: "running", role: "hub-worker", ownership: "owned" })));
+    await flush();
+    view.update();
+    assert.equal(startReceipt.hidden, true);
+
+    f.controller.stop();
+    f.gates[1].resolve(
+      ok(
+        snap({
+          status: "unknown",
+          pendingSync: 2,
+          error: { code: "safe-stop", message: DESKTOP_RUNTIME_ERROR_MESSAGES["safe-stop"] },
+        }),
+      ),
+    );
+    await flush();
+    view.update();
+    assert.equal(stopReceipt.hidden, false);
+    assert.match(stopReceipt.textContent, /上次已确认停止回执，并非当前状态/);
   } finally {
     if (previous) Object.defineProperty(globalThis, "document", previous);
     else Reflect.deleteProperty(globalThis, "document");

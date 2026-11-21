@@ -62,17 +62,57 @@ export function mountRunCard(
     launch?(): Readonly<DesktopLaunchStatus> | null;
   },
 ) {
+  let stopArmed = false;
   const section = element("section", "", "panel run-panel");
   section.setAttribute("aria-labelledby", "run-title");
+  const head = element("div", "", "run-head");
+  const headCopy = element("div", "", "run-head-copy");
+  const titleRow = element("div", "", "run-title-row");
   const title = element("h2", "本机运行服务");
   title.id = "run-title";
-  const line = element("div", "", "run-line");
   const badge = element("span", "", "run-badge");
-  const statusText = element("span", "", "run-status-text");
+  titleRow.append(title, badge);
+  const statusText = element("p", "", "run-status-text muted");
   statusText.id = "run-status";
   statusText.setAttribute("role", "status");
   statusText.setAttribute("aria-live", "polite");
-  line.append(badge, statusText);
+  headCopy.append(titleRow, statusText);
+
+  const actions = element("div", "", "run-actions");
+  const configure = element("button", "配置此电脑", "run-action-configure run-action-primary");
+  configure.type = "button";
+  configure.addEventListener("click", openSetup);
+  const start = element("button", "启动运行服务", "run-action-start run-action-primary");
+  start.type = "button";
+  start.addEventListener("click", () => control.start());
+  const cancelStop = element("button", "取消", "run-action-cancel-stop");
+  cancelStop.type = "button";
+  cancelStop.hidden = true;
+  cancelStop.addEventListener("click", () => {
+    stopArmed = false;
+    update();
+  });
+  const stop = element("button", "停止本机运行服务", "run-action-stop");
+  stop.type = "button";
+  stop.addEventListener("click", () => {
+    const state = control.state;
+    const needsArm =
+      state.kind === "ready" && state.snapshot.ownership === "owned" && state.snapshot.status === "running";
+    if (needsArm && !stopArmed) {
+      stopArmed = true;
+      update();
+      return;
+    }
+    stopArmed = false;
+    control.stop();
+    update();
+  });
+  actions.append(configure, start, cancelStop, stop);
+  head.append(headCopy, actions);
+
+  const note = element("p", "将等待本机 Agent 排空并同步离线结果，不会强制终止或退出应用。", "run-note run-stop-note");
+  note.hidden = true;
+
   // Facts are configuration/connection summary only. They never claim the runtime is online.
   const facts = element("dl", "", "run-facts");
   const fact = (label: string) => {
@@ -91,49 +131,49 @@ export function mountRunCard(
   error.hidden = true;
   const admission = element("p", "", "run-admission");
   admission.hidden = true;
-  const actions = element("div", "", "run-actions");
-  const start = element("button", "启动运行服务");
-  start.type = "button";
-  start.addEventListener("click", () => control.start());
-  const stop = element("button", "停止本机运行服务");
-  stop.type = "button";
-  stop.addEventListener("click", () => control.stop());
-  const configure = element("button", "配置此电脑");
-  configure.type = "button";
-  configure.addEventListener("click", openSetup);
-  actions.append(configure, start, stop);
-  const note = element(
-    "p",
-    "停止会等待本机 Agent 排空并同步离线结果；无法确认安全停止时不会强制终止，也不会退出应用。",
-    "muted run-note",
-  );
   const receipts = {
     start: element("p", "", "run-receipt run-receipt-start"),
     stop: element("p", "", "run-receipt run-receipt-stop"),
   };
   const hint = element("p", "", "muted run-hint");
   hint.hidden = true;
-  section.append(title, line, facts, hint, admission, error, receipts.start, receipts.stop, actions, note);
+  section.append(head, note, facts, hint, admission, error, receipts.start, receipts.stop);
   root.append(section);
 
   function update() {
     const state = control.state;
     const busy = control.busy;
-    // Historical receipts remain visible even when the current-state view is loading or locked.
+    // Historical receipts remain visible in loading/locked views or when they carry a warning/failure,
+    // while quiet normal successes do not clutter the live status card.
     for (const operation of ["start", "stop"] as const) {
       const receipt = control.operationResults[operation];
       const node = receipts[operation];
-      node.hidden = receipt === null;
-      node.textContent = receipt
+      const show =
+        receipt !== null &&
+        (state.kind !== "ready" ||
+          receipt.error !== null ||
+          receipt.status === "failed" ||
+          receipt.status === "unknown");
+      node.hidden = !show;
+      node.textContent = show
         ? `上次已确认${operation === "start" ? "启动" : "停止"}回执，并非当前状态：${desktopRuntimeStatusText(receipt)}；角色：${receipt.role ? roleNames[receipt.role] : "无"}；离线待同步：${receipt.pendingSync ?? "未确认"}${receipt.error ? `；${receipt.error.message}` : ""}`
         : "";
     }
     start.disabled = true;
     stop.disabled = true;
     configure.disabled = true;
+    start.hidden = true;
+    stop.hidden = true;
+    configure.hidden = true;
+    cancelStop.hidden = true;
+    note.hidden = true;
     hint.hidden = true;
     launchValue.textContent = launchText(setupMirror.launch?.() ?? null);
     if (state.kind === "loading") {
+      stopArmed = false;
+      stop.textContent = "停止本机运行服务";
+      stop.className = "run-action-stop";
+      actions.hidden = true;
       badge.dataset.status = "loading";
       badge.textContent = shortLabels.loading;
       statusText.textContent = "正在读取本机运行状态。";
@@ -144,6 +184,10 @@ export function mountRunCard(
       return;
     }
     if (state.kind === "locked") {
+      stopArmed = false;
+      stop.textContent = "停止本机运行服务";
+      stop.className = "run-action-stop";
+      actions.hidden = true;
       badge.dataset.status = "unknown";
       badge.textContent = shortLabels.unknown;
       statusText.textContent = state.message;
@@ -163,25 +207,30 @@ export function mountRunCard(
     if (state.admission) admission.textContent = state.admission;
     error.hidden = snapshot.error === null;
     if (snapshot.error) error.textContent = snapshot.error.message;
+
     // An attached hub belongs to a terminal this app does not control. Hiding the buttons is the
     // only honest presentation: a disabled button still promises a capability that does not exist.
     const external = snapshot.ownership === "external";
-    start.hidden = external;
-    stop.hidden = external;
-    note.hidden = external;
-    hint.hidden = !external && snapshot.status === "unconfigured";
-    hint.textContent = external
-      ? "本机中台由终端中的 agent-autoloop 运行并管理，应用只连接读取，不提供启动或停止。"
-      : "这台电脑已有配置，应用里不提供覆盖或切换角色。";
-    // Reconfiguration is not offered in the app: overwriting a configured machine is refused.
-    configure.disabled = busy || snapshot.status !== "unconfigured";
-    start.disabled =
-      busy ||
-      snapshot.status === "unconfigured" ||
-      !["stopped", "failed"].includes(snapshot.status) ||
-      setupMirror.setupBusy() ||
-      setupMirror.setupLocked();
-    stop.disabled = busy || snapshot.status === "unavailable";
+    if (external || snapshot.status !== "running" || busy) stopArmed = false;
+    hint.hidden = !external;
+    hint.textContent = external ? "本机中台由终端中的 agent-autoloop 运行并管理，此处仅连接查看。" : "";
+
+    const showConfigure = !external && snapshot.status === "unconfigured";
+    const showStart = !external && (snapshot.status === "stopped" || snapshot.status === "failed");
+    const showStop = !external && ["running", "starting", "draining", "failed", "unknown"].includes(snapshot.status);
+
+    configure.hidden = !showConfigure;
+    configure.disabled = busy || !showConfigure;
+    start.hidden = !showStart;
+    start.disabled = busy || !showStart || setupMirror.setupBusy() || setupMirror.setupLocked();
+    stop.hidden = !showStop;
+    stop.disabled = busy || !showStop;
+    stop.textContent = stopArmed ? "确认停止" : "停止本机运行服务";
+    stop.className = stopArmed ? "run-action-stop run-action-danger" : "run-action-stop";
+    cancelStop.hidden = !stopArmed;
+    cancelStop.disabled = busy;
+    note.hidden = !stopArmed;
+    actions.hidden = configure.hidden && start.hidden && stop.hidden && cancelStop.hidden;
   }
   update();
   return { update };
