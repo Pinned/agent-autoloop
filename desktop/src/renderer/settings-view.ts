@@ -96,6 +96,19 @@ function select(id: string, values: readonly string[], value: string): HTMLSelec
 }
 const wordsOf = (text: string) => text.split(/[\s,，]+/).filter(Boolean);
 const titleOf = (section: ListSection) => TABS.find((item) => item.id === section)?.title ?? "";
+const ACCESS_LABELS: Record<string, string> = { read: "只读", edit: "可编辑", full: "完全权限" };
+const ADD_LABELS: Record<ListSection, string> = {
+  agents: "＋ 添加 Agent",
+  sources: "＋ 添加来源",
+  channels: "＋ 添加通知通道",
+};
+const EMPTY_LABELS: Record<ListSection, string> = {
+  agents: "暂无 Agent",
+  sources: "暂无来源",
+  channels: "暂无通知通道",
+};
+const isListTab = (value: Tab): value is ListSection =>
+  value === "agents" || value === "sources" || value === "channels";
 
 export function mountSettingsView(
   controller: Settings,
@@ -119,16 +132,21 @@ export function mountSettingsView(
 
   const root = document.createElement("section");
   root.className = "settings-panel";
-  const head = document.createElement("div");
-  head.className = "rules-head";
-  const intro = document.createElement("p");
-  intro.className = "muted rules-intro";
-  intro.textContent = "修改都保存到本机中台；配置在别处被改动时，保存会被拒绝而不是覆盖。";
-  head.append(intro);
+  const toolbar = document.createElement("div");
+  toolbar.className = "settings-toolbar";
   const tabs = document.createElement("nav");
   tabs.className = "settings-tabs";
   tabs.setAttribute("aria-label", "设置分组");
   let tabButtons: HTMLButtonElement[] = [];
+  const addButton = document.createElement("button");
+  addButton.type = "button";
+  addButton.id = "settings-add";
+  addButton.className = "settings-add-button setup-primary";
+  addButton.hidden = true;
+  addButton.addEventListener("click", () => {
+    if (isListTab(tab)) startRowEdit(tab, null);
+  });
+  toolbar.append(tabs, addButton);
   const tabOf = (section: DesktopSettingsSection): Tab => (section === "settings" ? "general" : section);
   // The role decides which groups exist; a rebuild is only a DOM change, never a state reset.
   function syncTabs(): boolean {
@@ -164,26 +182,48 @@ export function mountSettingsView(
   }
   const body = document.createElement("div");
   body.className = "settings-body";
-  root.append(head, tabs, body);
 
-  function statusLine(): HTMLElement {
-    const node = document.createElement("p");
-    node.className = "rules-status";
-    node.id = "settings-status";
-    return node;
-  }
-  function messagesLine(): HTMLElement {
-    const node = document.createElement("p");
-    node.className = "setup-error rules-error";
-    node.id = "settings-error";
-    node.hidden = true;
-    return node;
-  }
-  const status = statusLine();
-  const messages = messagesLine();
-  // Status and messages live outside the tab body so switching tabs never hides a refused save.
-  root.insertBefore(status, tabs);
-  root.insertBefore(messages, tabs);
+  const status = document.createElement("p");
+  status.className = "rules-status";
+  status.id = "settings-status";
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
+
+  const messages = document.createElement("p");
+  messages.className = "setup-error rules-error";
+  messages.id = "settings-error";
+  messages.setAttribute("role", "alert");
+  messages.hidden = true;
+
+  const recoveryBar = document.createElement("div");
+  recoveryBar.className = "settings-recovery";
+  recoveryBar.id = "settings-recovery";
+  recoveryBar.hidden = true;
+
+  const discardButton = document.createElement("button");
+  discardButton.type = "button";
+  discardButton.id = "settings-discard";
+  discardButton.textContent = "丢弃草稿并重新读取";
+  discardButton.hidden = true;
+  discardButton.addEventListener("click", () => {
+    editing = null;
+    controller.discardAndReload();
+    renderTab();
+  });
+
+  const retryButton = document.createElement("button");
+  retryButton.type = "button";
+  retryButton.id = "settings-retry";
+  retryButton.textContent = "重新读取";
+  retryButton.hidden = true;
+  retryButton.addEventListener("click", () => {
+    controller.refresh();
+  });
+
+  recoveryBar.append(discardButton, retryButton);
+  // Toolbar stays anchored at top; status and error recovery stay outside the tab body so
+  // switching tabs or entering subpages never hides a refused save or read failure.
+  root.append(toolbar, status, messages, recoveryBar, body);
 
   function button(text: string, primary = false) {
     const node = document.createElement("button");
@@ -462,32 +502,57 @@ export function mountSettingsView(
     busy: boolean,
   ): HTMLElement {
     const item = document.createElement("li");
-    item.className = "entry-item";
+    item.className = "entry-item settings-row";
+    const copy = document.createElement("div");
+    copy.className = "entry-copy";
     const head = document.createElement("div");
     head.className = "entry-head";
     const name = document.createElement("strong");
     name.textContent = String(entry.name ?? "");
-    const id = document.createElement("span");
-    id.className = "entry-to";
+    const id = document.createElement("code");
+    id.className = "settings-id-tag";
     id.textContent = String(entry.id ?? "");
     head.append(name, id);
-    const meta = document.createElement("div");
-    meta.className = "entry-meta muted";
     const parts: string[] = [];
-    if ("worker" in entry) parts.push(`执行机 ${entry.worker}`, `用法 ${entry.use}`, `权限 ${entry.access}`);
+    if ("worker" in entry) {
+      parts.push(
+        String(entry.worker),
+        String(entry.use),
+        ACCESS_LABELS[String(entry.access ?? "edit")] ?? String(entry.access ?? "edit"),
+      );
+      if (entry.model) parts.push(String(entry.model));
+    }
     if ("adapter" in entry && entry.adapter) parts.push(`适配器 ${entry.adapter}`);
     if ("answerers" in entry && Array.isArray(entry.answerers) && entry.answerers.length)
       parts.push(`应答人 ${entry.answerers.join("、")}`);
-    if ("links" in entry && entry.links) parts.push("发送链接");
-    meta.textContent = parts.join(" · ");
+    if ("links" in entry && entry.links) parts.push("发送卡片链接");
+    copy.append(head);
+    if (parts.length) {
+      const meta = document.createElement("div");
+      meta.className = "entry-meta muted";
+      meta.textContent = parts.join(" · ");
+      copy.append(meta);
+    }
     const actions = document.createElement("div");
     actions.className = "entry-actions";
     const edit = button("编辑");
     edit.disabled = busy;
-    edit.addEventListener("click", () => startRowEdit(section, index));
+    edit.addEventListener("click", (event) => {
+      event?.stopPropagation?.();
+      startRowEdit(section, index);
+    });
     register(edit, "list");
     actions.append(edit);
-    item.append(head, meta, actions);
+    item.addEventListener("click", (event) => {
+      const mouse = event as MouseEvent | undefined;
+      if (mouse?.metaKey || mouse?.ctrlKey || mouse?.shiftKey || mouse?.altKey) return;
+      const target = mouse?.target as { closest?: (selector: string) => unknown } | null | undefined;
+      if (target?.closest?.("button, a, input, select, textarea")) return;
+      const selected = typeof globalThis.getSelection === "function" ? globalThis.getSelection()?.toString() : "";
+      if (selected) return;
+      startRowEdit(section, index);
+    });
+    item.append(copy, actions);
     return item;
   }
 
@@ -508,34 +573,43 @@ export function mountSettingsView(
     const wrap = document.createElement("div");
     const state = controller.getState();
     if (!state.snapshot) {
-      wrap.append(emptyState(state.loading ? "正在读取本机配置……" : "尚未读取到本机配置。"));
+      if (state.loading) wrap.append(emptyState("正在读取本机配置…"));
       return wrap;
     }
     // A live draft belongs to the one row being edited: every other row waits until it is saved or dropped.
     const busy = state.saving || state.reloading || state.needsReview || state.draft !== null;
     const session = editing && editing.section === section ? editing : null;
     const entries = state.snapshot[section] as unknown as readonly Record<string, unknown>[];
+    const agentPage = section === "agents" && session !== null;
+    if (agentPage) {
+      wrap.append(rowForm(session));
+      if (section === "agents") wrap.append(workersList());
+      return wrap;
+    }
+    if (!entries.length && !session) {
+      const box = document.createElement("div");
+      box.className = "empty settings-empty";
+      const heading = document.createElement("h3");
+      heading.textContent = EMPTY_LABELS[section];
+      const add = button(ADD_LABELS[section], true);
+      add.disabled = busy;
+      add.addEventListener("click", () => startRowEdit(section, null));
+      register(add, "list");
+      box.append(heading, add);
+      wrap.append(box);
+      if (section === "agents") wrap.append(workersList());
+      return wrap;
+    }
     const list = document.createElement("ul");
     list.className = "entry-list";
-    const agentPage = section === "agents" && session !== null;
-    const nodes: HTMLElement[] = agentPage
-      ? []
-      : entries.map((entry, index) =>
-          session && !session.fresh && session.rowIndex === index
-            ? rowForm(session)
-            : readOnlyRow(section, entry, index, busy),
-        );
-    if (session?.fresh && !agentPage) nodes.push(rowForm(session));
+    const nodes: HTMLElement[] = entries.map((entry, index) =>
+      session && !session.fresh && session.rowIndex === index
+        ? rowForm(session)
+        : readOnlyRow(section, entry, index, busy),
+    );
+    if (session?.fresh) nodes.push(rowForm(session));
     list.replaceChildren(...nodes);
-    const add = button("添加一项");
-    add.disabled = busy;
-    add.addEventListener("click", () => startRowEdit(section, null));
-    register(add, "list");
-    const listActions = actionBar([add]);
-    list.hidden = !!agentPage;
-    listActions.hidden = !!agentPage;
-    wrap.append(list, listActions);
-    if (agentPage) wrap.append(rowForm(session));
+    wrap.append(list);
     if (section === "agents") wrap.append(workersList());
     return wrap;
   }
@@ -646,14 +720,17 @@ export function mountSettingsView(
     }
     const agentOpen = editing?.section === "agents";
     root.className = agentOpen ? "settings-panel settings-agent-subpage-panel" : "settings-panel";
-    head.hidden = agentOpen;
-    tabs.hidden = agentOpen;
+    toolbar.hidden = agentOpen;
+    const showAdd = !agentOpen && isListTab(tab) && state.snapshot !== null;
+    addButton.hidden = !showAdd;
+    if (isListTab(tab)) addButton.textContent = ADD_LABELS[tab];
+    addButton.disabled = state.saving || state.reloading || state.needsReview || state.draft !== null;
     status.hidden = agentOpen && !state.loading && !state.saving && state.save.kind !== "confirmed";
     options.agentEditorChanged?.(agentOpen);
     const parts: string[] = [];
-    if (state.loading) parts.push("正在读取本机配置……");
-    if (state.saving) parts.push("正在保存……");
-    if (state.save.kind === "confirmed") parts.push("已保存。");
+    if (state.loading) parts.push("正在读取本机配置…");
+    if (state.saving) parts.push("正在保存…");
+    if (state.save.kind === "confirmed") parts.push("已保存");
     status.textContent = parts.join(" ");
     const lines: string[] = [];
     if (state.loadError) lines.push(state.loadError.message);
@@ -669,20 +746,13 @@ export function mountSettingsView(
           ? state.saving || state.needsReview
           : state.saving || state.needsReview || state.reloading || (kind === "list" && state.draft !== null);
     }
-    // A refused or unconfirmed save is a barrier: offer exactly the one action that can clear it.
-    if ((state.needsReview || state.reloading) && !document.querySelector("#settings-discard")) {
-      const discard = button("丢弃草稿并重新读取");
-      discard.id = "settings-discard";
-      discard.disabled = state.saving;
-      discard.addEventListener("click", () => {
-        editing = null;
-        controller.discardAndReload();
-        renderTab();
-      });
-      status.after(discard);
-    } else if (!state.needsReview && !state.reloading) {
-      document.querySelector("#settings-discard")?.remove();
-    }
+    const showDiscard = state.needsReview || state.reloading;
+    const showRetry = !showDiscard && state.loadError !== null;
+    discardButton.hidden = !showDiscard;
+    discardButton.disabled = state.saving;
+    retryButton.hidden = !showRetry;
+    retryButton.disabled = state.loading || state.saving;
+    recoveryBar.hidden = !showDiscard && !showRetry;
     const themeSelect = body.querySelector<HTMLSelectElement>("#theme");
     if (themeSelect && themeSelect !== document.activeElement) themeSelect.value = options.theme();
     // A draft that disappeared underneath the form (confirmed save, or a reload) must not linger.
@@ -708,7 +778,6 @@ export function mountSettingsView(
     update,
     dispose() {
       editing = null;
-      document.querySelector("#settings-discard")?.remove();
     },
   };
 }

@@ -3124,18 +3124,28 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
     outline: 2px solid Highlight;
   }
 }
-/* The settings page: the groups are horizontal pills in the sidebar's activation language, and
-   only the body swaps. The row states its own direction — never again inherited from a nav
-   default outside the page. */
+/* The settings page: toolbar pairs horizontal pill tabs with the active tab's primary action,
+   and only the body swaps. The row states its own direction — never inherited from sidebar nav. */
+.settings-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+}
 .settings-tabs {
   display: flex;
   flex-direction: row;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  margin-top: 16px;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 10px;
+}
+.settings-add-button {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
 }
 .settings-tab {
   font: inherit;
@@ -3145,6 +3155,10 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
   border: 1px solid transparent;
   border-radius: 999px;
   padding: 5px 12px;
+}
+.settings-tab:hover:not(:disabled):not(.active) {
+  color: var(--text);
+  background: var(--panel2);
 }
 .settings-tab.active {
   color: var(--text);
@@ -3157,6 +3171,37 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
 }
 .settings-body {
   margin-top: 16px;
+}
+.settings-recovery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.settings-row {
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.settings-row:hover {
+  background: color-mix(in srgb, var(--panel2) 55%, var(--panel));
+}
+.settings-id-tag {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--panel2);
+  border: 1px solid var(--soft);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+.settings-empty {
+  padding: 40px 24px;
+}
+.settings-empty h3 {
+  margin: 0 0 14px;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--muted);
 }
 /* Agent editors share the dispatch workspace without changing the other settings tabs. */
 main:has(.settings-agent-subpage-panel) {
@@ -3205,10 +3250,6 @@ main:has(.settings-agent-subpage-panel) {
 }
 .settings-theme {
   margin-bottom: 14px;
-}
-#settings-discard {
-  display: inline-block;
-  margin-top: 10px;
 }
 /* The confirmed task detail has its own palette; shared list tokens must not tint its records. */
 .business-tasks-panel .tasks-detail-head > .business-header-description { margin-top: 22px; }

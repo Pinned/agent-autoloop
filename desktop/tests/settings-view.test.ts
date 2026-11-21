@@ -294,7 +294,7 @@ test("editing one row turns only that row into a form and locks the rest of the 
   click(find(f.root, "编辑")!);
   // The row's form exists; the group's other affordances wait for the session to end.
   assert.ok(byId(f.root, "settings-agents-0-name"));
-  assert.equal(find(f.root, "添加一项")!.disabled, true);
+  assert.equal(find(f.root, "＋ 添加 Agent")!.disabled, true);
   for (const button of f.tabs.children)
     if (button.dataset.tab !== "agents") assert.equal(button.disabled, true, button.dataset.tab);
   assert.equal(find(f.root, "取消")!.disabled, false);
@@ -304,7 +304,7 @@ test("editing one row turns only that row into a form and locks the rest of the 
     all(f.root).some((node) => node.id === "settings-agents-0-name"),
     false,
   );
-  assert.equal(find(f.root, "添加一项")!.disabled, false);
+  assert.equal(find(f.root, "＋ 添加 Agent")!.disabled, false);
 });
 
 test("a save carries the whole section: this row new, the others at their draft values", async () => {
@@ -339,7 +339,7 @@ test("adding a row appends it to the section on save", async () => {
     f.view.init();
     await flush();
   });
-  click(find(f.root, "添加一项")!);
+  click(find(f.root, "＋ 添加 Agent")!);
   // The fresh row's form opens past the existing entries, with no delete button to misfire.
   assert.ok(byId(f.root, "settings-agents-1-id"));
   assert.equal(find(f.root, "删除此条"), undefined);
@@ -398,11 +398,11 @@ test("Agent edit and add use a subpage and keep the same inputs during updates",
   click(find(page, "← 返回")!);
   assert.equal(byId(f.root, "settings-agents-0-name"), undefined);
   assert.equal(f.tabs.children.find((node) => node.className.includes("active"))!.dataset.tab, "agents");
-  click(find(f.root, "添加一项")!);
+  click(find(f.root, "＋ 添加 Agent")!);
   assert.ok(all(f.root).find((node) => node.className === "settings-agent-subpage"));
 });
 
-test("settings groups have no outer card or duplicate page title", async () => {
+test("settings groups have no outer card, duplicate page title, or redundant standing intro", async () => {
   const f = fixture(() => "hub-worker", loadedBridge());
   await withDocumentAcross(async () => {
     f.view.init();
@@ -415,8 +415,85 @@ test("settings groups have no outer card or duplicate page title", async () => {
       all(f.root).some((node) => node.tagName === "h2" && node.textContent === "设置"),
       false,
     );
-    assert.ok(f.root.textContent.includes("配置在别处被改动时"));
+    assert.equal(f.root.textContent.includes("配置在别处被改动时"), false);
   }
+});
+
+test("toolbar shows contextual add action on list tabs, rows wrap copy for grid alignment, and empty lists show empty state", async () => {
+  const emptyListBridge: SettingsBridge = {
+    settingsGet: async () => ({
+      version: 1,
+      ok: true,
+      data: { ...snapshot(), agents: [], sources: [], channels: [] },
+    }),
+    settingsPut: async () => ({ version: 1, ok: false, error: { code: "unavailable", message: "不可用" } }),
+  };
+  const loaded = fixture(() => "hub-worker", loadedBridge());
+  await withDocumentAcross(async () => {
+    loaded.view.init();
+    await flush();
+  });
+  const addButton = byId(loaded.root, "settings-add")!;
+  assert.ok(addButton);
+  assert.equal(addButton.hidden, false);
+  assert.equal(addButton.textContent, "＋ 添加 Agent");
+  // Row wraps title and metadata inside .entry-copy so .entry-actions aligns on the right column.
+  const row = all(loaded.root).find((node) => node.className.split(" ").includes("settings-row"))!;
+  assert.ok(row);
+  assert.deepEqual(
+    row.children.map((node) => node.className),
+    ["entry-copy", "entry-actions"],
+  );
+  assert.ok(row.textContent.includes("可编辑"));
+  // Switching to connection/general hides the contextual add button.
+  click(loaded.tabs.children.find((node) => node.dataset.tab === "sources")!);
+  assert.equal(addButton.hidden, false);
+  assert.equal(addButton.textContent, "＋ 添加来源");
+  click(loaded.tabs.children.find((node) => node.dataset.tab === "channels")!);
+  assert.equal(addButton.hidden, false);
+  assert.equal(addButton.textContent, "＋ 添加通知通道");
+  click(loaded.tabs.children.find((node) => node.dataset.tab === "connection")!);
+  assert.equal(addButton.hidden, true);
+  click(loaded.tabs.children.find((node) => node.dataset.tab === "general")!);
+  assert.equal(addButton.hidden, true);
+
+  // Empty lists show a dashed empty state with an inline add button.
+  const empty = fixture(() => "hub-worker", emptyListBridge);
+  await withDocumentAcross(async () => {
+    empty.view.init();
+    await flush();
+  });
+  const emptyBox = all(empty.root).find((node) => node.className.split(" ").includes("settings-empty"))!;
+  assert.ok(emptyBox);
+  assert.ok(emptyBox.textContent.includes("暂无 Agent"));
+  assert.ok(find(emptyBox, "＋ 添加 Agent"));
+});
+
+test("read error shows a retry button and clicking it reloads configuration", async () => {
+  let reads = 0;
+  const f = fixture(() => "hub-worker", {
+    settingsGet: async () => {
+      reads++;
+      return reads === 1
+        ? { version: 1, ok: false, error: { code: "error", message: "无法读取本机设置或确认连接配置，请检查后再试。" } }
+        : { version: 1, ok: true, data: snapshot() };
+    },
+    settingsPut: async () => ({ version: 1, ok: false, error: { code: "unavailable", message: "不可用" } }),
+  });
+  await withDocumentAcross(async () => {
+    f.view.init();
+    await flush();
+  });
+  const retry = byId(f.root, "settings-retry")!;
+  assert.ok(retry);
+  assert.equal(retry.hidden, false);
+  await withDocumentAcross(async () => {
+    retry.click();
+    await flush();
+  });
+  assert.equal(reads, 2);
+  assert.equal(retry.hidden, true);
+  assert.ok(all(f.root).some((node) => node.textContent === "甲"));
 });
 
 test("Agent subpages stay frameless and group identity separately from runtime fields", async () => {
@@ -427,7 +504,7 @@ test("Agent subpages stay frameless and group identity separately from runtime f
   });
   for (const [action, index, title] of [
     ["编辑", 0, "编辑 Agent"],
-    ["添加一项", 1, "添加 Agent"],
+    ["＋ 添加 Agent", 1, "添加 Agent"],
   ] as const) {
     click(find(f.root, action)!);
     assert.equal(f.root.className, "settings-panel settings-agent-subpage-panel");
