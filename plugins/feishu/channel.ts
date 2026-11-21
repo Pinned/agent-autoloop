@@ -394,23 +394,44 @@ export function matchesPairingMessage(
   }
 }
 
-/** Listens for the first matching user message over WebSocket to capture the sender's open_id. */
+/** Best-effort lookup of a Feishu user's display name; returns undefined if contact permission is missing. */
+async function lookupUserName(client: lark.Client, openId: string): Promise<string | undefined> {
+  try {
+    const res = await client.contact.v3.user.get({
+      path: { user_id: openId },
+      params: { user_id_type: "open_id" },
+    });
+    const name = res.data?.user?.name?.trim();
+    return name ? name : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Listens for the first matching user message over WebSocket to capture the sender's open_id and display name. */
 export async function waitForUserOpenId(config: {
   appId: string;
   appSecret: string;
   domain?: unknown;
   pairingCode?: string;
   timeoutMs?: number;
-}): Promise<string> {
+}): Promise<{ openId: string; userName?: string }> {
   const timeoutMs = config.timeoutMs ?? 60_000;
+  const domain = sdkDomain(config.domain);
+  const client = new lark.Client({
+    appId: config.appId,
+    appSecret: config.appSecret,
+    domain,
+    loggerLevel: lark.LoggerLevel.error,
+  });
   const wsClient = new lark.WSClient({
     appId: config.appId,
     appSecret: config.appSecret,
-    domain: sdkDomain(config.domain),
+    domain,
     loggerLevel: lark.LoggerLevel.error,
     logger: silentLogger,
   });
-  return await new Promise<string>((resolve, reject) => {
+  const openId = await new Promise<string>((resolve, reject) => {
     let settled = false;
     const finish = (fn: () => void) => {
       if (settled) return;
@@ -441,10 +462,10 @@ export async function waitForUserOpenId(config: {
         sender?: { sender_type?: string; sender_id?: { open_id?: string } };
         message?: { message_type?: string; content?: string };
       }) => {
-        const openId = data?.sender?.sender_id?.open_id?.trim();
-        if (data?.sender?.sender_type === "user" && openId) {
+        const senderOpenId = data?.sender?.sender_id?.open_id?.trim();
+        if (data?.sender?.sender_type === "user" && senderOpenId) {
           if (!config.pairingCode || matchesPairingMessage(data.message, config.pairingCode)) {
-            finish(() => resolve(openId));
+            finish(() => resolve(senderOpenId));
           }
         }
         return {};
@@ -454,6 +475,8 @@ export async function waitForUserOpenId(config: {
       finish(() => reject(error instanceof Error ? error : new Error(String(error))));
     });
   });
+  const userName = await lookupUserName(client, openId);
+  return { openId, ...(userName && { userName }) };
 }
 
 function friendlyFeishuError(code?: number, msg?: string): string {

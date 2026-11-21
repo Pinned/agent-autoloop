@@ -24,6 +24,7 @@ export type LocalChannelConfigSummary = {
   appId?: string;
   hasSecret?: boolean;
   user?: string;
+  userName?: string;
   domain?: FeishuDomain;
   url?: string;
   body?: string;
@@ -45,6 +46,7 @@ export type ChannelConfigSaveInput = {
   appId?: string;
   appSecret?: string;
   user?: string;
+  userName?: string;
   domain?: FeishuDomain;
   url?: string;
   body?: string;
@@ -68,7 +70,7 @@ export type ChannelFeishuBindInput = {
 };
 
 export type ChannelFeishuBindResponse =
-  { version: 1; ok: true; openId: string } | { version: 1; ok: false; message: string };
+  { version: 1; ok: true; openId: string; userName?: string } | { version: 1; ok: false; message: string };
 
 export type ChannelTestInput = {
   id: string;
@@ -76,6 +78,7 @@ export type ChannelTestInput = {
   appId?: string;
   appSecret?: string;
   user?: string;
+  userName?: string;
   domain?: FeishuDomain;
   url?: string;
   body?: string;
@@ -130,6 +133,7 @@ export function parseChannelConfigSaveInput(value: unknown): ChannelConfigSaveIn
   const appId = trimmed(value.appId);
   const appSecret = trimmed(value.appSecret);
   const user = trimmed(value.user);
+  const userName = trimmed(value.userName);
   const url = trimmed(value.url);
   const body = trimmed(value.body);
 
@@ -165,6 +169,7 @@ export function parseChannelConfigSaveInput(value: unknown): ChannelConfigSaveIn
     ...(appId && { appId }),
     ...(appSecret && { appSecret }),
     ...(user && { user }),
+    ...(userName && { userName }),
     ...(domain && { domain }),
     ...(url && { url }),
     ...(body && { body }),

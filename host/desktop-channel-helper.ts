@@ -30,14 +30,14 @@ async function main() {
     return;
   }
   if (input.action === "feishu-bind") {
-    const openId = await waitForUserOpenId({
+    const bound = await waitForUserOpenId({
       appId: input.appId,
       appSecret: input.appSecret,
       domain: input.domain,
       pairingCode: input.pairingCode,
       timeoutMs: input.timeoutMs ?? 60_000,
     });
-    writeResult({ ok: true, openId });
+    writeResult({ ok: true, openId: bound.openId, ...(bound.userName && { userName: bound.userName }) });
     return;
   }
   throw new Error("不支持的操作");

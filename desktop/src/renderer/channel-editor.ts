@@ -134,6 +134,7 @@ export function buildChannelSavePayload(
     ...(str("appId") && { appId: str("appId") }),
     ...(str("appSecret") && { appSecret: str("appSecret") }),
     ...(str("user") && { user: str("user") }),
+    ...(str("userName") && { userName: str("userName") }),
     ...(row.domain === "lark" ? { domain: "lark" as FeishuDomain } : { domain: "feishu" as FeishuDomain }),
     ...(str("url") && { url: str("url") }),
     ...(str("body") && { body: str("body") }),

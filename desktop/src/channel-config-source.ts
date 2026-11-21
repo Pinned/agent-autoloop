@@ -100,6 +100,7 @@ function summarizeChannel(id: string, raw: Record<string, unknown>): LocalChanne
     const appId = isNonEmptyString(raw.appId) ? raw.appId.trim() : undefined;
     const hasSecret = isNonEmptyString(raw.appSecret);
     const user = isNonEmptyString(raw.user) ? raw.user.trim() : undefined;
+    const userName = isNonEmptyString(raw.userName) ? raw.userName.trim() : undefined;
     const domain = raw.domain === "lark" ? "lark" : "feishu";
     return {
       id,
@@ -109,6 +110,7 @@ function summarizeChannel(id: string, raw: Record<string, unknown>): LocalChanne
       ...(appId && { appId }),
       hasSecret,
       ...(user && { user }),
+      ...(userName && { userName }),
       domain,
     };
   }
@@ -209,15 +211,21 @@ export function createChannelConfigSource(options: ChannelConfigSourceOptions) {
       const appSecret =
         input.appSecret ?? (isNonEmptyString(existing?.appSecret) ? existing.appSecret.trim() : undefined);
       const user = input.user ?? (isNonEmptyString(existing?.user) ? existing.user.trim() : undefined);
+      const userName =
+        input.userName ??
+        (input.user && input.user === existing?.user && isNonEmptyString(existing?.userName)
+          ? existing.userName.trim()
+          : undefined);
       if (!appId) throw new Error("请填写飞书 App ID");
       if (!appSecret) throw new Error("请填写飞书 App Secret");
-      if (!user) throw new Error("请填写接收人 Open ID（或点击发消息自动绑定）");
+      if (!user) throw new Error("请填写接收人 Open ID（或点击配对获取）");
       return {
         use: "feishu",
         key,
         appId,
         appSecret,
         user,
+        ...(userName && { userName }),
         ...(input.domain === "lark" ? { domain: "lark" } : {}),
       };
     }
@@ -334,7 +342,14 @@ export function createChannelConfigSource(options: ChannelConfigSourceOptions) {
           ...(input.pairingCode && { pairingCode: input.pairingCode }),
         });
         if (result.ok === true && typeof result.openId === "string" && result.openId.trim()) {
-          return { version: 1, ok: true, openId: result.openId.trim() };
+          const userName =
+            typeof result.userName === "string" && result.userName.trim() ? result.userName.trim() : undefined;
+          return {
+            version: 1,
+            ok: true,
+            openId: result.openId.trim(),
+            ...(userName && { userName }),
+          };
         }
         return {
           version: 1,

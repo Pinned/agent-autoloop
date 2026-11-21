@@ -434,6 +434,7 @@ export function mountSettingsView(
       row.appId = local?.appId ?? "";
       row.appSecret = "";
       row.user = local?.user ?? "";
+      row.userName = local?.userName ?? "";
       row.domain = local?.domain ?? "feishu";
       row.url = local?.url ?? "";
       row.body = local?.body ?? "";
@@ -721,28 +722,87 @@ export function mountSettingsView(
           row._hasSecret ? "已保存（留空表示不修改）" : "输入飞书 App Secret",
         );
         secretInput.type = "password";
-        secretInput.className = "settings-mono-input";
+        secretInput.className = "settings-mono-input channel-secret-input";
         secretInput.addEventListener("input", set("appSecret"));
-        const toggleSecret = button("显示");
+
+        const SVG_NS = "http://www.w3.org/2000/svg";
+        const renderEye = (revealed: boolean) => {
+          const svg = document.createElementNS(SVG_NS, "svg");
+          svg.setAttribute("viewBox", "0 0 24 24");
+          svg.setAttribute("width", "16");
+          svg.setAttribute("height", "16");
+          svg.setAttribute("aria-hidden", "true");
+          const path = document.createElementNS(SVG_NS, "path");
+          path.setAttribute("d", "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z");
+          svg.append(path);
+          if (revealed) {
+            const pupil = document.createElementNS(SVG_NS, "circle");
+            pupil.setAttribute("cx", "12");
+            pupil.setAttribute("cy", "12");
+            pupil.setAttribute("r", "3");
+            svg.append(pupil);
+          } else {
+            const slash = document.createElementNS(SVG_NS, "line");
+            slash.setAttribute("x1", "3");
+            slash.setAttribute("y1", "3");
+            slash.setAttribute("x2", "21");
+            slash.setAttribute("y2", "21");
+            svg.append(slash);
+          }
+          return svg;
+        };
+
+        const toggleSecret = document.createElement("button");
+        toggleSecret.type = "button";
+        toggleSecret.className = "channel-eye-button";
+        toggleSecret.setAttribute("aria-label", "显示密钥");
+        toggleSecret.setAttribute("title", "显示密钥");
+        toggleSecret.replaceChildren(renderEye(false));
         toggleSecret.addEventListener("click", () => {
           const masked = secretInput.type === "password";
           secretInput.type = masked ? "text" : "password";
-          toggleSecret.textContent = masked ? "隐藏" : "显示";
+          const label = masked ? "隐藏密钥" : "显示密钥";
+          toggleSecret.setAttribute("aria-label", label);
+          toggleSecret.setAttribute("title", label);
+          toggleSecret.replaceChildren(renderEye(masked));
         });
         const secretWrap = document.createElement("div");
-        secretWrap.className = "channel-inline-row";
+        secretWrap.className = "channel-secret-wrap";
         secretWrap.append(secretInput, toggleSecret);
 
-        const userInput = input(`${prefix}-user`, String(row.user ?? ""), "如 ou_xxx（或点击右侧配对获取）");
-        userInput.className = "settings-mono-input";
-        userInput.addEventListener("input", set("user"));
+        const bindSummary = document.createElement("span");
+        bindSummary.className = "channel-bind-summary";
+        const bindBtn = button(String(row.user ?? "").trim() ? "重新配对" : "连接并配对", true);
+        bindBtn.disabled = Boolean(localChannelUnavailable);
 
-        const pairingBox = document.createElement("div");
-        pairingBox.className = "channel-pairing-box settings-span2";
-        pairingBox.hidden = true;
-        const pairingHint = document.createElement("span");
-        pairingHint.className = "muted";
-        pairingHint.textContent = "请在飞书里给这个机器人发送下面 6 位配对码（60 秒内有效）：";
+        const bindStatus = document.createElement("p");
+        bindStatus.className = "channel-test-status settings-span2";
+        bindStatus.hidden = true;
+
+        const syncBindSummary = () => {
+          const currentUser = String(row.user ?? "").trim();
+          const currentName = String(row.userName ?? "").trim();
+          if (currentUser) {
+            bindSummary.textContent = currentName
+              ? `已绑定：${currentName}（${currentUser}）`
+              : `已绑定：${currentUser}`;
+            bindSummary.className = "channel-bind-summary ok";
+            bindBtn.textContent = "重新配对";
+          } else {
+            bindSummary.textContent = "尚未绑定接收人，填写上方凭据后点击右侧按钮配对";
+            bindSummary.className = "channel-bind-summary muted";
+            bindBtn.textContent = "连接并配对";
+          }
+        };
+        syncBindSummary();
+
+        const pairingDialog = document.createElement("dialog");
+        pairingDialog.className = "channel-pairing-dialog";
+        const dialogTitle = document.createElement("h3");
+        dialogTitle.textContent = "配对飞书接收人";
+        const dialogHint = document.createElement("p");
+        dialogHint.className = "muted";
+        dialogHint.textContent = "请在飞书里给这个机器人发送下方 6 位数字配对码（60 秒内有效）：";
         const pairingRow = document.createElement("div");
         pairingRow.className = "channel-pairing-row";
         const pairingDigits = document.createElement("code");
@@ -758,71 +818,102 @@ export function mountSettingsView(
           }
         });
         pairingRow.append(pairingDigits, copyCodeBtn);
-        pairingBox.append(pairingHint, pairingRow);
+        const dialogState = document.createElement("p");
+        dialogState.className = "channel-test-status";
+        dialogState.textContent = "等待飞书收到配对码…";
+        const dialogFooter = document.createElement("div");
+        dialogFooter.className = "channel-pairing-actions";
+        const closeDialogBtn = button("取消");
+        let pairingToken = 0;
+        const closePairing = () => {
+          pairingToken++;
+          if (typeof (pairingDialog as HTMLDialogElement).close === "function" && pairingDialog.open) {
+            (pairingDialog as HTMLDialogElement).close();
+          } else {
+            pairingDialog.hidden = true;
+          }
+        };
+        closeDialogBtn.addEventListener("click", closePairing);
+        dialogFooter.append(closeDialogBtn);
+        pairingDialog.append(dialogTitle, dialogHint, pairingRow, dialogState, dialogFooter);
 
-        const bindStatus = document.createElement("p");
-        bindStatus.className = "channel-test-status settings-span2";
-        bindStatus.hidden = true;
-
-        const bindBtn = button("配对获取 Open ID");
-        bindBtn.disabled = Boolean(localChannelUnavailable);
         bindBtn.addEventListener("click", () => {
           if (!options.channelBridge) return;
+          const appId = String(row.appId ?? "").trim();
+          const appSecret = String(row.appSecret ?? "").trim();
+          if (!appId) {
+            bindStatus.className = "channel-test-status error settings-span2";
+            bindStatus.textContent = "请先填写 App ID";
+            bindStatus.hidden = false;
+            return;
+          }
+          if (!appSecret && !row._hasSecret) {
+            bindStatus.className = "channel-test-status error settings-span2";
+            bindStatus.textContent = "请先填写 App Secret";
+            bindStatus.hidden = false;
+            return;
+          }
+          bindStatus.hidden = true;
           const bytes = new Uint32Array(1);
           crypto.getRandomValues(bytes);
           const pairingCode = String(100000 + (bytes[0] % 900000));
+          const token = ++pairingToken;
           pairingDigits.textContent = pairingCode;
-          pairingBox.hidden = false;
+          dialogState.className = "channel-test-status";
+          dialogState.textContent = "正在监听飞书消息，发送后将自动完成绑定…";
+          if (typeof (pairingDialog as HTMLDialogElement).showModal === "function") {
+            if (!pairingDialog.open) (pairingDialog as HTMLDialogElement).showModal();
+          } else {
+            pairingDialog.hidden = false;
+          }
           bindBtn.disabled = true;
           bindBtn.textContent = "等待配对…";
-          bindStatus.className = "channel-test-status settings-span2";
-          bindStatus.textContent = "正在等待飞书机器人收到配对码…";
-          bindStatus.hidden = false;
           void options.channelBridge
             .bindFeishu({
               id: String(row.id ?? "").trim() || undefined,
-              appId: String(row.appId ?? "").trim(),
-              appSecret: String(row.appSecret ?? "").trim() || undefined,
+              appId,
+              appSecret: appSecret || undefined,
               domain: row.domain === "lark" ? "lark" : "feishu",
               pairingCode,
             })
             .then((res) => {
+              if (token !== pairingToken) return;
               if (res.ok) {
-                pairingBox.hidden = true;
+                closePairing();
                 row.user = res.openId;
-                userInput.value = res.openId;
+                row.userName = res.userName ?? "";
                 if (!String(row.answerers ?? "").trim()) {
                   row.answerers = res.openId;
                 }
-                bindStatus.className = "channel-test-status ok settings-span2";
-                bindStatus.textContent = `配对成功，已自动绑定：${res.openId}`;
+                syncBindSummary();
+                bindStatus.hidden = true;
               } else {
-                bindStatus.className = "channel-test-status error settings-span2";
-                bindStatus.textContent = res.message;
+                dialogState.className = "channel-test-status error";
+                dialogState.textContent = res.message;
               }
             })
             .catch((err) => {
-              bindStatus.className = "channel-test-status error settings-span2";
-              bindStatus.textContent = err instanceof Error ? err.message : "配对失败";
+              if (token !== pairingToken) return;
+              dialogState.className = "channel-test-status error";
+              dialogState.textContent = err instanceof Error ? err.message : "配对失败";
             })
             .finally(() => {
               bindBtn.disabled = Boolean(localChannelUnavailable);
-              bindBtn.textContent = "配对获取 Open ID";
+              syncBindSummary();
             });
         });
         const userWrap = document.createElement("div");
-        userWrap.className = "channel-inline-row";
-        userWrap.append(userInput, bindBtn);
+        userWrap.className = "channel-bind-row settings-span2";
+        userWrap.append(bindSummary, bindBtn);
 
-        container.append(formCard("基本信息", basicFields));
         container.append(
           formCard("飞书应用凭据", [
             field("App ID", appIdInput),
             field("App Secret", secretWrap),
-            field("接收人 Open ID", userWrap, true),
-            pairingBox,
+            userWrap,
             bindStatus,
           ]),
+          pairingDialog,
         );
 
         const answerersField = chipField({
@@ -842,10 +933,15 @@ export function mountSettingsView(
         const advanced = document.createElement("details");
         advanced.className = "settings-advanced";
         const advSummary = document.createElement("summary");
-        advSummary.textContent = "更多选项（权限与国际版）";
+        advSummary.textContent = "更多选项（名称、回答权限与国际版）";
         const advBody = document.createElement("div");
         advBody.className = "settings-form-grid";
-        advBody.append(answerersField, field("服务区域", domainSelect));
+        advBody.append(
+          field("显示名称", nameInput),
+          field("通道标识", idInput),
+          answerersField,
+          field("服务区域", domainSelect),
+        );
         advanced.append(advSummary, advBody);
         container.append(advanced);
       } else if (
@@ -1108,6 +1204,10 @@ export function mountSettingsView(
       if (entry.model) parts.push(String(entry.model));
     }
     if ("adapter" in entry && entry.adapter) parts.push(`适配器 ${entry.adapter}`);
+    if (section === "channels" && options.channelBridge) {
+      const local = localChannels.get(String(entry.id ?? ""));
+      if (local?.userName) parts.push(`接收人 ${local.userName}`);
+    }
     if ("answerers" in entry && Array.isArray(entry.answerers) && entry.answerers.length)
       parts.push(`应答人 ${entry.answerers.join("、")}`);
     if ("links" in entry && entry.links) parts.push("发送卡片链接");

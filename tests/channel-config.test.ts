@@ -76,7 +76,7 @@ test("channel config source validates webhooks, tests sending, and binds feishu 
     createKey: async (id) => `key-${id}`,
     runHelper: async (input) => {
       helperCalls.push(input);
-      if (input.action === "feishu-bind") return { ok: true, openId: "ou_bound" };
+      if (input.action === "feishu-bind") return { ok: true, openId: "ou_bound", userName: "张三" };
       return { ok: true, message: "测试卡片已发送" };
     },
     fetchImpl: (async (url: string, init?: RequestInit) => {
@@ -108,7 +108,7 @@ test("channel config source validates webhooks, tests sending, and binds feishu 
   assert.equal(badCode.ok, false);
 
   const bound = await source.bindFeishu({ appId: "cli_1", appSecret: "sec_1", pairingCode: "482910" });
-  assert.deepEqual(bound, { version: 1, ok: true, openId: "ou_bound" });
+  assert.deepEqual(bound, { version: 1, ok: true, openId: "ou_bound", userName: "张三" });
   assert.equal(helperCalls[0].action, "feishu-bind");
   assert.equal(helperCalls[0].pairingCode, "482910");
 
