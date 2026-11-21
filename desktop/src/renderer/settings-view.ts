@@ -6,6 +6,8 @@
 import type { Theme } from "../policy.ts";
 import {
   DESKTOP_SETTINGS_ACCESS,
+  DESKTOP_SETTINGS_ID_PATTERN,
+  DESKTOP_SETTINGS_RESERVED_SOURCE,
   type DesktopSettingsAgent,
   type DesktopSettingsChannel,
   type DesktopSettingsSection,
@@ -23,7 +25,7 @@ export type SettingsViewOptions = {
   theme(): Theme;
   setTheme(theme: Theme): void;
   openSetup(): void;
-  agentEditorChanged?(open: boolean): void;
+  editorChanged?(open: boolean): void;
 };
 
 type Tab = "agents" | "sources" | "channels" | "connection" | "general";
@@ -49,30 +51,26 @@ type Editing =
   | { section: ListSection; rowIndex: number; row: Row; fresh: boolean };
 type RowEditing = Extract<Editing, { section: ListSection }>;
 
-function field(labelText: string, control: HTMLElement, hint?: string): HTMLLabelElement {
+function field(labelText: string, control: HTMLElement, span2 = false): HTMLLabelElement {
   const wrap = document.createElement("label");
-  wrap.className = "setup-field";
+  wrap.className = span2 ? "setup-field settings-span2" : "setup-field";
   const span = document.createElement("span");
   span.textContent = labelText;
   wrap.append(span, control);
-  if (hint) {
-    const note = document.createElement("p");
-    note.className = "muted";
-    note.textContent = hint;
-    wrap.append(note);
-  }
   return wrap;
 }
-function input(id: string, value: string): HTMLInputElement {
+function input(id: string, value: string, placeholder = ""): HTMLInputElement {
   const node = document.createElement("input");
   node.id = id;
   node.value = value;
+  if (placeholder) node.setAttribute("placeholder", placeholder);
   return node;
 }
-function textarea(id: string, value: string): HTMLTextAreaElement {
+function textarea(id: string, value: string, placeholder = ""): HTMLTextAreaElement {
   const node = document.createElement("textarea");
   node.id = id;
   node.value = value;
+  if (placeholder) node.setAttribute("placeholder", placeholder);
   return node;
 }
 function checkbox(id: string, value: boolean): HTMLInputElement {
@@ -82,21 +80,26 @@ function checkbox(id: string, value: boolean): HTMLInputElement {
   node.checked = value;
   return node;
 }
-function select(id: string, values: readonly string[], value: string): HTMLSelectElement {
+function select(
+  id: string,
+  values: readonly string[],
+  value: string,
+  labels?: Record<string, string>,
+): HTMLSelectElement {
   const node = document.createElement("select");
   node.id = id;
   for (const item of values) {
     const option = document.createElement("option");
     option.value = item;
-    option.textContent = item;
+    option.textContent = labels?.[item] ?? item;
     node.append(option);
   }
   node.value = value;
   return node;
 }
 const wordsOf = (text: string) => text.split(/[\s,，]+/).filter(Boolean);
-const titleOf = (section: ListSection) => TABS.find((item) => item.id === section)?.title ?? "";
 const ACCESS_LABELS: Record<string, string> = { read: "只读", edit: "可编辑", full: "完全权限" };
+const AGENT_USES = ["claude", "codex", "agy", "command"] as const;
 const ADD_LABELS: Record<ListSection, string> = {
   agents: "＋ 添加 Agent",
   sources: "＋ 添加来源",
@@ -106,6 +109,11 @@ const EMPTY_LABELS: Record<ListSection, string> = {
   agents: "暂无 Agent",
   sources: "暂无来源",
   channels: "暂无通知通道",
+};
+const EDITOR_TITLES: Record<ListSection, { add: string; edit: string }> = {
+  agents: { add: "添加 Agent", edit: "编辑 Agent" },
+  sources: { add: "添加来源", edit: "编辑来源" },
+  channels: { add: "添加通知通道", edit: "编辑通知通道" },
 };
 const isListTab = (value: Tab): value is ListSection =>
   value === "agents" || value === "sources" || value === "channels";
@@ -259,15 +267,30 @@ export function mountSettingsView(
   function entryOf(
     section: ListSection,
     row: Row,
+    entries: readonly Record<string, unknown>[],
+    rowIndex: number,
   ): DesktopSettingsAgent | DesktopSettingsSource | DesktopSettingsChannel {
     const text = (key: string) => String(row[key] ?? "").trim();
     const optional = (key: string) => (text(key) ? text(key) : undefined);
+    const id = text("id");
+    if (!id) throw new Error("请填写标识");
+    if (!DESKTOP_SETTINGS_ID_PATTERN.test(id)) throw new Error("标识须以小写字母开头，仅含小写字母、数字和连字符");
+    if (entries.some((entry, index) => index !== rowIndex && String(entry.id ?? "") === id))
+      throw new Error("标识已存在，请更换其他标识");
+    const name = text("name");
+    if (!name) throw new Error("请填写名称");
     if (section === "agents") {
+      const worker = text("worker");
+      if (!worker || !DESKTOP_SETTINGS_ID_PATTERN.test(worker))
+        throw new Error("请填写有效的执行机标识（小写字母开头，可含数字和连字符）");
+      const use = text("use");
+      if (!use || !DESKTOP_SETTINGS_ID_PATTERN.test(use))
+        throw new Error("请填写有效的用法（小写字母开头，可含数字和连字符）");
       const agent: DesktopSettingsAgent = {
-        id: text("id"),
-        name: text("name"),
-        worker: text("worker"),
-        use: text("use"),
+        id,
+        name,
+        worker,
+        use,
         access: (text("access") || "edit") as DesktopSettingsAgent["access"],
       };
       const model = optional("model");
@@ -277,16 +300,22 @@ export function mountSettingsView(
       if (model !== undefined) agent.model = model;
       if (effort !== undefined) agent.effort = effort;
       if (command.length) agent.command = command;
-      if (timeout) agent.timeout = Number(timeout);
+      if (agent.use === "command" && !agent.command) throw new Error("用法为 command 时必须填写命令");
+      if (timeout) {
+        const parsed = Number(timeout);
+        if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new Error("超时秒数须为大于 0 的整数");
+        agent.timeout = parsed;
+      }
       return agent;
     }
     if (section === "sources") {
-      const source: DesktopSettingsSource = { id: text("id"), name: text("name") };
+      if (id === DESKTOP_SETTINGS_RESERVED_SOURCE) throw new Error("schedule 为系统保留标识，不能用作来源标识");
+      const source: DesktopSettingsSource = { id, name };
       const adapter = optional("adapter");
       if (adapter !== undefined) source.adapter = adapter;
       return source;
     }
-    const channel: DesktopSettingsChannel = { id: text("id"), name: text("name") };
+    const channel: DesktopSettingsChannel = { id, name };
     const answerers = wordsOf(text("answerers"));
     if (answerers.length) channel.answerers = answerers;
     if (row.links === true) channel.links = true;
@@ -302,7 +331,7 @@ export function mountSettingsView(
     if (session.section === "settings")
       return { timezone: session.global.timezone.trim(), askFirst: wordsOf(session.global.askFirst) };
     const entries = draftEntries();
-    entries[session.rowIndex] = entryOf(session.section, session.row);
+    entries[session.rowIndex] = entryOf(session.section, session.row, entries, session.rowIndex);
     return entries;
   }
   function composeRemoval(session: RowEditing): unknown {
@@ -355,94 +384,247 @@ export function mountSettingsView(
     body.querySelector<HTMLButtonElement>("button")?.focus();
   }
 
-  function rowFields(session: RowEditing): HTMLElement[] {
+  function chipField(options: {
+    id: string;
+    label: string;
+    placeholder: string;
+    initial: string;
+    onChange(serialized: string): void;
+  }): HTMLElement {
+    const wrap = document.createElement("div");
+    wrap.className = "setup-field settings-span2 settings-chip-field";
+    const label = document.createElement("label");
+    label.setAttribute("for", options.id);
+    label.textContent = options.label;
+    const tokens = wordsOf(options.initial);
+    const chips = document.createElement("div");
+    chips.className = "settings-chips";
+    const row = document.createElement("div");
+    row.className = "settings-chip-input-row";
+    const entry = input(options.id, "", options.placeholder);
+    const addBtn = button("添加");
+    addBtn.className = "settings-chip-add";
+    register(addBtn, "act");
+
+    const emit = () => {
+      const merged = [...tokens];
+      for (const token of wordsOf(entry.value)) {
+        if (!merged.includes(token)) merged.push(token);
+      }
+      options.onChange(merged.join(" "));
+    };
+    const renderChips = () => {
+      chips.hidden = tokens.length === 0;
+      chips.replaceChildren(
+        ...tokens.map((token, idx) => {
+          const pill = document.createElement("span");
+          pill.className = "settings-chip";
+          const textNode = document.createElement("span");
+          textNode.textContent = token;
+          const removeBtn = document.createElement("button");
+          removeBtn.type = "button";
+          removeBtn.className = "settings-chip-remove";
+          removeBtn.setAttribute("aria-label", `移除 ${token}`);
+          removeBtn.textContent = "×";
+          removeBtn.addEventListener("click", () => {
+            tokens.splice(idx, 1);
+            renderChips();
+            emit();
+          });
+          pill.append(textNode, removeBtn);
+          return pill;
+        }),
+      );
+    };
+    const commitInput = () => {
+      const added = wordsOf(entry.value);
+      if (!added.length) return;
+      for (const token of added) {
+        if (!tokens.includes(token)) tokens.push(token);
+      }
+      entry.value = "";
+      renderChips();
+      emit();
+    };
+    entry.addEventListener("input", emit);
+    entry.addEventListener("keydown", (event) => {
+      const key = (event as KeyboardEvent).key;
+      if (key === "Enter" || key === "," || key === "，") {
+        event.preventDefault();
+        commitInput();
+      }
+    });
+    addBtn.addEventListener("click", commitInput);
+    renderChips();
+    row.append(entry, addBtn);
+    wrap.append(label, chips, row);
+    return wrap;
+  }
+
+  function formCard(title: string, children: HTMLElement[], grid = true): HTMLElement {
+    const section = document.createElement("section");
+    section.className = "settings-form-group";
+    const heading = document.createElement("h3");
+    heading.textContent = title;
+    if (grid) {
+      const body = document.createElement("div");
+      body.className = "settings-form-grid";
+      body.append(...children);
+      section.append(heading, body);
+    } else {
+      section.append(heading, ...children);
+    }
+    return section;
+  }
+
+  function subpageForm(session: RowEditing): HTMLElement {
     const row = session.row;
     const set = (key: string) => (event: Event) => {
       row[key] = (event.target as HTMLInputElement).value;
     };
     const prefix = `settings-${session.section}-${session.rowIndex}`;
-    const idInput = input(`${prefix}-id`, String(row.id ?? ""));
+    const container = document.createElement("section");
+    container.className = "settings-subpage";
+
+    const back = button("← 返回");
+    back.className = "task-back-button";
+    back.addEventListener("click", stopEdit);
+    register(back, "cancel");
+    const heading = document.createElement("h2");
+    heading.id = "settings-editor-title";
+    heading.textContent = session.fresh ? EDITOR_TITLES[session.section].add : EDITOR_TITLES[session.section].edit;
+    const header = document.createElement("header");
+    header.className = "tasks-detail-head";
+    header.append(back, heading);
+    container.append(header);
+
+    const idPlaceholders: Record<ListSection, string> = {
+      agents: "如 claude-main",
+      sources: "如 github、shop",
+      channels: "如 feishu",
+    };
+    const namePlaceholders: Record<ListSection, string> = {
+      agents: "如 Claude Code",
+      sources: "如 GitHub",
+      channels: "如 飞书",
+    };
+    const idInput = input(`${prefix}-id`, String(row.id ?? ""), idPlaceholders[session.section]);
+    idInput.className = "settings-mono-input";
     idInput.addEventListener("input", set("id"));
-    const nameInput = input(`${prefix}-name`, String(row.name ?? ""));
+    const nameInput = input(`${prefix}-name`, String(row.name ?? ""), namePlaceholders[session.section]);
     nameInput.addEventListener("input", set("name"));
-    const nodes = [field("标识（小写字母开头，可含数字与连字符）", idInput), field("名称", nameInput)];
+    const basicFields: HTMLElement[] = [field("标识", idInput), field("名称", nameInput)];
+
     if (session.section === "agents") {
-      const workerInput = input(`${prefix}-worker`, String(row.worker ?? ""));
+      container.append(formCard("基本信息", basicFields));
+
+      const workerInput = input(`${prefix}-worker`, String(row.worker ?? ""), "选择或输入执行机");
       workerInput.setAttribute("list", "settings-workers");
       workerInput.addEventListener("input", set("worker"));
-      const useInput = input(`${prefix}-use`, String(row.use ?? ""));
-      useInput.addEventListener("input", set("use"));
-      const access = select(`${prefix}-access`, DESKTOP_SETTINGS_ACCESS, String(row.access || "edit"));
+      const useInput = input(`${prefix}-use`, String(row.use ?? ""), "如 claude、codex、command");
+      useInput.setAttribute("list", "settings-agent-uses");
+      const access = select(`${prefix}-access`, DESKTOP_SETTINGS_ACCESS, String(row.access || "edit"), ACCESS_LABELS);
       access.addEventListener("change", () => (row.access = access.value));
-      const modelInput = input(`${prefix}-model`, String(row.model ?? ""));
-      modelInput.addEventListener("input", set("model"));
-      const effortInput = input(`${prefix}-effort`, String(row.effort ?? ""));
-      effortInput.addEventListener("input", set("effort"));
-      const commandInput = textarea(`${prefix}-command`, String(row.command ?? ""));
-      commandInput.addEventListener("input", set("command"));
-      const timeoutInput = input(`${prefix}-timeout`, String(row.timeout ?? ""));
-      timeoutInput.type = "number";
-      timeoutInput.addEventListener("input", set("timeout"));
-      nodes.push(
-        field("执行机标识", workerInput),
-        field("用法（use）", useInput, "例如 claude、codex；使用 command 时必须填写命令。"),
-        field("权限（access）", access),
-        field("模型（可选）", modelInput),
-        field("推理强度（可选）", effortInput),
-        field("命令（可选，空格分隔）", commandInput),
-        field("超时秒数（可选）", timeoutInput),
+      container.append(
+        formCard("运行配置", [field("执行机", workerInput), field("用法", useInput), field("权限", access)]),
       );
+
+      const advanced = document.createElement("details");
+      advanced.className = "settings-advanced";
+      const summary = document.createElement("summary");
+      const summaryTitle = document.createElement("span");
+      summaryTitle.textContent = "高级选项";
+      const summaryBadge = document.createElement("span");
+      summaryBadge.className = "settings-advanced-badge";
+      summary.append(summaryTitle, summaryBadge);
+
+      const modelInput = input(`${prefix}-model`, String(row.model ?? ""), "默认");
+      const effortInput = input(`${prefix}-effort`, String(row.effort ?? ""), "如 high、medium");
+      const timeoutInput = input(`${prefix}-timeout`, String(row.timeout ?? ""), "默认");
+      timeoutInput.type = "number";
+      timeoutInput.setAttribute("min", "1");
+      const commandInput = textarea(`${prefix}-command`, String(row.command ?? ""), "空格分隔，例如 agent -p {prompt}");
+      const commandField = field(
+        String(row.use ?? "").trim() === "command" ? "命令（必填）" : "命令",
+        commandInput,
+        true,
+      );
+      const commandLabel = commandField.children[0] as HTMLElement;
+
+      const syncAdvanced = () => {
+        const filled = [row.model, row.effort, row.timeout, row.command].filter((v) => String(v ?? "").trim()).length;
+        summaryBadge.textContent = `已填 ${filled} 项`;
+        summaryBadge.hidden = filled === 0;
+        const needsCommand = String(row.use ?? "").trim() === "command";
+        commandLabel.textContent = needsCommand ? "命令（必填）" : "命令";
+        if (needsCommand) advanced.open = true;
+      };
+      useInput.addEventListener("input", (event) => {
+        set("use")(event);
+        syncAdvanced();
+      });
+      for (const [node, key] of [
+        [modelInput, "model"],
+        [effortInput, "effort"],
+        [timeoutInput, "timeout"],
+        [commandInput, "command"],
+      ] as const) {
+        node.addEventListener("input", (event) => {
+          set(key)(event);
+          syncAdvanced();
+        });
+      }
+      const initialFilled = [row.model, row.effort, row.timeout, row.command].filter((v) =>
+        String(v ?? "").trim(),
+      ).length;
+      advanced.open = initialFilled > 0 || String(row.use ?? "").trim() === "command";
+      syncAdvanced();
+
+      const advGrid = document.createElement("div");
+      advGrid.className = "settings-form-grid";
+      advGrid.append(
+        field("模型", modelInput),
+        field("推理强度", effortInput),
+        field("超时秒数", timeoutInput),
+        commandField,
+      );
+      advanced.append(summary, advGrid);
+      container.append(advanced);
     } else if (session.section === "sources") {
-      const adapterInput = input(`${prefix}-adapter`, String(row.adapter ?? ""));
+      const adapterInput = input(`${prefix}-adapter`, String(row.adapter ?? ""), "留空表示标准事件来源，如 github");
       adapterInput.addEventListener("input", set("adapter"));
-      nodes.push(field("适配器（可选）", adapterInput));
+      basicFields.push(field("适配器", adapterInput, true));
+      container.append(formCard("基本信息", basicFields));
     } else {
-      const answerers = input(`${prefix}-answerers`, String(row.answerers ?? ""));
-      answerers.addEventListener("input", set("answerers"));
+      container.append(formCard("基本信息", basicFields));
+      const answerersField = chipField({
+        id: `${prefix}-answerers`,
+        label: "应答人",
+        placeholder: "输入应答人后回车添加",
+        initial: String(row.answerers ?? ""),
+        onChange: (serialized) => {
+          row.answerers = serialized;
+        },
+      });
+      const linksRow = document.createElement("label");
+      linksRow.className = "settings-switch-row settings-span2";
+      const linksLabel = document.createElement("span");
+      linksLabel.textContent = "发送卡片链接";
       const links = checkbox(`${prefix}-links`, row.links === true);
       links.addEventListener("change", () => (row.links = links.checked));
-      nodes.push(field("应答人（空格或逗号分隔，可选）", answerers), field("发送链接", links));
+      linksRow.append(linksLabel, links);
+      container.append(formCard("通知配置", [answerersField, linksRow]));
     }
-    return nodes;
-  }
 
-  function rowForm(session: RowEditing): HTMLElement {
-    const details = document.createElement("details");
-    details.className = "entry-item settings-item";
-    details.open = true;
-    const summary = document.createElement("summary");
-    summary.textContent =
-      String(session.row.name || "") ||
-      String(session.row.id || "") ||
-      (session.fresh ? `新增${titleOf(session.section)}` : `${titleOf(session.section)} ${session.rowIndex + 1}`);
-    const agentPage = session.section === "agents";
-    const container = agentPage ? document.createElement("section") : details;
-    if (agentPage) {
-      container.className = "settings-agent-subpage";
-      const back = button("← 返回");
-      back.className = "task-back-button";
-      back.addEventListener("click", stopEdit);
-      register(back, "cancel");
-      const heading = document.createElement("h2");
-      heading.id = "settings-agent-title";
-      heading.textContent = session.fresh ? "添加 Agent" : "编辑 Agent";
-      const header = document.createElement("header");
-      header.className = "tasks-detail-head";
-      header.append(back, heading);
-      const fields = rowFields(session);
-      const group = (title: string, fields: HTMLElement[]) => {
-        const section = document.createElement("section");
-        section.className = "settings-agent-group";
-        const heading = document.createElement("h3");
-        heading.textContent = title;
-        section.append(heading, ...fields);
-        return section;
-      };
-      container.append(header, group("基本信息", fields.slice(0, 2)), group("运行配置", fields.slice(2)));
-    } else container.append(summary, ...rowFields(session));
     const error = document.createElement("p");
     error.className = "setup-error";
+    error.setAttribute("role", "alert");
     error.hidden = true;
+
+    const footer = document.createElement("div");
+    footer.className = "settings-form-footer";
+    const primaryActions = document.createElement("div");
+    primaryActions.className = "settings-form-primary";
     const save = button("保存", true);
     const cancel = button("取消");
     save.addEventListener("click", () => {
@@ -450,19 +632,46 @@ export function mountSettingsView(
       controller.save();
     });
     cancel.addEventListener("click", stopEdit);
-    const actions: HTMLButtonElement[] = [save, cancel];
+    register(save, "act");
+    register(cancel, "cancel");
+    primaryActions.append(save, cancel);
+    footer.append(primaryActions);
+
     if (!session.fresh) {
-      const remove = button("删除此条");
+      let removeArmed = false;
+      const dangerActions = document.createElement("div");
+      dangerActions.className = "settings-form-danger";
+      const cancelRemove = button("取消删除");
+      cancelRemove.hidden = true;
+      const remove = button("删除");
+      remove.className = "settings-delete-button";
+      const syncRemove = () => {
+        remove.textContent = removeArmed ? "确认删除" : "删除";
+        remove.className = removeArmed ? "settings-delete-button run-action-danger" : "settings-delete-button";
+        cancelRemove.hidden = !removeArmed;
+      };
+      cancelRemove.addEventListener("click", () => {
+        removeArmed = false;
+        syncRemove();
+      });
       remove.addEventListener("click", () => {
+        if (!removeArmed) {
+          removeArmed = true;
+          syncRemove();
+          return;
+        }
+        removeArmed = false;
+        syncRemove();
         if (!commit(error, () => composeRemoval(session))) return;
         controller.save();
       });
-      actions.push(remove);
+      register(remove, "act");
+      register(cancelRemove, "act");
+      dangerActions.append(cancelRemove, remove);
+      footer.append(dangerActions);
     }
-    register(save, "act");
-    register(cancel, "cancel");
-    if (actions.length > 2) register(actions[2], "act");
-    container.append(error, actionBar(actions));
+
+    container.append(error, footer);
     return container;
   }
 
@@ -486,12 +695,7 @@ export function mountSettingsView(
     cancel.addEventListener("click", stopEdit);
     register(save, "act");
     register(cancel, "cancel");
-    wrap.append(
-      field("时区", timezone, "IANA 时区名称，例如 Asia/Shanghai。"),
-      field("确认事项（空格或逗号分隔，可留空）", askFirst, "需要先问过你再执行的事项。"),
-      error,
-      actionBar([save, cancel]),
-    );
+    wrap.append(field("时区", timezone), field("确认事项", askFirst), error, actionBar([save, cancel]));
     return wrap;
   }
 
@@ -569,6 +773,19 @@ export function mountSettingsView(
     return workers;
   }
 
+  function agentUsesList(): HTMLElement {
+    const uses = document.createElement("datalist");
+    uses.id = "settings-agent-uses";
+    uses.replaceChildren(
+      ...AGENT_USES.map((item) => {
+        const option = document.createElement("option");
+        option.value = item;
+        return option;
+      }),
+    );
+    return uses;
+  }
+
   function listTab(section: ListSection): HTMLElement {
     const wrap = document.createElement("div");
     const state = controller.getState();
@@ -580,13 +797,12 @@ export function mountSettingsView(
     const busy = state.saving || state.reloading || state.needsReview || state.draft !== null;
     const session = editing && editing.section === section ? editing : null;
     const entries = state.snapshot[section] as unknown as readonly Record<string, unknown>[];
-    const agentPage = section === "agents" && session !== null;
-    if (agentPage) {
-      wrap.append(rowForm(session));
-      if (section === "agents") wrap.append(workersList());
+    if (session) {
+      wrap.append(subpageForm(session));
+      if (section === "agents") wrap.append(workersList(), agentUsesList());
       return wrap;
     }
-    if (!entries.length && !session) {
+    if (!entries.length) {
       const box = document.createElement("div");
       box.className = "empty settings-empty";
       const heading = document.createElement("h3");
@@ -597,20 +813,12 @@ export function mountSettingsView(
       register(add, "list");
       box.append(heading, add);
       wrap.append(box);
-      if (section === "agents") wrap.append(workersList());
       return wrap;
     }
     const list = document.createElement("ul");
     list.className = "entry-list";
-    const nodes: HTMLElement[] = entries.map((entry, index) =>
-      session && !session.fresh && session.rowIndex === index
-        ? rowForm(session)
-        : readOnlyRow(section, entry, index, busy),
-    );
-    if (session?.fresh) nodes.push(rowForm(session));
-    list.replaceChildren(...nodes);
+    list.replaceChildren(...entries.map((entry, index) => readOnlyRow(section, entry, index, busy)));
     wrap.append(list);
-    if (section === "agents") wrap.append(workersList());
     return wrap;
   }
 
@@ -656,7 +864,7 @@ export function mountSettingsView(
     const labels: Record<string, string> = { system: "跟随系统", light: "浅色", dark: "深色" };
     for (const option of themeSelect.options) option.textContent = labels[option.value];
     themeSelect.addEventListener("change", () => options.setTheme(themeSelect.value as Theme));
-    themeRow.append(field("主题", themeSelect, "跟随系统，或固定为浅色、深色。"));
+    themeRow.append(field("主题", themeSelect));
     wrap.append(themeRow);
     if (editing && editing.section === "settings") {
       wrap.append(globalForm());
@@ -701,7 +909,7 @@ export function mountSettingsView(
           : generalTab();
     body.replaceChildren(content);
     update();
-    if (editing?.section === "agents") body.querySelector<HTMLInputElement>("input")?.focus();
+    if (editing && editing.section !== "settings") body.querySelector<HTMLInputElement>("input")?.focus();
   }
 
   function update() {
@@ -718,15 +926,15 @@ export function mountSettingsView(
       renderTab();
       return;
     }
-    const agentOpen = editing?.section === "agents";
-    root.className = agentOpen ? "settings-panel settings-agent-subpage-panel" : "settings-panel";
-    toolbar.hidden = agentOpen;
-    const showAdd = !agentOpen && isListTab(tab) && state.snapshot !== null;
+    const subpageOpen = editing !== null && editing.section !== "settings";
+    root.className = subpageOpen ? "settings-panel settings-subpage-panel" : "settings-panel";
+    toolbar.hidden = subpageOpen;
+    const showAdd = !subpageOpen && isListTab(tab) && state.snapshot !== null;
     addButton.hidden = !showAdd;
     if (isListTab(tab)) addButton.textContent = ADD_LABELS[tab];
     addButton.disabled = state.saving || state.reloading || state.needsReview || state.draft !== null;
-    status.hidden = agentOpen && !state.loading && !state.saving && state.save.kind !== "confirmed";
-    options.agentEditorChanged?.(agentOpen);
+    status.hidden = subpageOpen && !state.loading && !state.saving && state.save.kind !== "confirmed";
+    options.editorChanged?.(subpageOpen);
     const parts: string[] = [];
     if (state.loading) parts.push("正在读取本机配置…");
     if (state.saving) parts.push("正在保存…");

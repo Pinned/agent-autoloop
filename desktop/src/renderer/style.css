@@ -3203,11 +3203,11 @@ main:has(.business-tasks-panel .agent-execution-history:not([hidden])) {
   font-weight: 550;
   color: var(--muted);
 }
-/* Agent editors share the dispatch workspace without changing the other settings tabs. */
-main:has(.settings-agent-subpage-panel) {
+/* Resource editors (Agent, Source, Channel) share one unified frameless subpage workspace. */
+main:has(.settings-subpage-panel) {
   padding: 14px 20px 16px;
 }
-.settings-agent-subpage-panel {
+.settings-subpage-panel {
   width: 100%;
   min-width: 0;
   max-width: none;
@@ -3216,40 +3216,200 @@ main:has(.settings-agent-subpage-panel) {
   border: 0;
   background: transparent;
 }
-.settings-agent-subpage-panel .settings-body {
+.settings-subpage-panel .settings-body {
   margin-top: 0;
 }
-.settings-agent-subpage {
+.settings-subpage {
   min-width: 0;
 }
-.settings-agent-group {
+.settings-form-group {
   min-width: 0;
-  padding: 14px;
+  padding: 16px 18px;
   margin-bottom: 14px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 9px;
+  background: var(--panel);
+}
+.settings-form-group h3 {
+  margin: 0 0 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.settings-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+.settings-form-grid .setup-field {
+  align-content: start;
+}
+.settings-form-grid .setup-field > span,
+.settings-chip-field > label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.settings-form-grid .setup-field input,
+.settings-form-grid .setup-field select,
+.settings-form-grid .setup-field textarea,
+.settings-chip-input-row input {
+  width: 100%;
+  font: inherit;
+  color: var(--text);
   background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
 }
-.settings-agent-group h3 {
-  margin: 0 0 12px;
-  font-size: 15px;
-  font-weight: 650;
+.settings-form-grid .setup-field textarea {
+  resize: vertical;
+  min-height: 64px;
 }
-.settings-agent-group .setup-field + .setup-field {
-  margin-top: 12px;
+.settings-mono-input {
+  font-family: var(--mono);
+}
+.settings-span2 {
+  grid-column: 1 / -1;
+}
+.settings-advanced {
+  min-width: 0;
+  padding: 14px 18px;
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel);
+}
+.settings-advanced > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  list-style: none;
+}
+.settings-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+.settings-advanced > summary::before {
+  content: "▸";
+  color: var(--muted);
+  font-size: 11px;
+  transition: transform 0.12s ease;
+}
+.settings-advanced[open] > summary::before {
+  transform: rotate(90deg);
+}
+.settings-advanced[open] > summary {
+  margin-bottom: 14px;
+}
+.settings-advanced-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel2);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.settings-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.settings-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel2);
+  font-size: 12px;
+  color: var(--text);
+}
+.settings-chip-remove {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 2px;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.settings-chip-remove:hover {
+  color: var(--red);
+}
+.settings-chip-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-chip-input-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.settings-chip-add {
+  flex: none;
+  padding: 7px 12px;
+  font-size: 12px;
+}
+.settings-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--soft);
+  border-radius: 6px;
+  background: var(--panel2);
+  cursor: pointer;
+}
+.settings-switch-row > span {
+  font-size: 13px;
+  color: var(--text);
+}
+.settings-switch-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+}
+.settings-form-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  margin-top: 18px;
+}
+.settings-form-primary,
+.settings-form-danger {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.settings-delete-button {
+  color: var(--red);
+  border-color: transparent;
+  background: transparent;
+}
+.settings-delete-button:hover:not(:disabled) {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 8%, transparent);
 }
 .settings-body .entry-list {
   margin-top: 0;
 }
-.settings-item > summary {
-  cursor: pointer;
-  font-weight: 600;
-}
-.settings-item .setup-field {
-  margin-top: 12px;
-}
 .settings-theme {
   margin-bottom: 14px;
+}
+@media (max-width: 650px) {
+  .settings-form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 /* The confirmed task detail has its own palette; shared list tokens must not tint its records. */
 .business-tasks-panel .tasks-detail-head > .business-header-description { margin-top: 22px; }

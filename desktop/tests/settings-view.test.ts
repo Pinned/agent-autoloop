@@ -1,5 +1,6 @@
 // Settings must not nest a page frame or duplicate the shell title, including after returning from editing.
-// Agent editing must be a subpage, never an inline disclosure; updates must retain its input nodes.
+// Agent, source, and channel editing share one unified in-page subpage paradigm without inline disclosures;
+// updates must retain input nodes, and deleting an entry requires two-step arming confirmation.
 // The settings page shows only the groups this machine can actually change. A pure worker does
 // not own the hub's sources or notification channels: offering those tabs would promise a save
 // the hub refuses. The row has to follow the role while the page stays mounted, because the
@@ -16,6 +17,7 @@ class TestElement {
   id = "";
   hidden = false;
   disabled = false;
+  open = false;
   type = "";
   value = "";
   checked = false;
@@ -342,7 +344,7 @@ test("adding a row appends it to the section on save", async () => {
   click(find(f.root, "＋ 添加 Agent")!);
   // The fresh row's form opens past the existing entries, with no delete button to misfire.
   assert.ok(byId(f.root, "settings-agents-1-id"));
-  assert.equal(find(f.root, "删除此条"), undefined);
+  assert.equal(find(f.root, "删除"), undefined);
   type(byId(f.root, "settings-agents-1-id")!, "a2");
   type(byId(f.root, "settings-agents-1-name")!, "乙");
   type(byId(f.root, "settings-agents-1-worker")!, "w1");
@@ -361,7 +363,7 @@ test("adding a row appends it to the section on save", async () => {
   );
 });
 
-test("removing a row is an explicit act inside the form, and saves the section without it", async () => {
+test("removing a row requires two-step confirmation inside the subpage, then saves without it", async () => {
   const r = recordingBridge();
   const f = fixture(() => "hub-worker", r.bridge);
   await withDocumentAcross(async () => {
@@ -369,26 +371,34 @@ test("removing a row is an explicit act inside the form, and saves the section w
     await flush();
   });
   click(find(f.root, "编辑")!);
+  // First click arms deletion without sending a save.
+  click(find(f.root, "删除")!);
+  assert.equal(r.puts.length, 0);
+  assert.ok(find(f.root, "确认删除"));
+  assert.ok(find(f.root, "取消删除"));
+  // Cancelling deletion disarms safely.
+  click(find(f.root, "取消删除")!);
+  assert.equal(find(f.root, "确认删除"), undefined);
+  assert.ok(find(f.root, "删除"));
+  // Second arm + confirm actually submits the removal.
+  click(find(f.root, "删除")!);
   await withDocumentAcross(async () => {
-    find(f.root, "删除此条")!.click();
+    find(f.root, "确认删除")!.click();
     await flush();
   });
+  assert.equal(r.puts.length, 1);
   assert.deepEqual(r.puts[0].value, []);
 });
 
-test("Agent edit and add use a subpage and keep the same inputs during updates", async () => {
+test("Agent edit and add use the unified subpage and keep the same inputs during updates", async () => {
   const f = fixture(() => "hub-worker", loadedBridge());
   await withDocumentAcross(async () => {
     f.view.init();
     await flush();
   });
   click(find(f.root, "编辑")!);
-  const page = all(f.root).find((node) => node.className === "settings-agent-subpage");
+  const page = all(f.root).find((node) => node.className === "settings-subpage");
   assert.ok(page);
-  assert.equal(
-    all(page).some((node) => node.tagName === "details"),
-    false,
-  );
   assert.ok(find(page, "← 返回"));
   const name = byId(f.root, "settings-agents-0-name")!;
   type(name, "尚未保存");
@@ -399,7 +409,7 @@ test("Agent edit and add use a subpage and keep the same inputs during updates",
   assert.equal(byId(f.root, "settings-agents-0-name"), undefined);
   assert.equal(f.tabs.children.find((node) => node.className.includes("active"))!.dataset.tab, "agents");
   click(find(f.root, "＋ 添加 Agent")!);
-  assert.ok(all(f.root).find((node) => node.className === "settings-agent-subpage"));
+  assert.ok(all(f.root).find((node) => node.className === "settings-subpage"));
 });
 
 test("settings groups have no outer card, duplicate page title, or redundant standing intro", async () => {
@@ -496,7 +506,7 @@ test("read error shows a retry button and clicking it reloads configuration", as
   assert.ok(all(f.root).some((node) => node.textContent === "甲"));
 });
 
-test("Agent subpages stay frameless and group identity separately from runtime fields", async () => {
+test("Agent subpages stay frameless, separate core fields from collapsible advanced options, and open advanced for command", async () => {
   const f = fixture(() => "hub-worker", loadedBridge());
   await withDocumentAcross(async () => {
     f.view.init();
@@ -507,14 +517,14 @@ test("Agent subpages stay frameless and group identity separately from runtime f
     ["＋ 添加 Agent", 1, "添加 Agent"],
   ] as const) {
     click(find(f.root, action)!);
-    assert.equal(f.root.className, "settings-panel settings-agent-subpage-panel");
-    const page = all(f.root).find((node) => node.className === "settings-agent-subpage")!;
+    assert.equal(f.root.className, "settings-panel settings-subpage-panel");
+    const page = all(f.root).find((node) => node.className === "settings-subpage")!;
     const header = page.querySelector(".tasks-detail-head")!;
     assert.deepEqual(
       header.children.map((node) => node.textContent),
       ["← 返回", title],
     );
-    const groups = page.children.filter((node) => node.className === "settings-agent-group");
+    const groups = page.children.filter((node) => node.className === "settings-form-group");
     assert.deepEqual(
       groups.map((group) => group.children[0].textContent),
       ["基本信息", "运行配置"],
@@ -529,34 +539,59 @@ test("Agent subpages stay frameless and group identity separately from runtime f
       all(groups[1])
         .filter((node) => node.id)
         .map((node) => node.id),
-      ["worker", "use", "access", "model", "effort", "command", "timeout"].map(
-        (key) => `settings-agents-${index}-${key}`,
-      ),
+      ["worker", "use", "access"].map((key) => `settings-agents-${index}-${key}`),
     );
+    const advanced = page.children.find((node) => node.tagName === "details")!;
+    assert.ok(advanced);
+    assert.equal(advanced.open, false);
+    assert.deepEqual(
+      all(advanced)
+        .filter((node) => node.id)
+        .map((node) => node.id),
+      ["model", "effort", "timeout", "command"].map((key) => `settings-agents-${index}-${key}`),
+    );
+    // Switching use to "command" automatically reveals advanced options so command is visible.
+    type(byId(f.root, `settings-agents-${index}-use`)!, "command");
+    assert.equal(advanced.open, true);
     click(find(page, "← 返回")!);
     assert.equal(f.root.className, "settings-panel");
   }
 });
 
-test("source and channel editors keep their original inline disclosure shape", async () => {
-  const f = fixture(() => "hub-worker", loadedBridge());
+test("source and channel editors share the unified frameless subpage paradigm", async () => {
+  const r = recordingBridge();
+  const f = fixture(() => "hub-worker", r.bridge);
   await withDocumentAcross(async () => {
     f.view.init();
     await flush();
   });
-  for (const section of ["sources", "channels"]) {
+  for (const [section, editTitle, addButtonText, addTitle] of [
+    ["sources", "编辑来源", "＋ 添加来源", "添加来源"],
+    ["channels", "编辑通知通道", "＋ 添加通知通道", "添加通知通道"],
+  ] as const) {
     click(f.tabs.children.find((node) => node.dataset.tab === section)!);
     click(find(f.root, "编辑")!);
+    assert.equal(f.root.className, "settings-panel settings-subpage-panel");
+    const page = all(f.root).find((node) => node.className === "settings-subpage")!;
+    assert.ok(page);
+    assert.equal(byId(page, "settings-editor-title")!.textContent, editTitle);
+    assert.ok(byId(page, `settings-${section}-0-name`));
+    click(find(page, "← 返回")!);
     assert.equal(f.root.className, "settings-panel");
-    const details = all(f.root).find((node) => node.tagName === "details")!;
-    assert.ok(details);
-    assert.ok(byId(details, `settings-${section}-0-name`));
-    assert.equal(
-      all(f.root).some((node) => node.className === "settings-agent-group"),
-      false,
-    );
-    click(find(f.root, "取消")!);
+    click(find(f.root, addButtonText)!);
+    assert.equal(byId(f.root, "settings-editor-title")!.textContent, addTitle);
+    click(find(f.root, "← 返回")!);
   }
+  // Channel answerers can be added as chips or saved directly from pending input text.
+  click(f.tabs.children.find((node) => node.dataset.tab === "channels")!);
+  click(find(f.root, "编辑")!);
+  type(byId(f.root, "settings-channels-0-answerers")!, "ou_a, ou_b");
+  await withDocumentAcross(async () => {
+    find(f.root, "保存")!.click();
+    await flush();
+  });
+  assert.equal(r.puts.length, 1);
+  assert.deepEqual(r.puts[0].value, [{ id: "chat", name: "聊天", answerers: ["ou_a", "ou_b"] }]);
 });
 
 test("Agent save barriers retain the grouped draft and never resend or return", async () => {
@@ -589,12 +624,13 @@ test("Agent save barriers retain the grouped draft and never resend or return", 
       find(f.root, "← 返回")!.click();
       assert.equal(puts, 1);
       assert.ok(byId(f.root, name.id));
-      assert.ok(find(f.root, "丢弃草稿并重新读取"));
+      const discard = byId(f.root, "settings-discard")!;
+      assert.equal(discard.hidden, false);
     });
   }
 });
 
-test("an invalid row is named in the form, never sent", async () => {
+test("an invalid row shows a specific Chinese field message in the form, never sent", async () => {
   const r = recordingBridge();
   const f = fixture(() => "hub-worker", r.bridge);
   await withDocumentAcross(async () => {
@@ -604,10 +640,10 @@ test("an invalid row is named in the form, never sent", async () => {
   click(find(f.root, "编辑")!);
   type(byId(f.root, "settings-agents-0-id")!, "A");
   withDocument(() => find(f.root, "保存")!.click());
-  // The contract refused the row at the keystroke's save; the form stays with the typed values.
+  // The form catches invalid id with a clear human-readable message before touching the bridge.
   assert.equal(r.puts.length, 0);
   assert.ok(byId(f.root, "settings-agents-0-id"), "the form is still open");
   const error = all(f.root).find((node) => node.className.split(" ").includes("setup-error") && !node.hidden);
   assert.ok(error, "the refusal is on screen");
-  assert.equal(error!.textContent, "设置数据无效");
+  assert.match(error!.textContent, /标识.*小写字母/);
 });
