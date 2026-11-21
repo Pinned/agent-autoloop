@@ -287,15 +287,193 @@ test("agy history reads user, assistant, tool-call and tool-result while excludi
     assert.equal(page1.items[0].text, prompt);
     assert.equal(page1.items[1].kind, "tool-call");
     assert.equal(page1.items[1].name, "run_command");
+    assert.ok(page1.items[1].toolUseId);
     const page2 = readAgyHistory({ root, cwd: "/work", session, inputHash, cursor: page1.cursor!, limit: 5 });
     assert.equal(page2.status, "available");
     assert.equal(page2.hasMore, false);
     assert.equal(page2.items.length, 2);
     assert.equal(page2.items[0].kind, "tool-result");
+    assert.equal(page2.items[0].toolUseId, page1.items[1].toolUseId);
     assert.equal(page2.items[0].text, "file-a\nfile-b");
     assert.equal(page2.items[1].role, "assistant");
     assert.equal(page2.items[1].text, "已完成");
     assert.equal(readAgyHistory({ root, cwd: "/work", session: "../../secret" }).status, "unavailable");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Parallel agy tool calls must associate 1:1 with subsequent results across pagination, chunking, system rows and edge cases.
+test("agy history pairs parallel tool calls and multi-chunk results across pages without misaligning", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "history-agy-pair-"));
+  try {
+    mkdirSync(path.join(root, `brain/${session}/.system_generated/logs`), { recursive: true });
+    const longResult = "R".repeat(8500);
+    const rows = [
+      {
+        step_index: 0,
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-11-21T02:20:00Z",
+        content: "先并行读取并执行检查",
+        tool_calls: [
+          { name: "read_file", args: { Path: "/a" } },
+          { name: "invalid tool name!", args: {} },
+          { name: "run_command", args: { CommandLine: "echo ok" } },
+          { name: "edit_file", args: { Path: "/b" } },
+        ],
+      },
+      {
+        step_index: 1,
+        source: "SYSTEM",
+        type: "SYSTEM_MESSAGE",
+        status: "DONE",
+        created_at: "2026-11-21T02:20:01Z",
+        content: "interleaved system notice must not break pairing",
+      },
+      {
+        step_index: 2,
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-11-21T02:20:02Z",
+        content: longResult,
+      },
+      {
+        step_index: 3,
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-11-21T02:20:03Z",
+        content: "result for invalid call",
+      },
+      {
+        step_index: 4,
+        source: "MODEL",
+        type: "GENERIC",
+        status: "ERROR",
+        created_at: "2026-11-21T02:20:04Z",
+        content: "",
+      },
+      {
+        step_index: 5,
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-11-21T02:20:05Z",
+        content: "edited /b",
+      },
+      {
+        step_index: 6,
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-11-21T02:20:06Z",
+        content: "orphan result",
+      },
+      {
+        step_index: 7,
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-11-21T02:20:07Z",
+        tool_calls: [
+          { id: "call-a", name: "read_file", args: { Path: "/x" } },
+          { id: "call-b", name: "read_file", args: { Path: "/y" } },
+        ],
+      },
+      {
+        step_index: 8,
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-11-21T02:20:08Z",
+        tool_call_id: "call-b",
+        content: "content y",
+      },
+      {
+        step_index: 9,
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-11-21T02:20:09Z",
+        tool_call_id: "call-a",
+        content: "content x",
+      },
+      {
+        step_index: 10,
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-11-21T02:20:10Z",
+        tool_calls: [{ name: "run_command", args: { CommandLine: "aborted" } }],
+      },
+      {
+        step_index: 11,
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        status: "DONE",
+        created_at: "2026-11-21T02:20:11Z",
+        content: "新指令",
+      },
+      {
+        step_index: 12,
+        source: "MODEL",
+        type: "GENERIC",
+        status: "DONE",
+        created_at: "2026-11-21T02:20:12Z",
+        content: "orphan after user input",
+      },
+    ];
+    writeFileSync(
+      path.join(root, `brain/${session}/.system_generated/logs/transcript.jsonl`),
+      rows.map((row) => JSON.stringify(row)).join("\n") + "\n",
+    );
+    const items = [];
+    let cursor: string | undefined;
+    for (let pages = 0; ; pages++) {
+      assert.ok(pages < 50);
+      const page = readAgyHistory({ root, cwd: "/work", session, cursor, limit: 1 });
+      assert.equal(page.status, "available");
+      items.push(...page.items);
+      if (!page.hasMore) break;
+      cursor = page.cursor!;
+    }
+    const calls = items.filter((item) => item.kind === "tool-call");
+    const results = items.filter((item) => item.kind === "tool-result");
+    assert.deepEqual(
+      calls.map((c) => c.name),
+      ["read_file", "run_command", "edit_file", "read_file", "read_file", "run_command"],
+    );
+    const readChunks = results.filter((r) => r.toolUseId === calls[0].toolUseId);
+    assert.equal(readChunks.length, 3);
+    assert.equal(readChunks.map((r) => r.text).join(""), longResult);
+
+    const invalidResult = results.find((r) => r.text === "result for invalid call");
+    assert.equal(invalidResult?.toolUseId, undefined);
+
+    const emptyErrorResult = results.find((r) => r.toolUseId === calls[1].toolUseId);
+    assert.equal(emptyErrorResult?.text, "");
+    assert.equal(emptyErrorResult?.error, true);
+
+    const editResult = results.find((r) => r.toolUseId === calls[2].toolUseId);
+    assert.equal(editResult?.text, "edited /b");
+
+    const orphan1 = results.find((r) => r.text === "orphan result");
+    assert.equal(orphan1?.toolUseId, undefined);
+
+    assert.equal(calls[3].toolUseId, "call-a");
+    assert.equal(calls[4].toolUseId, "call-b");
+    assert.equal(results.find((r) => r.text === "content y")?.toolUseId, "call-b");
+    assert.equal(results.find((r) => r.text === "content x")?.toolUseId, "call-a");
+
+    const orphanAfterUser = results.find((r) => r.text === "orphan after user input");
+    assert.equal(orphanAfterUser?.toolUseId, undefined);
+
+    const first = readAgyHistory({ root, cwd: "/work", session, limit: 1 });
+    const badCursor = JSON.stringify({ ...JSON.parse(first.cursor!), pending: [123] });
+    assert.equal(readAgyHistory({ root, cwd: "/work", session, cursor: badCursor, limit: 1 }).status, "unavailable");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

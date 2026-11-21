@@ -273,14 +273,45 @@ test("history source reads agy transcript from local agyRoot", async () => {
     );
     writeFileSync(
       path.join(home, `.gemini/antigravity-cli/brain/${session}/.system_generated/logs/transcript.jsonl`),
-      JSON.stringify({
-        step_index: 0,
-        source: "MODEL",
-        type: "PLANNER_RESPONSE",
-        status: "DONE",
-        created_at: "2026-11-21T02:19:59Z",
-        content: "agy 已执行完成",
-      }) + "\n",
+      [
+        {
+          step_index: 0,
+          source: "MODEL",
+          type: "PLANNER_RESPONSE",
+          status: "DONE",
+          created_at: "2026-11-21T02:19:57Z",
+          tool_calls: [
+            { name: "read_file", args: { Path: "/work/a.ts" } },
+            { name: "run_command", args: { CommandLine: "npm test" } },
+          ],
+        },
+        {
+          step_index: 1,
+          source: "MODEL",
+          type: "GENERIC",
+          status: "DONE",
+          created_at: "2026-11-21T02:19:58Z",
+          content: "file-a content",
+        },
+        {
+          step_index: 2,
+          source: "MODEL",
+          type: "GENERIC",
+          status: "DONE",
+          created_at: "2026-11-21T02:19:58Z",
+          content: "tests passed",
+        },
+        {
+          step_index: 3,
+          source: "MODEL",
+          type: "PLANNER_RESPONSE",
+          status: "DONE",
+          created_at: "2026-11-21T02:19:59Z",
+          content: "agy 已执行完成",
+        },
+      ]
+        .map((row) => JSON.stringify(row))
+        .join("\n") + "\n",
     );
     const source = createAgentHistorySource({
       home,
@@ -290,8 +321,14 @@ test("history source reads agy transcript from local agyRoot", async () => {
     });
     const res = await source.read({ runId: 1 }, () => true);
     assert.equal(res.page.status, "available");
-    assert.equal(res.page.items.length, 1);
-    assert.equal(res.page.items[0].text, "agy 已执行完成");
+    assert.equal(res.page.items.length, 5);
+    assert.equal(res.page.items[0].kind, "tool-call");
+    assert.equal(res.page.items[1].kind, "tool-call");
+    assert.equal(res.page.items[2].kind, "tool-result");
+    assert.equal(res.page.items[3].kind, "tool-result");
+    assert.equal(res.page.items[2].toolUseId, res.page.items[0].toolUseId);
+    assert.equal(res.page.items[3].toolUseId, res.page.items[1].toolUseId);
+    assert.equal(res.page.items[4].text, "agy 已执行完成");
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

@@ -10,6 +10,7 @@ import {
 } from "../../worker/history.ts";
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+const MAX_PENDING_TOOLS = 256;
 const hash = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
 type Cursor = {
@@ -23,11 +24,21 @@ type Cursor = {
   block: number;
   session: string;
   cwd: string;
+  pending: string[];
 };
 
 function unwrapUserRequest(content: string): string {
   const match = /<USER_REQUEST>\r?\n([\s\S]*?)\r?\n<\/USER_REQUEST>/.exec(content);
   return match ? match[1] : content;
+}
+
+function explicitToolId(record: any, keys: readonly string[]): string | undefined {
+  if (!record || typeof record !== "object") return undefined;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.length > 0 && value.length <= 200) return value;
+  }
+  return undefined;
 }
 
 function pushChunks(
@@ -47,20 +58,26 @@ function pushChunks(
   }
 }
 
-function items(row: any, offset: number, inputHash?: string): HistoryItem[] {
-  if (!row || typeof row !== "object" || row.source === "SYSTEM") return [];
+// agy transcripts omit explicit call IDs and emit one result step per tool_call in order; keep pending IDs pure per row so mid-row pagination replays identically.
+function parseRow(
+  row: any,
+  offset: number,
+  pending: string[],
+  inputHash?: string,
+): { items: HistoryItem[]; nextPending: string[] } {
+  if (!row || typeof row !== "object" || row.source === "SYSTEM") return { items: [], nextPending: pending };
   const stepId = Number.isSafeInteger(row.step_index) && row.step_index >= 0 ? String(row.step_index) : `off-${offset}`;
   const at = typeof row.created_at === "string" && Number.isFinite(Date.parse(row.created_at)) ? row.created_at : null;
   const chunks: HistoryItem[] = [];
 
   if (row.type === "USER_INPUT") {
-    if (typeof row.content !== "string") return [];
+    if (typeof row.content !== "string") return { items: [], nextPending: [] };
     const text = unwrapUserRequest(row.content);
     const matchesHash =
       !!inputHash &&
       (hash(new TextEncoder().encode(text)) === inputHash || hash(new TextEncoder().encode(row.content)) === inputHash);
     pushChunks(chunks, `${stepId}:0`, { kind: "message", at, role: matchesHash ? "task-input" : "user" }, text);
-    return chunks;
+    return { items: chunks, nextPending: [] };
   }
 
   if (row.type === "PLANNER_RESPONSE") {
@@ -68,10 +85,15 @@ function items(row: any, offset: number, inputHash?: string): HistoryItem[] {
     if (typeof row.content === "string" && row.content.length > 0) {
       pushChunks(chunks, `${stepId}:${block++}`, { kind: "message", at, role: "assistant" }, row.content);
     }
+    const nextPending: string[] = [];
     if (Array.isArray(row.tool_calls)) {
       for (const call of row.tool_calls) {
-        if (!call || typeof call.name !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(call.name)) continue;
-        const toolUseId = `${stepId}:${block}`;
+        if (!call || typeof call.name !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(call.name)) {
+          if (nextPending.length < MAX_PENDING_TOOLS) nextPending.push("");
+          continue;
+        }
+        const toolUseId = explicitToolId(call, ["id", "tool_use_id", "call_id"]) ?? `${stepId}:${block}`;
+        if (nextPending.length < MAX_PENDING_TOOLS) nextPending.push(toolUseId);
         pushChunks(
           chunks,
           `${stepId}:${block++}`,
@@ -80,18 +102,29 @@ function items(row: any, offset: number, inputHash?: string): HistoryItem[] {
         );
       }
     }
-    return chunks;
+    return { items: chunks, nextPending };
   }
 
-  if (typeof row.content === "string" && row.content.length > 0) {
+  const explicitResultId = explicitToolId(row, ["tool_use_id", "tool_call_id", "call_id"]);
+  let toolUseId: string | undefined = explicitResultId;
+  let nextPending = pending;
+  if (explicitResultId) {
+    const index = pending.indexOf(explicitResultId);
+    if (index >= 0) nextPending = [...pending.slice(0, index), ...pending.slice(index + 1)];
+  } else if (pending.length > 0) {
+    toolUseId = pending[0] || undefined;
+    nextPending = pending.slice(1);
+  }
+
+  if (typeof row.content === "string" && (row.content.length > 0 || toolUseId)) {
     pushChunks(
       chunks,
       `${stepId}:0`,
-      { kind: "tool-result", at, toolUseId: stepId, error: row.status === "ERROR" },
+      { kind: "tool-result", at, ...(toolUseId ? { toolUseId } : {}), error: row.status === "ERROR" },
       row.content,
     );
   }
-  return chunks;
+  return { items: chunks, nextPending };
 }
 
 export function readAgyHistory(request: HistoryRequest): HistoryPage {
@@ -101,12 +134,12 @@ export function readAgyHistory(request: HistoryRequest): HistoryPage {
     const relative = `brain/${request.session}/.system_generated/logs/transcript.jsonl`;
     let cursor: Cursor | undefined;
     if (request.cursor !== undefined) {
-      if (request.cursor.length > 8192) return emptyHistory("unavailable");
+      if (request.cursor.length > 65536) return emptyHistory("unavailable");
       cursor = JSON.parse(request.cursor);
       if (
         !cursor ||
         Object.keys(cursor).sort().join(",") !==
-          "block,cwd,identity,modified,offset,prefix,prefixSize,seen,session,size" ||
+          "block,cwd,identity,modified,offset,pending,prefix,prefixSize,seen,session,size" ||
         cursor.session !== request.session ||
         cursor.cwd !== request.cwd ||
         !Number.isSafeInteger(cursor.offset) ||
@@ -116,7 +149,10 @@ export function readAgyHistory(request: HistoryRequest): HistoryPage {
         !Number.isSafeInteger(cursor.size) ||
         cursor.size < cursor.offset ||
         typeof cursor.identity !== "string" ||
-        !/^[a-f0-9]{64}$/.test(cursor.prefix)
+        !/^[a-f0-9]{64}$/.test(cursor.prefix) ||
+        !Array.isArray(cursor.pending) ||
+        cursor.pending.length > MAX_PENDING_TOOLS ||
+        cursor.pending.some((x) => typeof x !== "string" || x.length > 200)
       )
         return emptyHistory("unavailable");
     }
@@ -143,6 +179,7 @@ export function readAgyHistory(request: HistoryRequest): HistoryPage {
     )
       return emptyHistory("unavailable");
     const seen = [...(cursor?.seen ?? [])];
+    let pending = [...(cursor?.pending ?? [])];
     const result: HistoryItem[] = [];
     let offset = start,
       position = 0,
@@ -156,7 +193,8 @@ export function readAgyHistory(request: HistoryRequest): HistoryPage {
       } catch {
         return emptyHistory("unavailable");
       }
-      const publicItems = items(row, offset, request.inputHash);
+      const parsed = parseRow(row, offset, pending, request.inputHash);
+      const publicItems = parsed.items;
       for (; block < publicItems.length; block++) {
         if (result.length >= limit) break;
         const item = publicItems[block];
@@ -170,6 +208,7 @@ export function readAgyHistory(request: HistoryRequest): HistoryPage {
         if (seen.length > 32) seen.shift();
       }
       if (block < publicItems.length) break;
+      pending = parsed.nextPending;
       block = 0;
       offset += end + 1 - position;
       position = end + 1;
@@ -188,6 +227,7 @@ export function readAgyHistory(request: HistoryRequest): HistoryPage {
       block,
       session: request.session,
       cwd: request.cwd,
+      pending,
     };
     return {
       status: "available",
